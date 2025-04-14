@@ -52,10 +52,10 @@ RUN ldconfig && \
 # Install the latest QSVEnc release for Ubuntu
 RUN LATEST_URL=$(curl -s https://api.github.com/repos/rigaya/QSVEnc/releases/latest | jq -r '.assets[] | select(.name | contains("Ubuntu20.04_amd64.deb")) | .browser_download_url') && \
     echo "Downloading latest QSVEnc from: $LATEST_URL" && \
-    curl -L -o /qsvencc.deb "$LATEST_URL" && \
+    curl -L -o /tmp/qsvencc.deb "$LATEST_URL" && \
     apt-get update && \
-    apt-get install -y --no-install-recommends ./qsvencc.deb && \
-    rm /qsvencc.deb && \
+    dpkg -i --force-depends /tmp/qsvencc.deb && \
+    rm /tmp/qsvencc.deb && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/*
 
