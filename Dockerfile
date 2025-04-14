@@ -24,7 +24,7 @@ ENV TZ=UTC \
 
 # Install Intel Media SDK and runtime dependencies
 RUN apt update && apt install -y --no-install-recommends \
-    gpg-agent wget ca-certificates && \
+    gpg gpg-agent wget ca-certificates && \
     wget -qO - https://repositories.intel.com/graphics/intel-graphics.key | \
     gpg --dearmor --output /usr/share/keyrings/intel-graphics.gpg && \
     echo 'deb [arch=amd64,i386 signed-by=/usr/share/keyrings/intel-graphics.gpg] https://repositories.intel.com/graphics/ubuntu jammy arc' | \
