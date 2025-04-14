@@ -10,20 +10,17 @@ RUN apt update && apt install -qq -y \
 # Build FFmpeg
 RUN cd /tmp && curl https://www.ffmpeg.org/releases/ffmpeg-4.4.5.tar.xz | tar xJf - && \
     cd ffmpeg-4.4.* && \
-    ./configure --prefix=/bin --enable-shared --enable-nonfree --enable-libfdk-aac --enable-libass && \
+    ./configure --prefix=/usr --enable-shared --enable-nonfree --enable-libfdk-aac --enable-libass && \
     make -s -j$(nproc) && \
     make install && \
-    echo "/bin/lib" > /etc/ld.so.conf.d/ffmpeg.conf && \
     ldconfig && \
-    ls -la /bin/lib/libavcodec* && \
-    export LD_LIBRARY_PATH=/bin/lib:$LD_LIBRARY_PATH && \
-    /bin/bin/ffmpeg -version
+    ls -la /usr/lib/libavcodec* && \
+    ffmpeg -version
 
 # Final stage
 FROM ubuntu:jammy
 ENV TZ=UTC \
-    DEBIAN_FRONTEND=noninteractive \
-    LD_LIBRARY_PATH=/usr/lib
+    DEBIAN_FRONTEND=noninteractive
 
 # Install Intel Media SDK and runtime dependencies
 RUN apt update && apt install -y --no-install-recommends \
@@ -42,16 +39,14 @@ RUN apt update && apt install -y --no-install-recommends \
     rm -rf /var/lib/apt/lists/*
 
 # Copy FFmpeg from builder stage
-COPY --from=builder /bin/lib /usr/lib
-COPY --from=builder /bin/bin /usr/bin
-COPY --from=builder /bin/include /usr/include
-COPY --from=builder /bin/share /usr/share
+COPY --from=builder /usr/lib /usr/lib
+COPY --from=builder /usr/bin /usr/bin
+COPY --from=builder /usr/include /usr/include
+COPY --from=builder /usr/share /usr/share
 
 # Update library cache
-RUN echo "/usr/lib" > /etc/ld.so.conf.d/ffmpeg.conf && \
-    ldconfig && \
+RUN ldconfig && \
     ls -la /usr/lib/libavcodec* && \
-    export LD_LIBRARY_PATH=/usr/lib:$LD_LIBRARY_PATH && \
     ffmpeg -version
 
 # Install the latest QSVEnc release for Ubuntu
