@@ -31,10 +31,10 @@ RUN apt update && apt install -y --no-install-recommends \
     tee /etc/apt/sources.list.d/intel.gpu.jammy.list && \
     apt update && \
     apt install -y --no-install-recommends \
-    intel-media-va-driver-non-free intel-opencl-icd opencl-headers \
-    intel-level-zero-gpu level-zero libmfx1 libmfxgen1 \
-    libva-drm2 libva-x11-2 libva-glx2 libigfxcmrt7 \
-    libfdk-aac2 libass9 && \
+    intel-media-va-driver-non-free intel-opencl-icd \
+    libmfx1 libmfxgen1 \
+    libva-drm2 libva-x11-2 libigfxcmrt7 \
+    libass9 && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/*
 
