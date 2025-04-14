@@ -42,7 +42,7 @@
   - [--avs](#--avs)
   - [--vpy](#--vpy)
   - [--vpy-mt](#--vpy-mt)
-  - [--avsw](#--avsw)
+  - [--avsw \[\<string\>\]](#--avsw-string)
   - [--avhw](#--avhw)
   - [--interlace \<string\>](#--interlace-string)
   - [--crop \<int\>,\<int\>,\<int\>,\<int\>](#--crop-intintintint)
@@ -127,8 +127,10 @@
   - [--atc-sei \<string\> or \<int\> \[HEVCのみ\]](#--atc-sei-string-or-int-hevcのみ)
   - [--dhdr10-info \<string\> \[HEVC, AV1\]](#--dhdr10-info-string-hevc-av1)
   - [--dhdr10-info copy \[HEVC, AV1\]](#--dhdr10-info-copy-hevc-av1)
-  - [--dolby-vision-profile \<float\> \[HEVC\]](#--dolby-vision-profile-float-hevc)
-  - [--dolby-vision-rpu \<string\> \[HEVC\]](#--dolby-vision-rpu-string-hevc)
+  - [--dolby-vision-profile \<string\> \[HEVC, AV1\]](#--dolby-vision-profile-string-hevc-av1)
+  - [--dolby-vision-rpu \<string\> \[HEVC, AV1\]](#--dolby-vision-rpu-string-hevc-av1)
+  - [--dolby-vision-rpu copy \[HEVC, AV1\]](#--dolby-vision-rpu-copy-hevc-av1)
+  - [--dolby-vision-rpu-prm \<param1\>=\<value1\>\[,\<param2\>=\<value2\>\]...](#--dolby-vision-rpu-prm-param1value1param2value2)
   - [--aud](#--aud)
   - [--pic-struct](#--pic-struct)
   - [--buf-period](#--buf-period)
@@ -199,27 +201,35 @@
   - [--tcfile-in \<string\>](#--tcfile-in-string)
   - [--timebase \<int\>/\<int\>](#--timebase-intint)
   - [--input-hevc-bsf \<string\>](#--input-hevc-bsf-string)
+  - [--input-pixel-format \<string\>](#--input-pixel-format-string)
+  - [--offset-video-dts-advance](#--offset-video-dts-advance)
   - [--allow-other-negative-pts](#--allow-other-negative-pts)
 - [vppオプション](#vppオプション)
   - [vppフィルタの適用順](#vppフィルタの適用順)
   - [--vpp-colorspace \[\<param1\>=\<value1\>\[,\<param2\>=\<value2\>\]...\]](#--vpp-colorspace-param1value1param2value2)
+  - [--vpp-libplacebo-tonemapping \[\<param1\>=\<value1\>\]\[,\<param2\>=\<value2\>\],...](#--vpp-libplacebo-tonemapping-param1value1param2value2)
+  - [--vpp-libplacebo-tonemapping-lut \<string\>](#--vpp-libplacebo-tonemapping-lut-string)
   - [--vpp-rff](#--vpp-rff)
   - [--vpp-delogo \<string\>\[,\<param1\>=\<value1\>\]\[,\<param2\>=\<value2\>\]...](#--vpp-delogo-stringparam1value1param2value2)
   - [--vpp-afs \[\<param1\>=\<value1\>\[,\<param2\>=\<value2\>\]...\]](#--vpp-afs-param1value1param2value2)
   - [--vpp-nnedi \[\<param1\>=\<value1\>\[,\<param2\>=\<value2\>\]...\]](#--vpp-nnedi-param1value1param2value2)
   - [--vpp-yadif \[\<param1\>=\<value1\>\]](#--vpp-yadif-param1value1)
+  - [--vpp-decomb \[\<param1\>=\<value1\>\[,\<param2\>=\<value2\>\]...\]](#--vpp-decomb-param1value1param2value2)
   - [--vpp-deinterlace \<string\>](#--vpp-deinterlace-string)
   - [--vpp-decimate \[\<param1\>=\<value1\>\[,\<param2\>=\<value2\>\]...\]](#--vpp-decimate-param1value1param2value2)
   - [--vpp-mpdecimate \[\<param1\>=\<value1\>\[,\<param2\>=\<value2\>\]...\]](#--vpp-mpdecimate-param1value1param2value2)
   - [--vpp-convolution3d \[\<param1\>=\<value1\>\[,\<param2\>=\<value2\>\]...\]](#--vpp-convolution3d-param1value1param2value2)
   - [--vpp-smooth \[\<param1\>=\<value1\>\[,\<param2\>=\<value2\>\]...\]](#--vpp-smooth-param1value1param2value2)
   - [--vpp-denoise-dct \[\<param1\>=\<value1\>\]\[,\<param2\>=\<value2\>\],...](#--vpp-denoise-dct-param1value1param2value2)
+  - [--vpp-fft3d \[\<param1\>=\<value1\>\]\[,\<param2\>=\<value2\>\],...](#--vpp-fft3d-param1value1param2value2)
   - [--vpp-knn \[\<param1\>=\<value1\>\[,\<param2\>=\<value2\>\]...\]](#--vpp-knn-param1value1param2value2)
+  - [--vpp-nlmeans \[\<param1\>=\<value1\>\[,\<param2\>=\<value2\>\]...\]](#--vpp-nlmeans-param1value1param2value2)
   - [--vpp-pmd \[\<param1\>=\<value1\>\[,\<param2\>=\<value2\>\]...\]](#--vpp-pmd-param1value1param2value2)
   - [--vpp-denoise \<int\> or \[\<param1\>=\<value1\>\[,\<param2\>=\<value2\>\]...\]](#--vpp-denoise-int-or-param1value1param2value2)
   - [--vpp-image-stab \<string\>](#--vpp-image-stab-string)
   - [--vpp-mctf \[ "auto" or \<int\> \]](#--vpp-mctf--auto-or-int-)
   - [--vpp-subburn \[\<param1\>=\<value1\>\[,\<param2\>=\<value2\>\]...\]](#--vpp-subburn-param1value1param2value2)
+  - [--vpp-libplacebo-shader \[\<param1\>=\<value1\>\]\[,\<param2\>=\<value2\>\],...](#--vpp-libplacebo-shader-param1value1param2value2)
   - [--vpp-resize \<string\>](#--vpp-resize-string)
   - [--vpp-resize-mode \<string\>](#--vpp-resize-mode-string)
   - [--vpp-unsharp \[\<param1\>=\<value1\>\[,\<param2\>=\<value2\>\]...\]](#--vpp-unsharp-param1value1param2value2)
@@ -231,11 +241,13 @@
   - [--vpp-curves \[\<param1\>=\<value1\>\]\[,\<param2\>=\<value2\>\],...](#--vpp-curves-param1value1param2value2)
   - [--vpp-tweak \[\<param1\>=\<value1\>\[,\<param2\>=\<value2\>\]...\]](#--vpp-tweak-param1value1param2value2)
   - [--vpp-deband \[\<param1\>=\<value1\>\[,\<param2\>=\<value2\>\]...\]](#--vpp-deband-param1value1param2value2)
+  - [--vpp-libplacebo-deband \[\<param1\>=\<value1\>\]\[,\<param2\>=\<value2\>\],...](#--vpp-libplacebo-deband-param1value1param2value2)
   - [--vpp-pad \<int\>,\<int\>,\<int\>,\<int\>](#--vpp-pad-intintintint)
   - [--vpp-overlay \[\<param1\>=\<value1\>\]\[,\<param2\>=\<value2\>\],...](#--vpp-overlay-param1value1param2value2)
   - [--vpp-perc-pre-enc](#--vpp-perc-pre-enc)
   - [--vpp-perf-monitor](#--vpp-perf-monitor)
 - [制御系のオプション](#制御系のオプション)
+  - [--parallel \[\<int\>\] or \[\<string\>\]](#--parallel-int-or-string)
   - [-a, --async-depth \<int\>](#-a---async-depth-int)
   - [--input-buf \<int\>](#--input-buf-int)
   - [--output-buf \<int\>](#--output-buf-int)
@@ -260,6 +272,7 @@
   - [--avoid-idle-clock \<string\>\[=\<float\>\]](#--avoid-idle-clock-stringfloat)
   - [--lowlatency](#--lowlatency)
   - [--avsdll \<string\>](#--avsdll-string)
+  - [--vsdir \<string\> \[Windows専用\]](#--vsdir-string-windows専用)
   - [--process-codepage \<string\>](#--process-codepage-string)
   - [--task-perf-monitor](#--task-perf-monitor)
   - [--perf-monitor \[\<string\>\[,\<string\>\]...\]](#--perf-monitor-stringstring)
@@ -470,9 +483,10 @@ QSVEncCはデフォルトではUTF-8モードで動作するため、Avisynthス
 ### --vpy-mt
 入力ファイルをVapourSynthで読み込む。vpy-mtはマルチスレッド版。
 
-### --avsw
-avformat + sw decoderを使用して読み込む。
-ffmpegの対応するほとんどのコーデックを読み込み可能。
+### --avsw [&lt;string&gt;]
+avformat + sw decoderを使用して読み込む。ffmpegの対応するほとんどのコーデックを読み込み可能。
+
+追加のパラメータで使用するデコーダ名を指定可能。特に指定のない場合、デコーダは自動的に選択される。
 
 ### --avhw
 avformat + QSV decoderを使用して読み込む。
@@ -506,7 +520,9 @@ avformat + QSV decoderを使用して読み込む。
 読み込むフレーム数。 (注: 入力ベースである点に注意、出力ベースではない)
 
 ### --fps &lt;int&gt;/&lt;int&gt; or &lt;float&gt;
-入力フレームレートの設定。raw形式の場合は必須。
+--rawを使用した時の入力フレームレートの設定。--raw以外での使用は非推奨。
+
+raw形式の場合のみ有効で、その他の場合は無視されるか、fps推定のヒントとしてのみ扱われる。
 
 ### --input-res &lt;int&gt;x&lt;int&gt;
 入力解像度の設定。raw形式の場合は必須。
@@ -526,6 +542,8 @@ avformat + QSV decoderを使用して読み込む。
     指定解像度(指定枠)の縦横どちらかに合うよう、入力アスペクト比を維持しながらリサイズする。
     - increase ... 拡大してアスペクト比を維持する (指定枠に外接するよう調整)
     - decrease ... 縮小してアスペクト比を維持する (指定枠に収めるように調整)
+  - ignore_sar=&lt;bool&gt;  
+    負の値で自動リサイズする際、入出力のSAR比を無視して計算する。デフォルトでは無効(false)。
 
 - 使用例
   ```
@@ -547,9 +565,9 @@ raw読み込み時の入力色空間の設定。デフォルトはyv12。
 ```
 
 ### --output-csp &lt;string&gt;
-出力色空間の設定。デフォルトは i420。
+出力色空間の設定。デフォルトは yuv420。
 ```
-i420, i422, i444
+yuv420, yuv422, yuv444, rgb
 ```
 
 ### --output-depth &lt;int&gt;
@@ -713,20 +731,20 @@ best, higher, high, balanced(default), fast, faster, fastest
 
 - **必須パラメータ**
   下記パラメータのうち、必ずひとつは指定が必要。
-  - [icq](./QSVEncC_Options.en.md#--icq-int-icq-intelligent-const-quality-mode-default-23)=&lt;int&gt;  
-  - [la-icq](./QSVEncC_Options.en.md#--la-icq-int-la-icq-lookahead-based-icq-mode-default-23)=&lt;int&gt;  
-  - [cqp](./QSVEncC_Options.en.md#--cqp-int-or-intintint)=&lt;int&gt; or cqp=&lt;int&gt;:&lt;int&gt;:&lt;int&gt;  
-  - [cbr](./QSVEncC_Options.en.md#--cbr-int--cbr-constant-bitrate-mode)=&lt;int&gt;  
-  - [vbr](./QSVEncC_Options.en.md#--vbr-int--vbr-variable-bitrate-mode)=&lt;int&gt;  
-  - [avbr](./QSVEncC_Options.en.md#--avbr-int-avbr-adaptive-variable-bitrate-mode)=&lt;int&gt;  
-  - [la](./QSVEncC_Options.en.md#--la-int---la-lookahead-mode)=&lt;int&gt;  
-  - [la-hrd](./QSVEncC_Options.en.md#--la-hrd-int-la-hrd-hrd-compliant-lookahead-mode)=&lt;int&gt;  
-  - [vcm](./QSVEncC_Options.en.md#--vcm-int-vcm-video-conference-mode)=&lt;int&gt;  
-  - [qvbr](./QSVEncC_Options.en.md#--qvbr-int---qvbr-q-int-qvbr-quality-based-vbr-mode)=&lt;int&gt;  
+  - [icq](./QSVEncC_Options.ja.md#--icq-int-icq-intelligent-const-quality-mode-default-23)=&lt;int&gt;  
+  - [la-icq](./QSVEncC_Options.ja.md#--la-icq-int-la-icq-lookahead-based-icq-mode-default-23)=&lt;int&gt;  
+  - [cqp](./QSVEncC_Options.ja.md#--cqp-int-or-intintint)=&lt;int&gt; or cqp=&lt;int&gt;:&lt;int&gt;:&lt;int&gt;  
+  - [cbr](./QSVEncC_Options.ja.md#--cbr-int--cbr-constant-bitrate-mode)=&lt;int&gt;  
+  - [vbr](./QSVEncC_Options.ja.md#--vbr-int--vbr-variable-bitrate-mode)=&lt;int&gt;  
+  - [avbr](./QSVEncC_Options.ja.md#--avbr-int-avbr-adaptive-variable-bitrate-mode)=&lt;int&gt;  
+  - [la](./QSVEncC_Options.ja.md#--la-int---la-lookahead-mode)=&lt;int&gt;  
+  - [la-hrd](./QSVEncC_Options.ja.md#--la-hrd-int-la-hrd-hrd-compliant-lookahead-mode)=&lt;int&gt;  
+  - [vcm](./QSVEncC_Options.ja.md#--vcm-int-vcm-video-conference-mode)=&lt;int&gt;  
+  - [qvbr](./QSVEncC_Options.ja.md#--qvbr-int---qvbr-q-int-qvbr-quality-based-vbr-mode)=&lt;int&gt;  
 
 - **追加パラメータ**
-  - [max-bitrate](./QSVEncC_Options.en.md#--max-bitrate-int)=&lt;int&gt;  
-  - [qvbr-quality](./QSVEncC_Options.en.md#--qvbr-quality-int)=&lt;int&gt;  
+  - [max-bitrate](./QSVEncC_Options.ja.md#--max-bitrate-int)=&lt;int&gt;  
+  - [qvbr-quality](./QSVEncC_Options.ja.md#--qvbr-quality-int)=&lt;int&gt;  
 
 - Examples
   ```
@@ -944,18 +962,39 @@ HDR10+のメタデータを入力ファイルからそのままコピーしま�
 avhw読み込みでは、フレームの並び替えにタイムスタンプを使用するため、タイムスタンプの取得できないraw ESのような入力ファイルでは使用できません。
 こうした場合には、avsw読み込みを使用してください。 
 
-### --dolby-vision-profile &lt;float&gt; [HEVC]
-指定されたdolby visionプロファイルを適用します。
+### --dolby-vision-profile &lt;string&gt; [HEVC, AV1]
+指定されたdolby visionプロファイルを適用します。[--dolby-vision-rpu](#--dolby-vision-rpu-string)との併用が推奨です。
+
+"copy" は、入力ファイルのdolby visionプロファイルを適用します。 ([avhw](#--avhw)/[avsw](#--avsw)読み込みのみ)  
+
 ```
-5.0, 8.1, 8.2, 8.4
+unset, copy, 5.0, 8.1, 8.2, 8.4, 10.0, 10.1, 10.2, 10.4
 ```
 
-### --dolby-vision-rpu &lt;string&gt; [HEVC]
-指定のrpuファイルに含まれるdolby visionのmetadataを出力ファイルに挿入します。
+### --dolby-vision-rpu &lt;string&gt; [HEVC, AV1]
+指定のrpuファイルに含まれるdolby visionのmetadataを出力ファイルに挿入します。[--dolby-vision-profile](#--dolby-vision-profile-string)との併用が推奨です。
 
-現時点(2022年1月実装時点)では、このオプションを使用して出力した動画ファイルは、MediaInfoによりDolby Vision情報が検出されません。
+### --dolby-vision-rpu copy [HEVC, AV1]
+HEVCの入力ファイルから読み取ったdolby visionのmetadataを出力ファイルに挿入します。 [--dolby-vision-profile](#--dolby-vision-profile-string)との併用が推奨です。
 
-MediaInfoによるDolby Vision情報の検出を可能とするには、[tsMuxeR](https://github.com/justdan96/tsMuxer/releases) (nightly版) による再muxが必要です。
+avhw読み込みでは、フレームの並び替えにタイムスタンプを使用するため、タイムスタンプの取得できないraw ESのような入力ファイルでは使用できません。
+こうした場合には、avsw読み込みを使用してください。 
+
+### --dolby-vision-rpu-prm &lt;param1&gt;=&lt;value1&gt;[,&lt;param2&gt;=&lt;value2&gt;]...  
+
+```--dolby-vision-rpu```用のパラメータを指定する。
+
+- **パラメータ**
+  
+  - crop=&lt;bool&gt;
+
+    RPUのactive area offsetsを0に設定する (レターボックスなしの意味)。
+
+- 使用例
+  ```
+  例:  --dolby-vision-rpu-prm crop=true
+  ```
+
 
 ### --aud
 Access Unit Delimiter NALを挿入する。
@@ -1643,6 +1682,12 @@ switch hevc bitstream filter used for hw decoder input. (for debug purpose)
   - libavcodec  
     libavcodec の hevc_mp4toannexb bitstream filter を使用する。
 
+### --input-pixel-format &lt;string&gt;
+avdeviceで使用する "pixel_format" の設定。(それ以外での用途での使用は想定していません)
+
+### --offset-video-dts-advance  
+先頭のdtsが0になるよう、Bフレームによる遅延の分だけtimestampを補正します。
+
 ### --allow-other-negative-pts  
 音声・字幕において負のtimestampを許容する。原則デバッグ用。
 
@@ -1656,23 +1701,28 @@ vppフィルタの適用順は固定で、コマンドラインの順序によ�
 
 - フィルター一覧
   - [--vpp-colorspace](#--vpp-colorspace-param1value1param2value2)
+  - [--vpp-libplacebo-tonemapping](#--vpp-libplacebo-tonemapping-param1value1param2value2)
   - [--vpp-rff](#--vpp-rff)
   - [--vpp-delogo](#--vpp-delogo-stringparam1value1param2value2)
   - [--vpp-afs](#--vpp-afs-param1value1param2value2)
   - [--vpp-nnedi](#--vpp-nnedi-param1value1param2value2)
   - [--vpp-yadif](#--vpp-yadif-param1value1)
+  - [--vpp-decomb](#--vpp-decomb-param1value1param2value2)
   - [--vpp-deinterlace](#--vpp-deinterlace-string)
   - [--vpp-decimate](#--vpp-decimate-param1value1param2value2)
   - [--vpp-mpdecimate](#--vpp-mpdecimate-param1value1param2value2)
   - [--vpp-convolution3d](#--vpp-convolution3d-param1value1param2value2)
   - [--vpp-smooth](#--vpp-smooth-param1value1param2value2)
   - [--vpp-denoise-dct](#--vpp-denoise-dct-param1value1param2value2)
+  - [--vpp-fft3d](#--vpp-fft3d-param1value1param2value2)
+  - [--vpp-nlmeans](#--vpp-nlmeans-param1value1param2value2)
   - [--vpp-knn](#--vpp-knn-param1value1param2value2)
   - [--vpp-pmd](#--vpp-pmd-param1value1param2value2)
   - [--vpp-denoise](#--vpp-denoise-int-or-param1value1param2value2)
   - [--vpp-image-stab](#--vpp-image-stab-string)
   - [--vpp-mctf](#--vpp-mctf-auto-or-int)
   - [--vpp-subburn](#--vpp-subburn-param1value1param2value2)
+  - [--vpp-libplacebo-shader](#--vpp-libplacebo-shader-param1value1param2value2)
   - [--vpp-resize](#--vpp-resize-string)
   - [--vpp-unsharp](#--vpp-unsharp-param1value1param2value2)
   - [--vpp-edgelevel](#--vpp-edgelevel-param1value1param2value2)
@@ -1682,6 +1732,7 @@ vppフィルタの適用順は固定で、コマンドラインの順序によ�
   - [--vpp-curves](#--vpp-curves-param1value1param2value2)
   - [--vpp-tweak](#--vpp-tweak-param1value1param2value2)
   - [--vpp-deband](#--vpp-deband-param1value1param2value2)
+  - [--vpp-libplacebo-deband](#--vpp-libplacebo-deband-param1value1param2value2)
   - [--vpp-padding](#--vpp-pad-intintintint)
   - [--vpp-overlay](#--vpp-overlay-param1value1param2value2)
   - [--vpp-perc-pre-enc](#--vpp-perc-pre-enc)
@@ -1780,6 +1831,159 @@ vppフィルタの適用順は固定で、コマンドラインの順序によ�
   例3: hdr2sdr使用時の追加パラメータの指定例 (下記例ではデフォルトと同じ意味)
   --vpp-colorspace hdr2sdr=hable,source_peak=1000.0,ldr_nits=100.0,a=0.22,b=0.3,c=0.1,d=0.2,e=0.01,f=0.3
   ```
+
+
+
+### --vpp-libplacebo-tonemapping [&lt;param1&gt;=&lt;value1&gt;][,&lt;param2&gt;=&lt;value2&gt;],...
+
+[libplacebo](https://code.videolan.org/videolan/libplacebo)を使用したトーンマッピングを行います。Windowsでのみ対応しています。
+
+- **パラメータ**
+  - src_csp=&lt;string&gt;  
+    入力の色空間を指定します。
+    ```
+    auto, sdr, hdr10, hlg, dovi, rgb
+    ```
+  
+  - dst_csp=&lt;string&gt;  
+    出力の色空間を指定します。
+    ```
+    auto, sdr, hdr10, hlg, dovi, rgb
+    ```
+
+  - src_max=&lt;float&gt;  
+    入力の最大輝度 (nits)。(デフォルト: 自動、可能なら入力ファイルから情報を取得、できない場合は 1000.0 (HDR) / 203.0 (SDR))
+
+  - src_min=&lt;float&gt;  
+    入力の最小輝度 (nits)。(デフォルト: 自動、可能なら入力ファイルから情報を取得、できない場合は 0.005 (HDR) / 0.2023 (SDR))
+
+  - dst_max=&lt;float&gt;  
+    出力の最大輝度 (nits)。(デフォルト: 自動、可能ならパラメータから情報を取得、できない場合は 1000.0 (HDR) / 203.0 (SDR))
+
+  - dst_min=&lt;float&gt;  
+    出力の最小輝度 (nits)。(デフォルト: 自動、可能ならパラメータから情報を取得、できない場合は 0.005 (HDR) / 0.2023 (SDR))
+
+  - dynamic_peak_detection=&lt;bool&gt;  
+    HDRトーンマッピングの品質を最適化するための統計の計算を有効にします。デフォルト: true
+
+  - smooth_period=&lt;float&gt;  
+    スムージング係数。デフォルト: 20.0
+
+  - scene_threshold_low=&lt;float&gt;  
+    シーン変更検出の下限閾値 (dB)。デフォルト: 1.0
+
+  - scene_threshold_high=&lt;float&gt;  
+    シーン変更検出の上限閾値 (dB)。デフォルト: 3.0
+
+  - percentile=&lt;float&gt;  
+    輝度ヒストグラムの考慮するパーセンタイル。デフォルト: 99.995
+
+  - black_cutoff=&lt;float&gt;  
+    黒レベルのカットオフ強度 (PQ%)。デフォルト: 1.0
+
+  - gamut_mapping=&lt;string&gt;  
+    ガンママッピングモード。 (デフォルト: perceptual)
+    ```
+    clip, perceptual, softclip, relative, saturation, absolute, desaturate, darken, highlight, linear
+    ```
+
+  - tonemapping_function=&lt;string&gt;  
+    トーンマッピング関数。 (デフォルト: bt2390)
+    ```
+    clip, st2094-40, st2094-10, bt2390, bt2446a, spline, reinhard, mobius, hable, gamma, linear, linearlight
+    ```
+
+  - tonemapping_function=st2094-40, st2094-10, splineの場合  
+  
+    - knee_adaptation=&lt;float&gt;   (float, 0.0 - 1.0, デフォルト: 0.4)  
+      PQ空間における入力と出力の平均輝度の比率としてニーポイントを設定します。
+      - 1.0: 常に入力シーンの平均を調整された出力の平均に適応させます
+      - 0.0: シーンの輝度を一切変更しません
+    
+    - knee_min=&lt;float&gt;   (0.0 - 0.5, デフォルト: 0.1)  
+      PQ輝度範囲の比率における最小ニーポイント。
+    
+    - knee_max=&lt;float&gt;   (0.5 - 1.0, デフォルト: 0.8)  
+      PQ輝度範囲の比率における最大ニーポイント。
+    
+    - knee_default=&lt;float&gt;   (knee_min - knee_max, デフォルト: 0.4)  
+      入力シーンの平均メタデータが利用できない場合に使用されるデフォルトのニーポイント。
+  
+  - tonemapping_function=bt2390の場合
+
+    - knee_offset=&lt;float&gt;   (0.5 - 2.0, デフォルト: 1.0)  
+      ニーポイントのオフセット。
+  
+  - tonemapping_function=splineの場合
+
+    - slope_tuning=&lt;float&gt;   (0.0 - 10.0, デフォルト: 1.5)  
+      スプライン曲線の傾きの係数。
+    
+    - slope_offset=&lt;float&gt;   (0.0 - 1.0, デフォルト: 0.2)  
+      スプライン曲線の傾きのオフセット。
+    
+    - spline_contrast=&lt;float&gt;   (0.0 - 1.5, デフォルト: 0.5)  
+      スプライン関数のコントラスト。高い値は中間調を保持しますが、影や高輝度部分の詳細を失う可能性があります。
+  
+  - tonemapping_function=reinhardの場合
+
+    - reinhard_contrast=&lt;float&gt;   (0.0 - 1.0, デフォルト: 0.5)  
+      reinhard関数のディスプレイピークにおけるコントラスト係数。
+  
+  - tonemapping_function=mobius, gammaの場合
+
+    - linear_knee=&lt;float&gt;   (0.0 - 1.0, デフォルト: 0.3)  
+  
+  - tonemapping_function=linear, linearlightの場合
+
+    - exposure=&lt;float&gt;   (0.0 - 10.0, デフォルト: 1.0)  
+      適用される線形露出/ゲイン。
+
+  - metadata=&lt;int&gt;  
+    トーンマッピングに使用するデータソース。
+    ```
+    any, none, hdr10, hdr10plus, cie_y
+    ```
+
+  - contrast_recovery=&lt;float&gt;  
+    コントラスト回復強度。デフォルト: 0.3
+
+  - contrast_smoothness=&lt;float&gt;  
+    コントラスト回復のローパスカーネルサイズ。デフォルト: 3.5
+
+  - visualize_lut=&lt;bool&gt;  
+    トーンマッピングカーブ/LUTを可視化します。デフォルト: false
+
+  - show_clipping=&lt;bool&gt;  
+    クリップされたピクセルを可視化します。デフォルト: false
+
+  - use_dovi=&lt;bool&gt;  
+    Dolby Vision RPUをST2086メタデータとして使用するかどうか。デフォルト: auto (Dolby Visionからトーンマッピングする場合に有効)
+
+  - dst_pl_transfer=&lt;string&gt;  
+    出力の転送関数。```dst_pl_colorprim```と一緒に使用する必要があります。
+    ```
+    unknown, srgb, bt1886, linear, gamma18, gamma20, gamma22, gamma24, gamma26, gamma28,
+    prophoto, st428, pq, hlg, vlog, slog1, slog2
+    ```
+
+  - dst_pl_colorprim=&lt;string&gt;  
+    出力の色域。```dst_pl_transfer```と一緒に使用する必要があります。
+    ```
+    unknown, bt601_525, bt601_625, bt709, bt470m, ebu_3213, bt2020, apple, adobe,
+    prophoto, cie_1931, dci_p3, display_p3, v_gamut, s_gamut, film_c, aces_ap0, aces_ap1
+    ```
+
+- **使用例**
+  ```
+  例: Dolby VisionからSDRへのトーンマッピング
+  --vpp-libplacebo-tonemapping src_csp=dovi,dst_csp=sdr
+  ```
+
+### --vpp-libplacebo-tonemapping-lut &lt;string&gt;
+
+  --vpp-libplacebo-tonemapping で使用するlutファイルの指定。
+
 
 ### --vpp-rff
 Repeat Field Flagを反映して、フレームを再構築する。rffによる音ズレ問題が解消できる。[--avhw](#--avhw-string), [--avsw](#--avsw-string)使用時のみ有効。
@@ -2064,6 +2268,23 @@ yadifによるインタレ解除を行う。
       60fps化を行う(tff)。
     - bob_bff   
       60fps化を行う(bff)。
+  
+### --vpp-decomb [&lt;param1&gt;=&lt;value1&gt;[,&lt;param2&gt;=&lt;value2&gt;]...]  
+decombによるインタレ解除を行う。
+
+- **パラメータ**
+  
+  - full=&lt;bool&gt;  
+    すべてのフレームをインタレ解除する。 デフォルト: on。
+
+  - threshold=&lt;int&gt;  
+    フレームがインタレ解除が必要か判定する際の閾値。デフォルト 20 (0 - 255)。
+
+  - dthreshold=&lt;int&gt;
+    縞検出の閾値。デフォルト 7 (0 - 255)。
+
+  - blend=&lt;bool&gt;   
+    補間の代わりにブレンドする。デフォルト: off。
 
 ### --vpp-deinterlace &lt;string&gt;
 GPUによるインタレ解除を使用する。"normal", "bob"はわりときれいに解除されるが、"it"はあまりきれいに解除できない。
@@ -2201,6 +2422,39 @@ GPUによるインタレ解除を使用する。"normal", "bob"はわりとき�
   - block_size=&lt;int&gt;  (default=8)  
     - 8
     - 16 (slow)
+
+### --vpp-fft3d [&lt;param1&gt;=&lt;value1&gt;][,&lt;param2&gt;=&lt;value2&gt;],...
+
+  FFTベースのノイズ除去フィルタ。
+
+- **パラメータ**
+  - sigma=&lt;float&gt;  
+    フィルタ強度。 (default=1.0, 0.0 - 100.0)
+  
+  - amount=&lt;float&gt;  (default=1.0, 0.0 - 1.0)    
+    ノイズ除去量。
+    
+  - block_size=&lt;int&gt;  (default=32)  
+    FFTの計算ブロックサイズ。
+    - 8
+    - 16
+    - 32
+    - 64
+
+  - overlap=&lt;float&gt;  (default=0.5, 0.2 - 0.8)    
+    FFTブロック同士のオーバーラップサイズ。アーティファクト発生を防ぐため、0.5以上が推奨。
+  
+  - method=&lt;int&gt; (default = 0)
+    - 0 ... wiener法
+    - 1 ... 閾値による打ち切り
+
+  - temporal=&lt;int&gt; (default = 1)
+    - 0 ... 空間方向のフィルタリングのみ
+    - 1 ... 時間方向のフィルタリングも行う
+
+  - prec=&lt;string&gt; (default = auto)
+    - auto ... 可能な場合fp16(半精度浮動小数点)で計算する (高速)
+    - fp32 ... 常にfp32(単精度浮動小数点)で計算する
     
   
 ### --vpp-knn [&lt;param1&gt;=&lt;value1&gt;[,&lt;param2&gt;=&lt;value2&gt;]...]
@@ -2222,6 +2476,38 @@ GPUによるインタレ解除を使用する。"normal", "bob"はわりとき�
   ```
   例: すこし強め
   --vpp-knn radius=3,strength=0.10,lerp=0.1
+  ```
+
+### --vpp-nlmeans [&lt;param1&gt;=&lt;value1&gt;[,&lt;param2&gt;=&lt;value2&gt;]...]
+Non local meansを用いたノイズ除去フィルタ。
+
+- **パラメータ**
+  - sigma=&lt;float&gt;  (default=0.005, 0.0 -)   
+    ノイズの分散。 より大きな値にするとより強くノイズ除去を行う。
+  
+  - h=&lt;float&gt;  (default=0.05, 0.0 <)   
+    パラメータ。 値を大きくすると重みがより均一になる。
+  
+  - patch=&lt;int&gt;  (default=5, 3 - )  
+    パッチのサイズ。奇数で指定。
+  
+  - search=&lt;int&gt;  (default=11, 3 - )  
+    探索範囲。奇数で指定。 
+  
+  - fp16=&lt;string&gt;  (default=blockdiff)  
+    - none  
+      fp16を使用せず、fp32を使用する。高精度だが遅い。
+
+    - blockdiff  
+      ブロックの差分計算にのみfp16を使用する。精度と速度のバランスが良い。
+
+    - all  
+      重みの計算にもfp16を使用する。高速だが低精度。
+  
+- 使用例
+  ```
+  例: 探索範囲を広げてより高精度に
+  --vpp-nlmeans patch=7,search=15
   ```
 
 ### --vpp-pmd [&lt;param1&gt;=&lt;value1&gt;[,&lt;param2&gt;=&lt;value2&gt;]...]
@@ -2337,24 +2623,163 @@ image stabilizerのモードの指定。
   --vpp-subburn filename="subtitle.sjis.ass",charcode=sjis,shaping=complex
   ```
 
+### --vpp-libplacebo-shader [&lt;param1&gt;=&lt;value1&gt;][,&lt;param2&gt;=&lt;value2&gt;],...
+
+[libplacebo](https://code.videolan.org/videolan/libplacebo)を使用して指定されたパスのカスタムシェーダーを適用します。Windowsでのみ対応しています。
+
+- **パラメータ**
+    - shader=&lt;string&gt;  
+      対象のshaderファイルのパス。(glslファイル)
+
+    - res=&lt;int&gt;x&lt;int&gt;  
+      フィルタの出力解像度。
+
+    - colorsystem=&lt;string&gt;  
+      使用する色空間を指定。デフォルトでは入力ファイルから自動的に設定される。
+      ```
+      unknown, bt601, bt709, smpte240m, bt2020nc, bt2020c, bt2100pq, bt2100hlg, dolbyvision, ycgco, rgb, xyz
+      ```
+
+    - transfer=&lt;string&gt;  
+      出力のトランスファ関数を指定。デフォルトでは入力ファイルから自動的に設定される。
+      ```
+      unknown, srgb, bt1886, linear,
+      gamma18, gamma20, gamma22, gamma24, gamma26, gamma28,
+      prophoto, st428, pq, hlg, vlog, slog1, slog2
+      ```
+
+    - resampler=&lt;string&gt;  
+      リサンプルが必要な場合に使用するフィルタ関数を指定。デフォルトは libplacebo-ewa-lanczos 。
+      ```
+      libplacebo-spline16, libplacebo-spline36, libplacebo-spline64, libplacebo-nearest,
+      libplacebo-bilinear, libplacebo-gaussian, libplacebo-sinc, libplacebo-lanczos, 
+      libplacebo-ginseng, libplacebo-ewa-jinc, libplacebo-ewa-lanczos, 
+      libplacebo-ewa-lanczossharp, libplacebo-ewa-lanczos4sharpest, 
+      libplacebo-ewa-ginseng, libplacebo-ewa-hann, libplacebo-ewa-hanning, 
+      libplacebo-bicubic, libplacebo-triangle, libplacebo-hermite, libplacebo-catmull-rom, 
+      libplacebo-mitchell, libplacebo-mitchell-clamp, libplacebo-robidoux, 
+      libplacebo-robidouxsharp, libplacebo-ewa-robidoux, libplacebo-ewa-robidouxsharp
+      ```
+
+    - radius=&lt;float&gt;  
+      拡大縮小アルゴリズムの半径。vpp-resizeの表で "resizable" にチェックが入っているもののみ有効。 (0.0 - 16.0、デフォルト = 自動)
+
+    - clamp=&lt;float&gt;  
+      負の重みに対するクランプ係数。1.0にすると負の重みが0になります。(0.0 -   1.    0、デフォルト = 0.0)
+
+    - taper=&lt;float&gt;  
+     重み関数の中心部分を平坦化します。(0.0 - 1.0、デフォルト = 0.0)
+
+    - blur=&lt;float&gt;  
+      追加のぼかし係数。(0.0 - 100.0、デフォルト = 0.0)
+
+    - antiring=&lt;float&gt;  
+      アンチリンギング強度。(0.0 - 1.0、デフォルト = 0.0)
+    
+    - linear=&lt;bool&gt;  
+      linearize image before processing.
+
+
+- 使用例
+    ``` 
+    例: カスタムシェーダを使用した 1280x720 -> 2560x1440 へのリサイズ。
+    --vpp-libplacebo-shader shader=default-shader-pack-2.1.0\Anime4K_Upscale_CNN_x2_L.glsl,res=2560x1440
+    ```
+
 
 ### --vpp-resize &lt;string&gt;
 リサイズのアルゴリズムを指定する。
 
-- **パラメータ**
-  | オプション名 | 説明 |
-  |:---|:---|
-  | auto     | 自動的に適切なものを選択 |
-  | simple   | Nearest Neighbor法による高速なリサイズ |
-  | advanced | 高品質なリサイズ |
-  | bilinear | 線形補間 |
-  | bicubic  | 双3次補間 |
-  | spline16 | 4x4 Spline補間 |
-  | spline36 | 6x6 Spline補間 |
-  | spline64 | 8x8 Spline補間 |
-  | lanczos2 | 4x4 lanczos補間 |
-  | lanczos3 | 6x6 lanczos補間 |
-  | lanczos4 | 8x8 lanczos補間 |
+- **オプション**
+  - algo=&lt;string&gt;  
+    デフォルトは "auto" で自動的に適切なものを選択する。
+
+    - VPLの高速hwリサイズフィルタ
+
+      | 名前 | 説明 |
+      |:---|:---|
+      | simple   | Nearest Neighbor法による高速なリサイズ |
+      | advanced | 高品質なリサイズ |
+
+    - OpenCLで実装したリサイズフィルタ
+  
+      | 名前 | 説明 |
+      |:---|:---|
+      | bilinear      | 線形補間                                   |
+      | bicubic       | 双3次補間                                  |
+      | spline16      | 4x4 Spline補間                             |
+      | spline36      | 6x6 Spline補間                             |
+      | spline64      | 8x8 Spline補間                             |
+      | lanczos2      | 4x4 lanczos補間                            |
+      | lanczos3      | 6x6 lanczos補間                            |
+      | lanczos4      | 8x8 lanczos補間                            |
+
+    - [libplacebo](https://code.videolan.org/videolan/libplacebo)ライブラリのリサイズフィルタ
+    
+      | 名前 | 説明 | resizable |
+      |:---|:---|:---:|
+      | libplacebo-spline16      | 4x4 Spline補間                       | |
+      | libplacebo-spline36      | 6x6 Spline補間                       | |
+      | libplacebo-spline64      | 8x8 Spline補間                       | |
+      | libplacebo-nearest       | 最近傍点選択                         | |
+      | libplacebo-bilinear      | 線形補間                             | &check; |
+      | libplacebo-gaussian      | ガウス補間                           | &check; |
+      | libplacebo-sinc          | Sinc補間                             | &check; |
+      | libplacebo-lanczos       | Lanczos補間                          | &check; |
+      | libplacebo-ginseng       | Ginseng補間                          | &check; |
+      | libplacebo-ewa-jinc      | EWA Jinc補間                         | &check; |
+      | libplacebo-ewa-lanczos   | EWA Lanczos補間                      | &check; |
+      | libplacebo-ewa-lanczossharp | EWA Lanczos Sharp補間             | &check; |
+      | libplacebo-ewa-lanczos4sharpest | EWA Lanczos 4 Sharpest補間    | &check; |
+      | libplacebo-ewa-ginseng  | EWA Ginseng補間                       | &check; |
+      | libplacebo-ewa-hann     | EWA Hann補間                          | &check; |
+      | libplacebo-ewa-hanning  | EWA Hanning補間                       | &check; |
+      | libplacebo-bicubic      | 双3次補間                             | |
+      | libplacebo-triangle     | 三角補間                              | |
+      | libplacebo-hermite      | Hermite補間                           | |
+      | libplacebo-catmull-rom  | Catmull-Rom補間                       | |
+      | libplacebo-mitchell     | Mitchell補間                          | |
+      | libplacebo-mitchell-clamp | Mitchell Clamp補間                  | |
+      | libplacebo-robidoux     | Robidoux補間                          | |
+      | libplacebo-robidouxsharp | Robidoux Sharp補間                   | |
+      | libplacebo-ewa-robidoux | EWA Robidoux補間                      | |
+      | libplacebo-ewa-robidouxsharp | EWA Robidoux Sharp補間           | |
+    
+      Windowsのx64版のみ対応です。
+
+      - 追加パラメータ
+
+        - pl-radius=&lt;float&gt;
+
+          libplacebo-resampleで使用される拡大縮小アルゴリズムの半径。表で "resizable" にチェックが入っているもののみ有効。 (0.0 - 16.0、デフォルト = 自動)
+      
+        - pl-clamp=&lt;float&gt;
+
+          libplacebo-resampleで使用される負の重みに対するクランプ係数。1.0にすると負の重みが0になります。(0.0 -   1.    0、デフォルト = 0.0)
+      
+        - pl-taper=&lt;float&gt;
+
+          libplacebo-resampleの重み関数の中心部分を平坦化します。(0.0 - 1.0、デフォルト = 0.0)
+      
+        - pl-blur=&lt;float&gt;
+
+          libplacebo-resampleの追加のぼかし係数。(0.0 - 100.0、デフォルト = 0.0)
+      
+        - pl-antiring=&lt;float&gt;
+
+          libplacebo-resampleのアンチリンギング強度。(0.0 - 1.0、デフォルト = 0.0)
+
+- **使用例**
+  ```
+  例: spline64を使用する (短縮表記)
+  --vpp-resize spline64
+
+  例: spline64を使用する
+  --vpp-resize algo=spline64
+
+  例: libplaceboのリサイズフィルタを使用する
+  --vpp-resize algo=libplacebo-sinc,pl-radius=3.0,pl-antiring=0.5
+  ```
 
 ### --vpp-resize-mode &lt;string&gt;
 リサイザのモードを指定する。
@@ -2507,6 +2932,27 @@ GPUによるディテールの強調を行う。0 - 100 の間でディテール
   - hue=&lt;float&gt; (default=0.0, -180 - 180)  
   
   - swapuv=&lt;bool&gt;  (default=false)
+
+  - y_offset=&lt;float&gt; (default=0.0, -1.0 - 1.0)  
+  - y_gain=&lt;float&gt; (default=1.0, -2.0 - 2.0)  
+
+  - cb_offset=&lt;float&gt; (default=0.0, -1.0 - 1.0)  
+  - cb_gain=&lt;float&gt; (default=1.0, -2.0 - 2.0)  
+
+  - cr_offset=&lt;float&gt; (default=0.0, -1.0 - 1.0)  
+  - cr_gain=&lt;float&gt; (default=1.0, -2.0 - 2.0)  
+
+  - r_offset=&lt;float&gt; (default=0.0, -1.0 - 1.0)  
+  - r_gain=&lt;float&gt; (default=1.0, -2.0 - 2.0)  
+  - r_gamma=&lt;float&gt; (default=1.0, 0.1 - 10.0)  
+
+  - g_offset=&lt;float&gt; (default=0.0, -1.0 - 1.0)  
+  - g_gain=&lt;float&gt; (default=1.0, -2.0 - 2.0)  
+  - g_gamma=&lt;float&gt; (default=1.0, 0.1 - 10.0)  
+
+  - b_offset=&lt;float&gt; (default=0.0, -1.0 - 1.0)  
+  - b_gain=&lt;float&gt; (default=1.0, -2.0 - 2.0)  
+  - b_gamma=&lt;float&gt; (default=1.0, 0.1 - 10.0)  
   
 - 使用例
   ```
@@ -2558,6 +3004,43 @@ GPUによるディテールの強調を行う。0 - 100 の間でディテール
   ```
 
 
+### --vpp-libplacebo-deband [&lt;param1&gt;=&lt;value1&gt;][,&lt;param2&gt;=&lt;value2&gt;],...
+
+  [libplacebo](https://code.videolan.org/videolan/libplacebo)を使用したバンディング低減フィルタ。Windowsでのみ対応しています。
+
+- **Parameters**
+  - iterations=&lt;int&gt;  
+    イテレーション数。 (default=1, 0-)
+
+  - threshold=&lt;float&gt;  
+    カットオフ閾値。 (default=4.0, 0-)
+
+  - radius=&lt;float&gt;  
+    半径 (default=16.0, 0-)
+
+  - grain_y=&lt;float&gt;  
+    輝度用の追加ノイズ。 (default=6.0, 0-)
+
+  - grain_c=&lt;float&gt;  
+    色差用の追加ノイズ。 (default=grain_y, 0-)
+
+  - dither=&lt;string&gt;  
+    ディザリングモード、8bitのみ。
+    - none
+    - blue_noise (default)
+    - ordered_lut
+    - ordered_fixed
+    - white_noise
+
+  - lut_size=&lt;int&gt;  
+    ディザリング用のLUTのサイズ。 (default=64)
+    ```2, 4, 8, 16, 32, 64, 128, 256 ```
+  
+- 使用例
+  ```
+  例:
+  --vpp-libplacebo-deband iterations=1,radius=32
+  ```
 
 ### --vpp-pad &lt;int&gt;,&lt;int&gt;,&lt;int&gt;,&lt;int&gt;
 指定のピクセル数(偶数)分のパディングを行う。左、上、右、下の順にピクセル数で指定する。
@@ -2608,6 +3091,34 @@ perceptual pre encode filterを有効にする。
 
 
 ## 制御系のオプション
+
+### --parallel [&lt;int&gt;] or [&lt;string&gt;]
+ファイル分割による並列エンコードを行う。入力ファイルを複数のチャンクに分割し、それぞれを別スレッドで並列にエンコードすることで、処理を高速化する。
+
+- **制約事項**
+  以下の場合、並列エンコードは利用できず、自動的に無効化されます。
+  - 入力がパイプの場合
+  - 入力がシーク不可能な場合
+  - フレームのタイムスタンプが不安定な場合
+  - エンコードしない場合 (-c raw)
+  - --dynamic-rcが指定されている場合
+  - --trimオプションが指定されている場合
+  - --timecodeオプションが指定されている場合
+  - --tcfile-inオプションが指定されている場合
+  - --keyfileオプションが指定されている場合
+  - --key-on-chapterオプションが有効な場合
+  - ssim/psnr/vmafが有効な場合
+  - --vpp-subburn（字幕焼きこみ）が指定されている場合
+  - --vpp-fruc（フレーム補間）が有効な場合
+
+- **使用例**
+  ```
+  例: 自動で並列数を決定
+  --parallel auto
+
+  例: 3並列で実行
+  --parallel 3
+  ```
 
 ### -a, --async-depth &lt;int&gt;
 QSVパイプラインに先行投入するフレーム数を指定する。
@@ -2860,6 +3371,9 @@ avsw/avhw読み込み時のデバッグ情報出力。
 
 ### --avsdll &lt;string&gt;
 使用するAvsiynth.dllを指定するオプション。特に指定しない場合、システムのAvisynth.dllが使用される。
+
+### --vsdir &lt;string&gt; [Windows専用]
+VapoursynthのPortable版を使用する際に、インストールしたフォルダを指定する。特に指定しない場合、システムにインストールされたVapoursynthが使用される。
 
 ### --process-codepage &lt;string&gt;  
 - **パラメータ**  

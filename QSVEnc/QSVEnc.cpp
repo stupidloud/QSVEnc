@@ -196,6 +196,8 @@ BOOL func_output( OUTPUT_INFO *oip ) {
     }
     conf_out = g_conf;
 
+    init_enc_prm(&conf_out, &pe, oip, &g_sys_dat);
+
     //ログウィンドウを開く
     open_log_window(oip, &g_sys_dat, 1, 1);
     if (conf_not_initialized) {
@@ -249,6 +251,11 @@ BOOL func_output( OUTPUT_INFO *oip ) {
         g_sys_dat.exstg->save_last_out_stg();
     }
     free_enc_prm(&pe);
+
+    // 元に戻す
+    if (pe.org_save_file_name) {
+        oip->savefile = pe.org_save_file_name;
+    }
 
     return (ret & AUO_RESULT_ERROR) ? FALSE : TRUE;
 }

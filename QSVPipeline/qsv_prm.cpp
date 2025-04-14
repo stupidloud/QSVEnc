@@ -92,6 +92,7 @@ sVppParams::sVppParams() :
     denoise(),
     mctf(),
     detail(),
+    aiSuperRes(),
     percPreEnc(false) {
 
 }
@@ -116,6 +117,7 @@ QSVRCParam::QSVRCParam() :
     encMode(0),
     bitrate(0),
     maxBitrate(0),
+    vbvBufSize(0),
     avbrAccuarcy(0),
     avbrConvergence(0),
     qp(),
@@ -259,7 +261,7 @@ sInputParams::sInputParams() :
     nTrellis(0),
     nAsyncDepth(0),
     nLookaheadDS(),
-    tuneQuality(MFX_ENCODE_TUNE_DEFAULT),
+    tuneQuality(MFX_ENCODE_TUNE_OFF),
     scenarioInfo(MFX_SCENARIO_UNKNOWN),
     bDisableTimerPeriodTuning(false),
     intraRefreshCycle(0),
@@ -304,15 +306,16 @@ sInputParams::~sInputParams() {
 
 }
 
-void sInputParams::applyDOVIProfile() {
+void sInputParams::applyDOVIProfile(const RGYDOVIProfile inputProfile) {
 #if !FOR_AUO
     if (codec != RGY_CODEC_HEVC) {
         return;
     }
-    if (common.doviProfile == 0) {
+    auto targetDoviProfile = (common.doviProfile == RGY_DOVI_PROFILE_COPY) ? inputProfile : common.doviProfile;
+    if (targetDoviProfile == 0) {
         return;
     }
-    auto profile = getDOVIProfile(common.doviProfile);
+    auto profile = getDOVIProfile(targetDoviProfile);
     if (profile == nullptr) {
         return;
     }

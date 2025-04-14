@@ -39,6 +39,7 @@
 #include "rgy_bitstream.h"
 #include "convert_csp.h"
 #include <deque>
+#include <set>
 #include <atomic>
 #include <thread>
 #include <cassert>
@@ -52,6 +53,7 @@ static const uint32_t AV_FRAME_MAX_REORDER = 16;
 static const int FRAMEPOS_POC_INVALID = -1;
 
 static const char* HDR10PLUS_METADATA_KEY = "rgy_hdr10plus_metadata";
+static const char* DOVI_RPU_METADATA_KEY = "rgy_dovi_rpu_metadata";
 
 enum RGYPtsStatus : uint32_t {
     RGY_PTS_UNKNOWN           = 0x00,
@@ -154,6 +156,8 @@ public:
         m_streamPtsStatus(RGY_PTS_UNKNOWN),
         m_lastPoc(0),
         m_firstKeyframePts(AV_NOPTS_VALUE),
+        m_ptsAllInvalidPtsStartPointPts(AV_NOPTS_VALUE),
+        m_ptsAllInvalidPtsStartPointIndex(0),
         m_maxPts(0),
         m_PAFFRewind(0),
         m_ptsWrapArroundThreshold(0xFFFFFFFF),
@@ -222,6 +226,8 @@ public:
         m_streamPtsStatus = RGY_PTS_UNKNOWN;
         m_lastPoc = 0;
         m_firstKeyframePts = AV_NOPTS_VALUE;
+        m_ptsAllInvalidPtsStartPointPts = AV_NOPTS_VALUE;
+        m_ptsAllInvalidPtsStartPointIndex = 0;
         m_maxPts = 0;
         m_PAFFRewind = 0;
         m_ptsWrapArroundThreshold = 0xFFFFFFFF;
@@ -399,6 +405,7 @@ public:
         int nInvalidPtsCountNonKeyFrame = 0;
         int nInvalidDuration = 0;
         bool bFractionExists = std::abs(durationHintifPtsAllInvalid - (int)(durationHintifPtsAllInvalid + 0.5)) > 1e-6;
+        m_ptsAllInvalidPtsStartPointPts = 0;
         vector<std::pair<int, int>> durationHistgram;
         for (int i = 0; i < nInputPacketCount; i++) {
             nInputFrames += (m_list[i].data.pic_struct & RGY_PICSTRUCT_FRAME) != 0;
@@ -420,6 +427,8 @@ public:
                     && m_list[i].data.duration > 0
                     && m_list[i].data.pts != AV_NOPTS_VALUE
                     && m_list[i].data.dts != AV_NOPTS_VALUE
+                    && m_list[i-1].data.pts != AV_NOPTS_VALUE // mkvでは、最初の負のdtsがAV_NOPTS_VALUEで返ることがあるので判定から除外
+                    && m_list[i-1].data.dts != AV_NOPTS_VALUE // mkvでは、最初の負のdtsがAV_NOPTS_VALUEで返ることがあるので判定から除外
                     && m_list[i].data.pts - m_list[i-1].data.pts <= (std::min)(m_list[i].data.duration / 10, 1)
                     && m_list[i].data.dts - m_list[i-1].data.dts <= (std::min)(m_list[i].data.duration / 10, 1)
                     && m_list[i].data.duration == m_list[i-1].data.duration) {
@@ -483,6 +492,11 @@ public:
                 //durationのヒストグラムを作成
                 m_frameDuration = durationHistgram[durationHistgram.size() > 1 && durationHistgram[0].first == 0].first;
             }
+            // 先頭のフレームには時刻があれば、その時刻を先頭のptsとして計算するようにする "Hard Target.mkv"等
+            if (m_list[0].data.pts != AV_NOPTS_VALUE) {
+                m_ptsAllInvalidPtsStartPointPts = m_list[0].data.pts;
+                m_ptsAllInvalidPtsStartPointIndex = 0;
+            }
         }
         for (int i = m_nextFixNumIndex; i < nInputPacketCount; i++) {
             adjustFrameInfo(i);
@@ -520,6 +534,10 @@ protected:
     }
     //ptsの補正
     void adjustFrameInfo(uint32_t nIndex) {
+        if (m_list[nIndex].data.pts != AV_NOPTS_VALUE) {
+            m_ptsAllInvalidPtsStartPointPts = m_list[nIndex].data.pts;
+            m_ptsAllInvalidPtsStartPointIndex = nIndex;
+        }
         if (m_streamPtsStatus & RGY_PTS_SOMETIMES_INVALID) {
             if (m_streamPtsStatus & RGY_DTS_SOMETIMES_INVALID) {
                 //ptsもdtsはあてにならないので、durationから再構築する (ワンセグなど)
@@ -542,10 +560,10 @@ protected:
             if (nIndex == 0) {
                 m_list[nIndex].data.pts = 0;
                 m_list[nIndex].data.dts = 0;
-            } else if (m_streamPtsStatus & (RGY_PTS_ALL_INVALID | RGY_PTS_NONKEY_INVALID)) {
+            } else if (m_streamPtsStatus & RGY_PTS_ALL_INVALID) {
                 //AVPacketのもたらすptsが無効であれば、CFRを仮定して適当にptsとdurationを突っ込んでいく
-                double frameDuration = m_frameDuration * ((m_list[0].data.pic_struct & RGY_PICSTRUCT_FIELD) ? 2.0 : 1.0);
-                m_list[nIndex].data.pts = (int64_t)(nIndex * frameDuration * ((m_list[nIndex].data.pic_struct & RGY_PICSTRUCT_FIELD) ? 0.5 : 1.0) + 0.5);
+                const double frameDuration = m_frameDuration * ((m_list[0].data.pic_struct & RGY_PICSTRUCT_FIELD) ? 2.0 : 1.0);
+                m_list[nIndex].data.pts = m_ptsAllInvalidPtsStartPointPts + (int64_t)((nIndex - m_ptsAllInvalidPtsStartPointIndex) * frameDuration * ((m_list[nIndex].data.pic_struct & RGY_PICSTRUCT_FIELD) ? 0.5 : 1.0) + 0.5);
                 m_list[nIndex].data.dts = m_list[nIndex].data.pts;
             } else if (m_streamPtsStatus & RGY_PTS_NONKEY_INVALID) {
                 //キーフレーム以外のptsとdtsが無効な場合は、適当に推定する
@@ -666,6 +684,8 @@ protected:
     RGYPtsStatus m_streamPtsStatus; //入力から提供されるptsの状態 (RGY_PTS_xxx)
     uint32_t m_lastPoc; //ptsが確定したフレームのうち、直近のpoc
     int64_t m_firstKeyframePts; //最初のキーフレームのpts
+    int64_t m_ptsAllInvalidPtsStartPointPts; // RGY_PTS_ALL_INVALIDの時用の最初のpts
+    uint32_t m_ptsAllInvalidPtsStartPointIndex; // RGY_PTS_ALL_INVALIDの時用の最初のpts
     int64_t m_maxPts; //最大のpts
     int m_PAFFRewind; //PAFFのdurationを確定させるため、戻した枚数
     uint32_t m_ptsWrapArroundThreshold; //wrap arroundを判定する閾値
@@ -682,7 +702,7 @@ typedef struct VideoFrameData {
     int64_t duration;     //合計の動画の長さ
 } VideoFrameData;
 
-typedef struct AVDemuxFormat {
+struct AVDemuxFormat {
     AVFormatContext          *formatCtx;             //動画ファイルのformatContext
     double                    analyzeSec;            //動画ファイルを先頭から分析する時間
     bool                      isPipe;                //入力がパイプ
@@ -700,9 +720,16 @@ typedef struct AVDemuxFormat {
     char                     *inputBuffer;           //入力バッファ
     int                       inputBufferSize;       //入力バッファサイズ
     uint64_t                  inputFilesize;         //入力ファイルサイズ
-} AVDemuxFormat;
 
-typedef struct AVDemuxVideo {
+    int64_t                   subPacketTemporalBufferIntervalCount; //字幕のタイムスタンプが入れ違いになっているのを解決する一時的なキューに登録を行ってから他のパケットを取得した数
+    RGY_ERR                   inputError;
+
+    AVDemuxFormat();
+    ~AVDemuxFormat() { close(); }
+    void close(RGYLog *log = nullptr);
+};
+
+struct AVDemuxVideo {
                                                      //動画は音声のみ抽出する場合でも同期のため参照することがあり、
                                                      //pCodecCtxのチェックだけでは読み込むかどうか判定できないので、
                                                      //実際に使用するかどうかはこのフラグをチェックする
@@ -713,6 +740,7 @@ typedef struct AVDemuxVideo {
     AVFrame                  *frame;                 //動画デコード用のフレーム
     int                       index;                 //動画のストリームID
     int64_t                   streamFirstKeyPts;     //動画ファイルの最初のpts
+    int64_t                   beforeSeekStreamFirstKeyPts; //シーク前の動画ファイルの最初のpts (checkTimeSeekToでしか使わないはず)
     AVPacket                 *firstPkt;              //動画の最初のpacket
     uint32_t                  streamPtsInvalid;      //動画ファイルのptsが無効 (H.264/ES, 等)
     int                       RFFEstimate;           //動画がRFFの可能性がある
@@ -729,40 +757,52 @@ typedef struct AVDemuxVideo {
     AVCodecParserContext     *pParserCtx;            //動画ストリームのParser
     AVCodecContext           *pCodecCtxParser;       //動画ストリームのParser用
 
-    int                       HWDecodeDeviceId;      //HWデコードする場合に選択したデバイス
+    std::set<int>             HWDecodeDeviceId;      //HWデコードする場合に選択したデバイス
 
     RGYHEVCBsf                hevcbsf;               //HEVCのbsfの選択
     bool                      bUseHEVCmp42AnnexB;
     int                       hevcNaluLengthSize;
     bool                      hdr10plusMetadataCopy; //HDR10plusのメタ情報を取得する
-    bool                      doviRpuCopy;           //dovi rpuのメタ情報を取得する
+    bool                      doviRpuMetadataCopy;   //dovi rpuのメタ情報を取得する
 
-    AVMasteringDisplayMetadata *masteringDisplay;    //入力ファイルから抽出したHDRメタ情報
-    AVContentLightMetadata   *contentLight;          //入力ファイルから抽出したHDRメタ情報
+    RGY_SIMD                  simdCsp;               //使用するSIMD
+
+    std::unique_ptr<AVMasteringDisplayMetadata, RGYAVDeleter<AVMasteringDisplayMetadata>> masteringDisplay;    //入力ファイルから抽出したHDRメタ情報
+    std::unique_ptr<AVContentLightMetadata, RGYAVDeleter<AVContentLightMetadata>> contentLight;          //入力ファイルから抽出したHDRメタ情報
 
     RGYListRef<RGYFrameDataQP> *qpTableListRef;      //qp tableを格納するときのベース構造体
     decltype(parse_nal_unit_h264_c) *parse_nal_h264; // H.264用のnal unit分解関数へのポインタ
     decltype(parse_nal_unit_hevc_c) *parse_nal_hevc; // HEVC用のnal unit分解関数へのポインタ
-} AVDemuxVideo;
 
-typedef struct AVDemuxThread {
+    AVDemuxVideo();
+    ~AVDemuxVideo() { close(); }
+    void close(RGYLog *log = nullptr);
+};
+
+struct AVDemuxThread {
     int                          threadInput;        //入力スレッドを使用する
     std::atomic<bool>            bAbortInput;        //読み込みスレッドに停止を通知する
     std::thread                  thInput;            //読み込みスレッド
     PerfQueueInfo               *queueInfo;          //キューの情報を格納する構造体
-} AVDemuxThread;
 
-typedef struct AVDemuxer {
-    AVDemuxFormat            format;
-    AVDemuxVideo             video;
-    FramePosList             frames;
-    vector<AVDemuxStream>    stream;
-    vector<const AVChapter*> chapter;
-    AVDemuxThread            thread;
-    RGYQueueMPMP<AVPacket*>  qVideoPkt;
-    deque<AVPacket*>         qStreamPktL1;
-    RGYQueueMPMP<AVPacket*>  qStreamPktL2;
-} AVDemuxer;
+    AVDemuxThread() : threadInput(0), bAbortInput(false), thInput(), queueInfo(nullptr) {};
+    ~AVDemuxThread() { close(); }
+    void close(RGYLog *log = nullptr);
+};
+
+struct AVDemuxer {
+    AVDemuxFormat                 format;
+    AVDemuxVideo                  video;
+    FramePosList                  frames;
+    std::vector<AVDemuxStream>    stream;
+    std::vector<const AVChapter*> chapter;
+    AVDemuxThread                 thread;
+    RGYQueueMPMP<AVPacket*>       qVideoPkt;
+    std::deque<AVPacket*>         qStreamPktL1;
+    RGYQueueMPMP<AVPacket*>       qStreamPktL2;
+
+    AVDemuxer() : format(), video(), frames(), stream(), chapter(), thread(), qVideoPkt(), qStreamPktL1(), qStreamPktL2() {};
+};
 
 class RGYInputAvcodecPrm : public RGYInputPrm {
 public:
@@ -782,6 +822,7 @@ public:
     int64_t        probesize;               //probeするデータサイズ
     int            nTrimCount;              //Trimする動画フレームの領域の数
     sTrim         *pTrimList;               //Trimする動画フレームの領域のリスト
+    tstring        pixFmtStr;               //入力ファイルのピクセルフォーマット
     int            fileIndex;               //audio-source, sub-source等のファイルインデックス、動画と同じファイルなら-1
     int            trackStartAudio;         //音声のトラック番号の開始点
     int            trackStartSubtitle;      //字幕のトラック番号の開始点
@@ -796,6 +837,7 @@ public:
     DataSelect   **ppAttachmentSelect;      //muxするAttachmentのトラック番号のリスト 1,2,...(1から連番で指定)
     RGYAVSync      AVSyncMode;              //音声・映像同期モード
     int            procSpeedLimit;          //プリデコードする場合の処理速度制限 (0で制限なし)
+    float          seekRatio;               //指定された割合に頭出しする
     float          seekSec;                 //指定された秒数分先頭を飛ばす
     float          seekToSec;               //終了時刻(秒)
     tstring        logFramePosList;         //FramePosListの内容を入力終了時に出力する (デバッグ用)
@@ -807,13 +849,15 @@ public:
     DeviceCodecCsp *HWDecCodecCsp;          //HWデコーダのサポートするコーデックと色空間
     bool           videoDetectPulldown;     //pulldownの検出を試みるかどうか
     bool           parseHDRmetadata;        //HDR関連のmeta情報を取得する
-    bool           hdr10plusMetadataCopy;  //HDR10plus関連のmeta情報を取得する
+    bool           hdr10plusMetadataCopy;   //HDR10plus関連のmeta情報を取得する
+    bool           doviRpuMetadataCopy;     //dovi rpuのmeta情報を取得する
     bool           interlaceAutoFrame;      //フレームごとにインタレの検出を行う
-    RGYListRef<RGYFrameDataQP> *qpTableListRef; //qp tableを格納するときのベース構造体
     bool           lowLatency;
     bool           timestampPassThrough;    //timestampをそのまま出力する
+    RGYListRef<RGYFrameDataQP> *qpTableListRef; //qp tableを格納するときのベース構造体
     RGYOptList     inputOpt;                //入力オプション
     RGYHEVCBsf     hevcbsf;
+    tstring        avswDecoder;             //avswデコーダの指定
 
     RGYInputAvcodecPrm(RGYInputPrm base);
     virtual ~RGYInputAvcodecPrm() {};
@@ -840,7 +884,7 @@ public:
     const AVDictionary *GetInputFormatMetadata();
 
     //動画の入力情報を取得する
-    const AVStream *GetInputVideoStream();
+    const AVStream *GetInputVideoStream() const;
 
     //動画の長さを取得する
     double GetInputVideoDuration();
@@ -860,9 +904,17 @@ public:
     //フレーム情報構造へのポインタを返す
     FramePosList *GetFramePosList();
 
-    virtual rgy_rational<int> getInputTimebase() override;
+    virtual rgy_rational<int> getInputTimebase() const override;
 
-    virtual bool rffAware() override;
+    virtual RGYDOVIProfile getInputDOVIProfile() override;
+
+    virtual bool rffAware() const override;
+
+    virtual bool seekable() const override;
+
+    virtual bool timestampStable() const override;
+
+    virtual bool isPipe() const override;
 
     //入力ファイルに存在する音声のトラック数を返す
     int GetAudioTrackCount() override;
@@ -874,10 +926,10 @@ public:
     int GetDataTrackCount() override;
 
     //動画の最初のフレームのptsを取得する
-    int64_t GetVideoFirstKeyPts();
+    virtual int64_t GetVideoFirstKeyPts() const override;
 
-    //入力に使用する予定のdeviceIDを取得する
-    int GetHWDecDeviceID();
+    //入力に使用可能なdeviceIDを取得する
+    const std::set<int>& GetHWDecDeviceID() const;
 
     //入力スレッドのハンドルを取得する
     HANDLE getThreadHandleInput();
@@ -888,10 +940,14 @@ public:
 
     RGYFrameDataHDR10plus *getHDR10plusMetaData(const AVFrame* frame);
     RGYFrameDataHDR10plus *getHDR10plusMetaData(const AVPacket* pkt);
-    RGYFrameDataDOVIRpu *getDoviRpu(const AVFrame *frame);
+    RGYFrameDataDOVIRpu *getDoviRpuMetaData(const AVPacket *frame);
+    RGYFrameDataDOVIRpu *getDoviRpuMetaData(const AVFrame *frame);
 
     //seektoで指定された時刻の範囲内かチェックする
     bool checkTimeSeekTo(int64_t pts, rgy_rational<int> timebase, float marginSec) override;
+
+    //並列エンコードの親側で不要なデコーダを終了させる
+    void CloseVideoDecoder();
 
 #if USE_CUSTOM_INPUT
     int readPacket(uint8_t *buf, int buf_size);
@@ -907,7 +963,10 @@ protected:
 
     RGY_ERR parseHDRData();
 
-    RGY_ERR parseHDR10plus(AVPacket *pkt);
+    RGY_ERR packMetadataToPacket(AVPacket *pkt, const char *key, const uint8_t *data, const size_t size);
+    RGY_ERR parseHDR10plusDOVIRpu(AVPacket *pkt, const bool hdr10plus, const bool doviRpu);
+    RGY_ERR parseHDR10plusDOVIRpuHEVC(AVPacket *pkt, const bool hdr10plus, const bool doviRpu);
+    RGY_ERR parseHDR10plusDOVIRpuAV1(AVPacket *pkt, const bool hdr10plus, const bool doviRpu);
 
     RGY_ERR initFormatCtx(const TCHAR *strFileName, const RGYInputAvcodecPrm *input_prm, const int iretry);
     RGY_ERR initVideoBsfs();
@@ -970,6 +1029,9 @@ protected:
 
     //ptsを動画のtimebaseから音声のtimebaseに変換する
     int64_t convertTimebaseVidToStream(int64_t pts, const AVDemuxStream *stream);
+
+    //subPacketTemporalBufferにたまっている字幕パケットをソートして送出する
+    void sortAndPushSubtitlePacket();
 
     void hevcMp42Annexb(AVPacket *pkt);
 

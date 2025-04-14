@@ -33,11 +33,14 @@
 #include <array>
 #include "rgy_version.h"
 #include "rgy_err.h"
+#include "rgy_def.h"
 #include "convert_csp.h"
 #include "rgy_frame_info.h"
 #if ENABLE_VPP_SMOOTH_QP_FRAME
 #include "rgy_cuda_util.h"
 #endif //#if ENABLE_VPP_SMOOTH_QP_FRAME
+
+class RGYLog;
 
 enum RGYFrameDataType {
     RGY_FRAME_DATA_NONE,
@@ -48,6 +51,8 @@ enum RGYFrameDataType {
 
     RGY_FRAME_DATA_MAX,
 };
+
+const TCHAR *RGYFrameDataTypeToStr(const RGYFrameDataType type);
 
 class RGYFrameData {
 public:
@@ -84,12 +89,23 @@ protected:
     RGYFrameInfo m_qpHost;
 };
 
+class RGYFrameDataMetadataConvertParam {
+    RGYDOVIRpuConvertParam dovirpu;
+public:
+    RGYFrameDataMetadataConvertParam() : dovirpu() {};
+    RGYFrameDataMetadataConvertParam(const RGYDOVIRpuConvertParam& dovirpu_) : dovirpu(dovirpu_) {};
+    virtual ~RGYFrameDataMetadataConvertParam() {};
+
+    const RGYDOVIRpuConvertParam *doviRpu() const { return &dovirpu; }
+};
+
 class RGYFrameDataMetadata : public RGYFrameData {
 public:
     RGYFrameDataMetadata();
     RGYFrameDataMetadata(const uint8_t* data, size_t size, int64_t timestamp);
     virtual ~RGYFrameDataMetadata();
 
+    virtual RGY_ERR convert([[maybe_unused]] const RGYFrameDataMetadataConvertParam *prm, [[maybe_unused]] RGYLog *log) { return RGY_ERR_NONE; }
     virtual std::vector<uint8_t> gen_nal() const = 0;
     virtual std::vector<uint8_t> gen_obu() const = 0;
     const std::vector<uint8_t>& getData() const { return m_data; }
@@ -108,11 +124,23 @@ public:
     virtual std::vector<uint8_t> gen_obu() const override;
 };
 
+class RGYFrameDataDOVIRpuConvertParam : public RGYFrameDataMetadataConvertParam {
+public:
+    RGYDOVIProfile doviProfileDst;
+
+    RGYFrameDataDOVIRpuConvertParam() : RGYFrameDataMetadataConvertParam(), doviProfileDst(RGY_DOVI_PROFILE_UNSET) {}
+    RGYFrameDataDOVIRpuConvertParam(RGYDOVIProfile profile, const RGYDOVIRpuConvertParam& param) :
+        RGYFrameDataMetadataConvertParam(param), doviProfileDst(profile) {
+    }
+    virtual ~RGYFrameDataDOVIRpuConvertParam() {};
+};
+
 class RGYFrameDataDOVIRpu : public RGYFrameDataMetadata {
 public:
     RGYFrameDataDOVIRpu();
     RGYFrameDataDOVIRpu(const uint8_t* data, size_t size, int64_t timestamp);
     virtual ~RGYFrameDataDOVIRpu();
+    virtual RGY_ERR convert(const RGYFrameDataMetadataConvertParam *prm, RGYLog *log);
     virtual std::vector<uint8_t> gen_nal() const override;
     virtual std::vector<uint8_t> gen_obu() const override;
 };
@@ -130,9 +158,9 @@ public:
         }
         return ptrarray;
     }
-    void ptrArray(void *array[3]) {
+    void ptrArray(void *array[RGY_MAX_PLANES]) {
         auto frame = getInfo();
-        for (size_t i = 0; i < 3; i++) {
+        for (size_t i = 0; i < RGY_MAX_PLANES; i++) {
             array[i] = (void *)getPlane(&frame, (RGY_PLANE)i).ptr[0];
         }
     }

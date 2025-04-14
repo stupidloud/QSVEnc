@@ -115,7 +115,8 @@ RGY_ERR RGYInputRaw::ParseY4MHeader(char *buf, VideoInfo *pInfo) {
 RGYInputRaw::RGYInputRaw() :
     m_fSource(NULL),
     m_nBufSize(0),
-    m_pBuffer() {
+    m_pBuffer(),
+    m_isPipe(false) {
     m_readerName = _T("raw");
 }
 
@@ -139,8 +140,8 @@ RGY_ERR RGYInputRaw::Init(const TCHAR *strFileName, VideoInfo *pInputInfo, const
 
     m_convert = std::make_unique<RGYConvertCSP>(prm->threadCsp, prm->threadParamCsp);
 
-    bool use_stdin = _tcscmp(strFileName, _T("-")) == 0;
-    if (use_stdin) {
+    m_isPipe = _tcscmp(strFileName, _T("-")) == 0;
+    if (m_isPipe) {
         m_fSource = stdin;
 #if defined(_WIN32) || defined(_WIN64)
         if (_setmode(_fileno(stdin), _O_BINARY) < 0) {
@@ -245,6 +246,8 @@ RGY_ERR RGYInputRaw::Init(const TCHAR *strFileName, VideoInfo *pInputInfo, const
         AddMessage(RGY_LOG_ERROR, _T("Unknown color foramt.\n"));
         return RGY_ERR_INVALID_COLOR_FORMAT;
     }
+    // 幅が割り切れない場合に備え、変換時にAVX2等で読みすぎて異常終了しないようにあらかじめ多めに確保する
+    bufferSize += (ALIGN(m_inputVideoInfo.srcWidth, 128) - m_inputVideoInfo.srcWidth) * bytesPerPix(m_inputCsp);
     AddMessage(RGY_LOG_DEBUG, _T("%dx%d, pitch:%d, bufferSize:%d.\n"), m_inputVideoInfo.srcWidth, m_inputVideoInfo.srcHeight, m_inputVideoInfo.srcPitch, bufferSize);
 
     if (nOutputCSP != RGY_CSP_NA) {
@@ -340,15 +343,18 @@ RGY_ERR RGYInputRaw::LoadNextFrameInternal(RGYFrame *pSurface) {
         AddMessage(RGY_LOG_ERROR, _T("Unknown color foramt.\n"));
         return RGY_ERR_INVALID_COLOR_FORMAT;
     }
+    if (rgy_csp_has_alpha(m_convert->getFunc()->csp_from)) {
+        frameSize += m_inputVideoInfo.srcWidth * m_inputVideoInfo.srcHeight;
+    }
     if (frameSize != _fread_nolock(m_pBuffer.get(), 1, frameSize, m_fSource)) {
         AddMessage(RGY_LOG_DEBUG, _T("fread: finish: %d.\n"), frameSize);
         return RGY_ERR_MORE_DATA;
     }
 
-    void *dst_array[3];
+    void *dst_array[RGY_MAX_PLANES];
     pSurface->ptrArray(dst_array);
 
-    const void *src_array[3];
+    const void *src_array[RGY_MAX_PLANES];
     src_array[0] = m_pBuffer.get();
     src_array[1] = (uint8_t *)src_array[0] + m_inputVideoInfo.srcPitch * m_inputVideoInfo.srcHeight;
     switch (m_convert->getFunc()->csp_from) {
@@ -381,6 +387,7 @@ RGY_ERR RGYInputRaw::LoadNextFrameInternal(RGYFrame *pSurface) {
     default:
         break;
     }
+    src_array[3] = (rgy_csp_has_alpha(m_convert->getFunc()->csp_from)) ? (uint8_t *)src_array[2] + m_inputVideoInfo.srcPitch * m_inputVideoInfo.srcHeight : nullptr;
 
     int src_uv_pitch = m_inputVideoInfo.srcPitch;
     switch (RGY_CSP_CHROMA_FORMAT[m_convert->getFunc()->csp_from]) {

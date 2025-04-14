@@ -72,6 +72,7 @@ QSVEncを使用したことによる、いかなる損害・トラブルにつ�
 - 最大ビットレート等の指定
 - 最大GOP長の指定
 - AVX2までを使用した処理の高速化
+- マルチGPUも活用した並列エンコード
 - エンコード結果のSSIM/PSNRを計算
 - VPP機能
   - Media Functionを使用した高速フィルタリング
@@ -90,13 +91,17 @@ QSVEncを使用したことによる、いかなる損害・トラブルにつ�
     - 字幕焼きこみ
     - 色空間変換 (x64版のみ)
       - hdr2sdr
+      - tonemap ([libplacebo](https://code.videolan.org/videolan/libplacebo))
     - リサイズ  
       - bilinear
       - spline16, spline36, spline64
       - lanczos2, lanczos3, lanczos4
+      - [libplacebo](https://code.videolan.org/videolan/libplacebo)
     - 回転 / 反転
     - パディング(黒帯)の追加
     - バンディング低減
+      - deband
+      - [libplacebo](https://code.videolan.org/videolan/libplacebo)
     - ノイズ除去
       - knn (K-nearest neighbor)
       - pmd (正則化pmd法)
@@ -138,15 +143,17 @@ QSVEncを使用したことによる、いかなる損害・トラブルにつ�
 | Haswell     | Gen7.5   | [i3 4170](./GPUFeatures/QSVEnc_HSW_i3_4170_Win.txt) [i7 4610Y](./GPUFeatures/QSVEnc_HSW_i7_4610Y_Win.txt)     |  |
 | Broadwell   | Gen8     | [i7 5500U](./GPUFeatures/QSVEnc_BDW_i7_5500U_Win.txt)   | [i7 5500U](./GPUFeatures/QSVEnc_BDW_i7_5500U_Ubuntu2204.txt)  |
 | SkyLake     | Gen9     |                                                         |  |
-| KabyLake    | Gen9.5   | [i5 7500](./GPUFeatures/QSVEnc_KBL_i5_7500_Win.txt)   | [i7 7700K](./GPUFeatures/QSVEnc_KBL_i7_7700K_Ubuntu2204.txt)  |
+| KabyLake    | Gen9.5   | [i5 7500](./GPUFeatures/QSVEnc_KBL_i5_7500_Win.txt)   | [i7 7700K](./GPUFeatures/QSVEnc_KBL_i7_7700K_Ubuntu2204.txt) [i7 7500](./GPUFeatures/QSVEnc_KBL_i5_7500_Ubuntu2404.txt)  |
 | CoffeeLake  | Gen9.5   |                                                         |  |
 | CommetLake  | Gen9.5   |                                                         |  |
 | Cannonlake  | Gen10    |                                                         |  |
 | IceLake     | Gen11    | [i5 1035G7](./GPUFeatures/QSVEnc_ICL_i5_1035G7_Win.txt) | [i5 1035G7](./GPUFeatures/QSVEnc_ICL_i5_1035G7_Ubuntu2004.txt)  |
 | TigerLake   | Gen12    |                                                         |  |
 | RocketLake  | Gen12    | [i7 11700K](./GPUFeatures/QSVEnc_RKL_i7_11700K_Win.txt) | [i7 11700K](./GPUFeatures/QSVEnc_RKL_i7_11700K_Ubuntu2204_libmfxgen.txt)  |
-| AlderLake   | Gen12    | [i9 12900K](./GPUFeatures/QSVEnc_ADL_i9_12900K_Win.txt) [i3 N305](./GPUFeatures/QSVEnc_ADL_i3_N305_Win.txt) | [i9 12900K](./GPUFeatures/QSVEnc_ADL_i9_12900K_Ubuntu2004.txt) |
-|             | DG2      | [Arc A380](./GPUFeatures/QSVEnc_DG2_Arc_A380_Win.txt)   |  |
+| AlderLake   | Gen12    | [i9 12900K](./GPUFeatures/QSVEnc_ADL_i9_12900K_Win.txt) [i3 N305](./GPUFeatures/QSVEnc_ADL_i3_N305_Win.txt) | [i9 12900K](./GPUFeatures/QSVEnc_ADL_i9_12900K_Ubuntu2204.txt) [i3 N305](./GPUFeatures/QSVEnc_ADL_i3_N305_Ubuntu2404.txt) |
+| ArrowLake   | Gen12.74 | [u5 245K](./GPUFeatures/QSVEnc_ARL_u5_245K_Win.txt) |  |
+| Alchemist   | DG2(ACM) | [Arc A380](./GPUFeatures/QSVEnc_DG2_Arc_A380_Win.txt)   | [Arc A380](./GPUFeatures/QSVEnc_DG2_Arc_A380_Ubuntu2204.txt) [Arc A310](./GPUFeatures/QSVEnc_DG2_Arc_A310_Ubuntu2404.txt)  |
+| Battlemage  | BMG      | [Arc A580](./GPUFeatures/QSVEnc_BMG_Arc_A580_Win.txt)   |  |
 
 ## サポートするHWエンコーダ (@ Windows OS)
 
@@ -165,7 +172,9 @@ QSVEncを使用したことによる、いかなる損害・トラブルにつ�
 | TigerLake   | Gen12    | 8bit   | 8bit     | 8bit     | 10bit   | 10bit   | 10bit  |        |
 | RocketLake  | Gen12    | 8bit   | 8bit     | 8bit     | 10bit   | 10bit   | 10bit  |        |
 | AlderLake   | Gen12    | 8bit   | 8bit     | 8bit     | 10bit   | 10bit   | 10bit  |        |
-|             | DG2      | 8bit   |          | 8bit     |         | 10bit   | 10bit  | 10bit  |
+| ArrowLake   | Gen12.74 |        |          | 8bit     |         | 10bit   | 10bit  | 10bit  |
+| Alchemist   | DG2(ACM) |        |          | 8bit     |         | 10bit   | 10bit  | 10bit  |
+| Battlemage  | BMG      |        |          | 8bit     |         | 10bit   | 10bit  | 10bit  |
 
 ## サポートするHWデコーダ
 
@@ -184,7 +193,9 @@ QSVEncを使用したことによる、いかなる損害・トラブルにつ�
 | TigerLake   | Gen12    | 8bit   | 8bit   | 12bit  |        | 12bit  | 10bit  |
 | RocketLake  | Gen12    | 8bit   | 8bit   | 12bit  |        | 12bit  | 10bit  |
 | AlderLake   | Gen12    | 8bit   | 8bit   | 12bit  |        | 12bit  | 10bit  |
-|             | DG2      | 8bit   | 8bit   | 12bit  |        | 12bit  | 12bit  |
+| ArrowLake   | Gen12.74 | 8bit   | 8bit   | 12bit  |        | 12bit  | 12bit  |
+| Alchemist   | DG2(ACM) | 8bit   | 8bit   | 12bit  |        | 12bit  | 12bit  |
+| Battlemage  | BMG      | 8bit   | 8bit   | 12bit  |        | 12bit  | 12bit  |
 
 ## マルチGPU環境でのGPU自動選択 (Windowsのみ)
 QSVEncCでは、QSVを実行可能なGPUが複数存在する場合、
@@ -213,6 +224,9 @@ QSVEncCでは、QSVを実行可能なGPUが複数存在する場合、
 - 本ソフトウェアでは、
   [oneVPL](https://github.com/oneapi-src/oneVPL/),
   [ffmpeg](https://ffmpeg.org/),
+  [libplacebo](https://code.videolan.org/videolan/libplacebo),
+  [libhdr10plus](https://github.com/quietvoid/hdr10plus_tool),
+  [libdovi](https://github.com/quietvoid/dovi_tool),
   [libass](https://github.com/libass/libass),
   [tinyxml2](http://www.grinninglizard.com/tinyxml2/),
   [ttmath](http://www.ttmath.org/),

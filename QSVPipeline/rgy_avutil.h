@@ -34,6 +34,7 @@
 
 #if ENABLE_AVSW_READER
 #include <algorithm>
+#include <vector>
 
 #pragma warning (push)
 #pragma warning (disable: 4244)
@@ -46,6 +47,12 @@ extern "C" {
 #include <libavutil/pixdesc.h>
 #include <libavutil/display.h>
 #include <libavutil/mastering_display_metadata.h>
+#if __has_include(<libavutil/dovi_meta.h>)
+#define LIBAVUTIL_DOVI_META_AVAIL 1
+#include <libavutil/dovi_meta.h>
+#else
+#define LIBAVUTIL_DOVI_META_AVAIL 0
+#endif
 #include <libavformat/avformat.h>
 #include <libavformat/avio.h>
 #include <libavcodec/avcodec.h>
@@ -97,6 +104,21 @@ struct RGYAVDeleter {
     RGYAVDeleter(std::function<void(T**)> deleter) : deleter(deleter) {};
     void operator()(T *p) { deleter(&p); }
     std::function<void(T**)> deleter;
+};
+
+struct StreamInfoOptDeleter {
+    int streamCount;
+    StreamInfoOptDeleter(int streamCount_) : streamCount(streamCount_) {};
+    void operator()(AVDictionary **dictArray) const {
+        if (dictArray) {
+            for (int i = 0; i < streamCount; i++) {
+                if (dictArray[i]) {
+                    av_dict_free(&dictArray[i]);
+                }
+            }
+            av_freep(&dictArray);
+        }
+    }
 };
 
 #define RGYPOOLAV_DEBUG 0
@@ -180,6 +202,9 @@ static const CodecMap HW_DECODE_LIST[] = {
     { AV_CODEC_ID_MPEG4,      RGY_CODEC_MPEG4 },
 #endif
     { AV_CODEC_ID_AV1,        RGY_CODEC_AV1 },
+#if ENCODER_QSV && defined(AV_CODEC_ID_H266)
+    { AV_CODEC_ID_VVC,        RGY_CODEC_VVC },
+#endif
     //{ AV_CODEC_ID_WMV3,       RGY_CODEC_VC1   },
 };
 
@@ -247,9 +272,9 @@ static tstring errorMesForCodec(const TCHAR *mes, AVCodecID targetCodec) {
 
 static const AVRational HW_NATIVE_TIMEBASE = { 1, (int)HW_TIMEBASE };
 static const TCHAR *AVCODEC_DLL_NAME[] = {
-    _T("avcodec-60.dll"), _T("avformat-60.dll"), _T("avutil-58.dll"), _T("avfilter-9.dll"), _T("swresample-4.dll")
+    _T("avcodec-61.dll"), _T("avformat-61.dll"), _T("avutil-59.dll"), _T("avfilter-10.dll"), _T("swresample-5.dll")
 #if ENABLE_LIBAVDEVICE
-    , _T("avdevice-60.dll")
+    , _T("avdevice-61.dll")
 #endif
 };
 
@@ -271,6 +296,7 @@ static inline int pktFlagGetTrackID(const AVPacket *pkt) {
     return (int)((uint32_t)pkt->flags >> 16);
 }
 
+// av_rescale_qのラッパー (v * from / to)
 int64_t rational_rescale(int64_t v, rgy_rational<int> from, rgy_rational<int> to);
 
 // AVCodecContext::ticks_per_frameの代わり
@@ -325,7 +351,7 @@ bool checkAvcodecLicense();
 tstring getHWDecSupportedCodecList();
 
 //利用可能な音声エンコーダ/デコーダを表示
-tstring getAVCodecs(RGYAVCodecType flag);
+tstring getAVCodecs(RGYAVCodecType flag, const std::vector<AVMediaType> mediatype);
 
 //音声エンコーダで利用可能なプロファイルのリストを作成
 std::vector<tstring> getAudioPofileList(const tstring& codec_name);
@@ -396,6 +422,8 @@ uniuqeRGYChannelLayout getDefaultChannelLayout(const int nb_channels);
 int getChannelLayoutIndexFromChannel(const RGYChannelLayout *ch_layout, const RGYChannel channel);
 RGYChannel getChannelLayoutChannelFromIndex(const RGYChannelLayout *ch_layout, const int index);
 
+bool ChannelLayoutExists(const RGYChannelLayout *target, const AVCodec *codec);
+
 //時刻を表示
 std::string getTimestampChar(int64_t ts, const AVRational& timebase);
 tstring getTimestampString(int64_t ts, const AVRational& timebase);
@@ -403,6 +431,58 @@ tstring getTimestampString(int64_t ts, const AVRational& timebase);
 //tag関連
 uint32_t tagFromStr(std::string tagstr);
 std::string tagToStr(uint32_t tag);
+
+//AVStreamのside data関連
+template<typename T>
+std::unique_ptr<T, RGYAVDeleter<T>> AVStreamGetSideData(const AVStream *stream, const AVPacketSideDataType type, size_t& side_data_size) {
+    std::unique_ptr<T, RGYAVDeleter<T>> side_data_copy(nullptr, RGYAVDeleter<T>(av_freep));
+#if AVCODEC_PAR_CODED_SIDE_DATA_AVAIL
+    auto side_data = av_packet_side_data_get(stream->codecpar->coded_side_data, stream->codecpar->nb_coded_side_data, type);
+    if (side_data && side_data->type == type) {
+        side_data_size = side_data->size;
+        side_data_copy = unique_ptr<T, RGYAVDeleter<T>>((T *)av_malloc(side_data->size + AV_INPUT_BUFFER_PADDING_SIZE), RGYAVDeleter<T>(av_freep));
+        memcpy(side_data_copy.get(), side_data->data, side_data->size);
+    }
+#else
+    std::remove_pointer<RGYArgN<2U, decltype(av_stream_get_side_data)>::type>::type size = 0;
+    auto side_data = av_stream_get_side_data(stream, type, &size);
+    side_data_size = size;
+    if (side_data) {
+        side_data_copy = unique_ptr<T, RGYAVDeleter<T>>((T *)av_malloc(side_data_size + AV_INPUT_BUFFER_PADDING_SIZE), RGYAVDeleter<T>(av_freep));
+        memcpy(side_data_copy.get(), side_data, side_data_size);
+    }
+#endif
+    return side_data_copy;
+}
+
+template<typename T>
+int AVStreamAddSideData(AVStream *stream, const AVPacketSideDataType type, std::unique_ptr<T, RGYAVDeleter<T>>& side_data, const size_t side_data_size) {
+#if AVCODEC_PAR_CODED_SIDE_DATA_AVAIL
+    auto ptr = av_packet_side_data_add(&stream->codecpar->coded_side_data, &stream->codecpar->nb_coded_side_data, type, (void *)side_data.get(), side_data_size, 0);
+    int ret = ptr ? 0 : AVERROR(ENOMEM);
+#else
+    int ret = av_stream_add_side_data(stream, type, (uint8_t *)side_data.get(), side_data_size);
+#endif
+    if (ret == 0) {
+        side_data.release();
+    }
+    return ret;
+}
+
+static void AVStreamCopySideData(AVStream *streamDst, const AVStream *streamSrc) {
+#if AVCODEC_PAR_CODED_SIDE_DATA_AVAIL
+    for (int i = 0; i < streamSrc->codecpar->nb_coded_side_data; i++) {
+        const auto& side_data = streamSrc->codecpar->coded_side_data[i];
+        av_packet_side_data_add(&streamDst->codecpar->coded_side_data, &streamDst->codecpar->nb_coded_side_data, side_data.type, side_data.data, side_data.size, 0);
+    }
+#else
+    for (int i = 0; i < streamSrc->nb_side_data; i++) {
+        const AVPacketSideData *const sidedataSrc = &streamSrc->side_data[i];
+        uint8_t *const dst_data = av_stream_new_side_data(streamDst, sidedataSrc->type, sidedataSrc->size);
+        memcpy(dst_data, sidedataSrc->data, sidedataSrc->size);
+    }
+#endif
+}
 
 //利用可能なプロトコル情報のリストを取得
 vector<std::string> getAVProtocolList(int bOutput);
@@ -430,6 +510,7 @@ MAP_PAIR_0_1_PROTO(disposition, str, tstring, av, uint32_t);
 
 uint32_t parseDisposition(const tstring &disposition_str);
 tstring getDispositionStr(uint32_t disposition);
+RGYDOVIProfile getStreamDOVIProfile(const AVStream *stream);
 
 #else
 #define AV_NOPTS_VALUE (-1)

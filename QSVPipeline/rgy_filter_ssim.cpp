@@ -132,6 +132,11 @@ RGY_ERR RGYFilterSsim::init(shared_ptr<RGYFilterParam> pParam, shared_ptr<RGYLog
         return RGY_ERR_INVALID_PARAM;
     }
 
+    if (RGY_CSP_CHROMA_FORMAT[pParam->frameIn.csp] != RGY_CHROMAFMT_YUV420 && RGY_CSP_CHROMA_FORMAT[pParam->frameIn.csp] != RGY_CHROMAFMT_YUV444) {
+        AddMessage(RGY_LOG_ERROR, _T("this filter does not support csp %s.\n"), RGY_CSP_NAMES[pParam->frameIn.csp]);
+        return RGY_ERR_UNSUPPORTED;
+    }
+
     m_deviceId = prm->deviceId;
     m_cropOrg.reset();
     m_cropDec.reset();
@@ -232,7 +237,7 @@ RGY_ERR RGYFilterSsim::initDecode(const RGYBitstream *bitstream) {
         AddMessage(RGY_LOG_ERROR, _T("failed to find decoder for codec %s.\n"), CodecToStr(prm->input.codec).c_str());
         return RGY_ERR_NULL_PTR;
     }
-    auto codecCtx = std::unique_ptr<AVCodecContext, decltype(&avcodec_close)>(avcodec_alloc_context3(codec), &avcodec_close);
+    auto codecCtx = std::unique_ptr<AVCodecContext, RGYAVDeleter<AVCodecContext>>(avcodec_alloc_context3(codec), RGYAVDeleter<AVCodecContext>(avcodec_free_context));
     if (0 > (ret = avcodec_open2(codecCtx.get(), codec, nullptr))) {
         AddMessage(RGY_LOG_ERROR, _T("failed to open codec %s: %s.\n"), char_to_tstring(avcodec_get_name(avcodecID)).c_str(), qsv_av_err2str(ret).c_str());
         return RGY_ERR_NULL_PTR;
@@ -384,7 +389,7 @@ RGY_ERR RGYFilterSsim::init_cl_resources() {
         return sts;
     }
 
-    m_taskDec = std::make_unique<PipelineTaskMFXDecode>(m_mfxDEC->GetVideoSessionPtr(), 1, m_mfxDEC->mfxdec(), m_mfxDEC->mfxparams(), nullptr, m_mfxDEC->mfxver(), m_pLog);
+    m_taskDec = std::make_unique<PipelineTaskMFXDecode>(m_mfxDEC->GetVideoSessionPtr(), 1, m_mfxDEC->mfxdec(), m_mfxDEC->mfxparams(), m_mfxDEC->skipAV1C(), -1, nullptr, m_mfxDEC->mfxver(), m_pLog);
     auto allocRequest = m_taskDec->requiredSurfOut();
     if (!allocRequest.has_value()) {
         AddMessage(RGY_LOG_ERROR, _T("Failed to get required surface num for hw decoder.\n"));
@@ -847,7 +852,7 @@ RGY_ERR RGYFilterSsim::build_kernel(const RGY_CSP csp) {
         const auto options = strsprintf("-D BIT_DEPTH=%d -D SSIM_BLOCK_X=%d -D SSIM_BLOCK_Y=%d",
             RGY_CSP_BIT_DEPTH[csp],
             SSIM_BLOCK_X, SSIM_BLOCK_Y);
-        m_kernel.set(std::move(m_cl->buildResourceAsync(_T("RGY_FILTER_SSIM_CL"), _T("EXE_DATA"), options.c_str())));
+        m_kernel.set(m_cl->buildResourceAsync(_T("RGY_FILTER_SSIM_CL"), _T("EXE_DATA"), options.c_str()));
     }
     return RGY_ERR_NONE;
 }

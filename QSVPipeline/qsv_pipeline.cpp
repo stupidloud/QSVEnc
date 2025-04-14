@@ -55,6 +55,7 @@ RGY_DISABLE_WARNING_POP
 #include "qsv_query.h"
 #include "rgy_def.h"
 #include "rgy_env.h"
+#include "rgy_device_info_cache.h"
 #include "rgy_filesystem.h"
 #include "rgy_input.h"
 #include "rgy_output.h"
@@ -72,13 +73,18 @@ RGY_DISABLE_WARNING_POP
 #include "rgy_filter_yadif.h"
 #include "rgy_filter_mpdecimate.h"
 #include "rgy_filter_decimate.h"
+#include "rgy_filter_decomb.h"
 #include "rgy_filter_delogo.h"
 #include "rgy_filter_convolution3d.h"
 #include "rgy_filter_denoise_dct.h"
 #include "rgy_filter_smooth.h"
+#include "rgy_filter_denoise_fft3d.h"
 #include "rgy_filter_denoise_knn.h"
+#include "rgy_filter_denoise_nlmeans.h"
 #include "rgy_filter_denoise_pmd.h"
 #include "rgy_filter_subburn.h"
+#include "rgy_filter_resize.h"
+#include "rgy_filter_libplacebo.h"
 #include "rgy_filter_transform.h"
 #include "rgy_filter_unsharp.h"
 #include "rgy_filter_edgelevel.h"
@@ -569,7 +575,7 @@ std::pair<RGY_ERR, QSVEncFeatures> CQSVPipeline::CheckMFXRCMode(QSVRCParam& rcPa
             }
             bFallbackSuccess = true;
             availableFeaures = availRCFeatures;
-            PrintMes(rc_error_log_level, _T("Falling back to %s mode.\n"), EncmodeToStr(rcParam.encMode));
+            PrintMes(rc_error_log_level, _T("Falling back to %s mode.\n%s\n"), EncmodeToStr(rcParam.encMode), MakeFeatureListStr(availableFeaures).c_str());
             break;
         }
     }
@@ -628,6 +634,17 @@ RGY_ERR CQSVPipeline::InitMfxEncodeParams(sInputParams *pInParams, std::vector<s
         }
     }
     m_dynamicRC = pInParams->dynamicRC;
+
+    // 並列エンコード時のチェック
+    if (pInParams->ctrl.parallelEnc.isEnabled()) {
+        pInParams->hyperMode = MFX_HYPERMODE_OFF; // 並列エンコード時はHyperModeは使用しない
+        for (auto& dev2 : devList) {
+            if (dev2) {
+                const auto dev2Feature = dev2->getEncodeFeature(pInParams->rcParam.encMode, pInParams->codec, pInParams->functionMode == QSVFunctionMode::FF);
+                availableFeaures &= dev2Feature;
+            }
+        }
+    }
 
     // HyperModeがらみのチェック
     if (pInParams->hyperMode != MFX_HYPERMODE_OFF) {
@@ -702,9 +719,9 @@ RGY_ERR CQSVPipeline::InitMfxEncodeParams(sInputParams *pInParams, std::vector<s
         print_feature_warnings(RGY_LOG_WARN, _T("ExtBRC"));
         pInParams->extBRC.reset();
     }
-    if (pInParams->tuneQuality != MFX_ENCODE_TUNE_DEFAULT && !(availableFeaures & ENC_FEATURE_TUNE_ENCODE_QUALITY)) {
+    if (pInParams->tuneQuality != MFX_ENCODE_TUNE_OFF && !(availableFeaures & ENC_FEATURE_TUNE_ENCODE_QUALITY)) {
         print_feature_warnings(RGY_LOG_WARN, _T("Tune Quality"));
-        pInParams->tuneQuality = MFX_ENCODE_TUNE_DEFAULT;
+        pInParams->tuneQuality = MFX_ENCODE_TUNE_OFF;
     }
     if (pInParams->scenarioInfo != MFX_SCENARIO_UNKNOWN && !(availableFeaures & ENC_FEATURE_SCENARIO_INFO)) {
         print_feature_warnings(RGY_LOG_WARN, _T("Scenario Info"));
@@ -992,17 +1009,17 @@ RGY_ERR CQSVPipeline::InitMfxEncodeParams(sInputParams *pInParams, std::vector<s
     m_encParams.videoPrm.IOPattern = (mfxU16)((pInParams->memType != SYSTEM_MEMORY) ? MFX_IOPATTERN_IN_VIDEO_MEMORY : MFX_IOPATTERN_IN_SYSTEM_MEMORY);
 
     // frame info parameters
-    m_encParams.videoPrm.mfx.FrameInfo.ChromaFormat = (mfxU16)chromafmt_rgy_to_enc(RGY_CSP_CHROMA_FORMAT[getEncoderCsp(pInParams)]);
+    m_encParams.videoPrm.mfx.FrameInfo.ChromaFormat = mfx_fourcc_to_chromafmt(csp_rgy_to_enc(getEncoderCsp(pInParams)));
     m_encParams.videoPrm.mfx.FrameInfo.PicStruct    = (mfxU16)picstruct_rgy_to_enc(m_encPicstruct);
 
     // set sar info
     auto par = std::make_pair(pInParams->nPAR[0], pInParams->nPAR[1]);
     if ((!pInParams->nPAR[0] || !pInParams->nPAR[1]) //SAR比の指定がない
         && pInParams->input.sar[0] && pInParams->input.sar[1] //入力側からSAR比を取得ずみ
-        && (pInParams->input.dstWidth == pInParams->input.srcWidth && pInParams->input.dstHeight == pInParams->input.srcHeight)) {//リサイズは行われない
+        && (m_encWidth == pInParams->input.srcWidth && m_encHeight == pInParams->input.srcHeight)) {//リサイズは行われない
         par = std::make_pair(pInParams->input.sar[0], pInParams->input.sar[1]);
     }
-    adjust_sar(&par.first, &par.second, pInParams->input.dstWidth, pInParams->input.dstHeight);
+    adjust_sar(&par.first, &par.second, m_encWidth, m_encHeight);
     m_encParams.videoPrm.mfx.FrameInfo.AspectRatioW = (mfxU16)par.first;
     m_encParams.videoPrm.mfx.FrameInfo.AspectRatioH = (mfxU16)par.second;
 
@@ -1032,20 +1049,13 @@ RGY_ERR CQSVPipeline::InitMfxEncodeParams(sInputParams *pInParams, std::vector<s
     const auto VBR_RC_LIST = make_array<int>(MFX_RATECONTROL_CBR, MFX_RATECONTROL_VBR, MFX_RATECONTROL_AVBR, MFX_RATECONTROL_VCM, MFX_RATECONTROL_QVBR, MFX_RATECONTROL_LA, MFX_RATECONTROL_LA_HRD);
     const auto DOVI_RC_LIST = make_array<int>(MFX_RATECONTROL_CBR, MFX_RATECONTROL_VBR, MFX_RATECONTROL_AVBR, MFX_RATECONTROL_VCM, MFX_RATECONTROL_QVBR);
     if (auto profile = getDOVIProfile(pInParams->common.doviProfile); profile != nullptr && profile->HRDSEI) {
-        if (std::find(DOVI_RC_LIST.begin(), DOVI_RC_LIST.end(), pInParams->rcParam.encMode) == DOVI_RC_LIST.end()) {
-            tstring dovi_rc_str;
-            for (auto rc : DOVI_RC_LIST) {
-                if (dovi_rc_str.length() > 0) dovi_rc_str += _T("/");
-                dovi_rc_str += EncmodeToStr(rc);
+        if (std::find(DOVI_RC_LIST.begin(), DOVI_RC_LIST.end(), pInParams->rcParam.encMode) != DOVI_RC_LIST.end()) {
+            if (m_encParams.videoPrm.mfx.BufferSizeInKB == 0) {
+                m_encParams.videoPrm.mfx.BufferSizeInKB = m_encParams.videoPrm.mfx.MaxKbps / 8;
             }
-            PrintMes(RGY_LOG_ERROR, _T("Please use %s mode for dolby vision output.\n"), dovi_rc_str.c_str());
-            return RGY_ERR_UNSUPPORTED;
-        }
-        if (m_encParams.videoPrm.mfx.BufferSizeInKB == 0) {
-            m_encParams.videoPrm.mfx.BufferSizeInKB = m_encParams.videoPrm.mfx.MaxKbps / 8;
-        }
-        if (m_encParams.videoPrm.mfx.InitialDelayInKB == 0) {
-            m_encParams.videoPrm.mfx.InitialDelayInKB = m_encParams.videoPrm.mfx.BufferSizeInKB / 2;
+            if (m_encParams.videoPrm.mfx.InitialDelayInKB == 0) {
+                m_encParams.videoPrm.mfx.InitialDelayInKB = m_encParams.videoPrm.mfx.BufferSizeInKB / 2;
+            }
         }
     }
 
@@ -1085,7 +1095,7 @@ RGY_ERR CQSVPipeline::InitMfxEncodeParams(sInputParams *pInParams, std::vector<s
             m_encParams.cop2.MaxFrameSize = (decltype(m_encParams.cop2.MaxFrameSize))pInParams->maxFrameSize;
         }
         if (check_lib_version(m_mfxVer, MFX_LIB_VERSION_1_8)) {
-            if (m_hdr10plus || m_hdr10plusMetadataCopy || m_dovirpu || pInParams->common.doviProfile != 0 || (m_hdrsei && m_hdrsei->gen_nal().size() > 0)) {
+            if (m_hdr10plus || m_hdr10plusMetadataCopy || m_dovirpu || pInParams->common.doviProfile != 0 || (m_hdrseiOut && m_hdrseiOut->gen_nal().size() > 0) || m_parallelEnc) {
                 m_encParams.cop2.RepeatPPS = MFX_CODINGOPTION_ON;
             } else if (pInParams->repeatHeaders.has_value()) {
                 m_encParams.cop2.RepeatPPS = (mfxU16)((pInParams->repeatHeaders.value()) ? MFX_CODINGOPTION_ON : MFX_CODINGOPTION_OFF);
@@ -1099,8 +1109,12 @@ RGY_ERR CQSVPipeline::InitMfxEncodeParams(sInputParams *pInParams, std::vector<s
         for (int i = 0; i < 3; i++) {
             pInParams->qpMin.qp(i) = clamp_param_int(pInParams->qpMin.qp(i), 0, codecMaxQP, _T("qp min"));
             pInParams->qpMax.qp(i) = clamp_param_int(pInParams->qpMax.qp(i), 0, codecMaxQP, _T("qp max"));
-            const int qpMin = (std::min)(pInParams->qpMin.qp(i), pInParams->qpMax.qp(i));
-            const int qpMax = (std::max)(pInParams->qpMin.qp(i), pInParams->qpMax.qp(i));
+            int qpMin = pInParams->qpMin.qp(i);
+            int qpMax = pInParams->qpMax.qp(i);
+            if (pInParams->qpMin.qp(i) > 0 && pInParams->qpMax.qp(i) > 0) {
+                qpMin = (std::min)(qpMin, pInParams->qpMax.qp(i));
+                qpMax = (std::max)(qpMax, pInParams->qpMin.qp(i));
+            }
             pInParams->qpMin.qp(i) = (pInParams->qpMin.qp(i) == 0) ? 0 : qpMin;
             pInParams->qpMax.qp(i) = (pInParams->qpMax.qp(i) == 0) ? 0 : qpMax;
         }
@@ -1195,7 +1209,7 @@ RGY_ERR CQSVPipeline::InitMfxEncodeParams(sInputParams *pInParams, std::vector<s
 
 
     if (check_lib_version(m_mfxVer, MFX_LIB_VERSION_2_9)
-        && pInParams->tuneQuality != MFX_ENCODE_TUNE_DEFAULT
+        && pInParams->tuneQuality != MFX_ENCODE_TUNE_OFF
         && (availableFeaures & ENC_FEATURE_EXT_TUNE_ENC_QUALITY)) {
         INIT_MFX_EXT_BUFFER(m_encParams.tuneEncQualityPrm, MFX_EXTBUFF_TUNE_ENCODE_QUALITY);
         m_encParams.tuneEncQualityPrm.TuneQuality = (decltype(m_encParams.tuneEncQualityPrm.TuneQuality))(pInParams->tuneQuality);
@@ -1270,7 +1284,7 @@ RGY_ERR CQSVPipeline::InitMfxEncodeParams(sInputParams *pInParams, std::vector<s
          m_encVUI.matrix    != get_cx_value(list_colormatrix, _T("undef")) ||
          m_encVUI.colorrange == RGY_COLORRANGE_FULL
         ) ) {
-#define GET_COLOR_PRM(v, list) (mfxU16)((v == COLOR_VALUE_AUTO) ? ((pInParams->input.dstHeight >= HD_HEIGHT_THRESHOLD) ? list[HD_INDEX].value : list[SD_INDEX].value) : v)
+#define GET_COLOR_PRM(v, list) (mfxU16)((v == COLOR_VALUE_AUTO) ? ((m_encHeight >= HD_HEIGHT_THRESHOLD) ? list[HD_INDEX].value : list[SD_INDEX].value) : v)
             //色設定 (for API v1.3)
             CHECK_RANGE_LIST(m_encVUI.format,    list_videoformat, "videoformat");
             CHECK_RANGE_LIST(m_encVUI.colorprim, list_colorprim,   "colorprim");
@@ -1301,9 +1315,9 @@ RGY_ERR CQSVPipeline::InitMfxEncodeParams(sInputParams *pInParams, std::vector<s
     const int encBitdepth = getEncoderBitdepth(pInParams);
     const auto encCsp = getEncoderCsp(pInParams);
     m_encParams.videoPrm.mfx.FrameInfo.FourCC = csp_rgy_to_enc(encCsp);
+    m_encParams.videoPrm.mfx.FrameInfo.ChromaFormat = mfx_fourcc_to_chromafmt(m_encParams.videoPrm.mfx.FrameInfo.FourCC);
     m_encParams.videoPrm.mfx.FrameInfo.BitDepthLuma = (mfxU16)encBitdepth;
     m_encParams.videoPrm.mfx.FrameInfo.BitDepthChroma = (mfxU16)encBitdepth;
-    m_encParams.videoPrm.mfx.FrameInfo.ChromaFormat = (mfxU16)chromafmt_rgy_to_enc(RGY_CSP_CHROMA_FORMAT[encCsp]);
     m_encParams.videoPrm.mfx.FrameInfo.Shift = (cspShiftUsed(encCsp) && RGY_CSP_BIT_DEPTH[encCsp] - encBitdepth > 0) ? 1 : 0;
     m_encParams.videoPrm.mfx.FrameInfo.Width  = (mfxU16)ALIGN(m_encWidth, blocksz);
     m_encParams.videoPrm.mfx.FrameInfo.Height = (mfxU16)ALIGN(m_encHeight, blocksz * ((MFX_PICSTRUCT_PROGRESSIVE == m_encParams.videoPrm.mfx.FrameInfo.PicStruct) ? 1:2));
@@ -1316,12 +1330,18 @@ RGY_ERR CQSVPipeline::InitMfxEncodeParams(sInputParams *pInParams, std::vector<s
     if (m_encParams.videoPrm.mfx.FrameInfo.ChromaFormat == MFX_CHROMAFORMAT_YUV444) {
         if (check_lib_version(m_mfxVer, MFX_LIB_VERSION_1_15)) {
             if (pInParams->functionMode != QSVFunctionMode::FF) {
-                PrintMes(RGY_LOG_WARN, _T("Switched to fixed function (FF) mode, as encoding in YUV444 requires FF mode.\n"));
+                PrintMes(RGY_LOG_WARN, _T("Switched to fixed function (FF) mode, as encoding in YUV444/RGB requires FF mode.\n"));
                 pInParams->functionMode = QSVFunctionMode::FF;
                 m_encParams.videoPrm.mfx.LowPower = (mfxU16)MFX_CODINGOPTION_ON;
             }
+            if (m_encParams.videoPrm.mfx.CodecId == MFX_CODEC_AVC) {
+                PrintMes(RGY_LOG_ERROR, _T("Encoding in H.264 YUV444/RGB is not supported.\n"));
+                return RGY_ERR_UNSUPPORTED;
+            } else if (m_encParams.videoPrm.mfx.CodecId == MFX_CODEC_HEVC) {
+                m_encParams.videoPrm.mfx.CodecProfile = MFX_PROFILE_HEVC_REXT;
+            }
         } else {
-            PrintMes(RGY_LOG_ERROR, _T("Encoding in YUV444 is not supported on this platform.\n"));
+            PrintMes(RGY_LOG_ERROR, _T("Encoding in YUV444/RGB is not supported on this platform.\n"));
             return RGY_ERR_UNSUPPORTED;
         }
     }
@@ -1631,8 +1651,11 @@ RGY_ERR CQSVPipeline::AllocFrames() {
 CQSVPipeline::CQSVPipeline() :
     m_mfxVer({ 0 }),
     m_device(),
+    m_devNames(),
     m_pStatus(),
     m_pPerfMonitor(),
+    m_deviceUsage(),
+    m_parallelEnc(),
     m_encWidth(0),
     m_encHeight(0),
     m_encPicstruct(RGY_PICSTRUCT_UNKNOWN),
@@ -1662,10 +1685,13 @@ CQSVPipeline::CQSVPipeline() :
     m_Chapters(),
 #endif
     m_timecode(),
-    m_hdrsei(),
+    m_hdrseiIn(),
+    m_hdrseiOut(),
     m_hdr10plus(),
     m_hdr10plusMetadataCopy(false),
     m_dovirpu(),
+    m_dovirpuMetadataCopy(false),
+    m_doviProfile(RGY_DOVI_PROFILE_UNSET),
     m_encTimestamp(),
     m_sessionParams(),
     m_nProcSpeedLimit(0),
@@ -1792,8 +1818,13 @@ RGY_ERR CQSVPipeline::InitOutput(sInputParams *inputParams) {
     if (outputVideoInfo.codec == RGY_CODEC_RAW) {
         inputParams->common.AVMuxTarget &= ~RGY_MUX_VIDEO;
     }
-    m_hdrsei = createHEVCHDRSei(inputParams->common.maxCll, inputParams->common.masterDisplay, inputParams->common.atcSei, m_pFileReader.get());
-    if (!m_hdrsei) {
+    m_hdrseiIn = createHEVCHDRSei(maxCLLSource, masterDisplaySource, RGY_TRANSFER_UNKNOWN, m_pFileReader.get());
+    if (!m_hdrseiIn) {
+        PrintMes(RGY_LOG_ERROR, _T("Failed to parse HEVC HDR10 metadata.\n"));
+        return RGY_ERR_UNSUPPORTED;
+    }
+    m_hdrseiOut = createHEVCHDRSei(inputParams->common.maxCll, inputParams->common.masterDisplay, inputParams->common.atcSei, m_pFileReader.get());
+    if (!m_hdrseiOut) {
         PrintMes(RGY_LOG_ERROR, _T("Failed to parse HEVC HDR10 metadata.\n"));
         return RGY_ERR_UNSUPPORTED;
     }
@@ -1804,9 +1835,9 @@ RGY_ERR CQSVPipeline::InitOutput(sInputParams *inputParams) {
 #if ENABLE_AVSW_READER
         m_Chapters,
 #endif //#if ENABLE_AVSW_READER
-        m_hdrsei.get(), m_dovirpu.get(), m_encTimestamp.get(),
+        m_hdrseiOut.get(), m_hdr10plus.get(), m_dovirpu.get(), m_encTimestamp.get(),
         !check_lib_version(m_mfxVer, MFX_LIB_VERSION_1_6),
-        inputParams->bBenchmark,
+        inputParams->bBenchmark, false, 0,
         m_poolPkt.get(), m_poolFrame.get(),
         m_pStatus, m_pPerfMonitor, m_pQSVLog);
     if (err != RGY_ERR_NONE) {
@@ -1825,15 +1856,17 @@ RGY_ERR CQSVPipeline::InitOutput(sInputParams *inputParams) {
     return RGY_ERR_NONE;
 }
 
-RGY_ERR CQSVPipeline::InitInput(sInputParams *inputParam, std::vector<std::unique_ptr<QSVDevice>>& devList) {
-#if ENABLE_RAW_READER
-#if ENABLE_AVSW_READER
+DeviceCodecCsp CQSVPipeline::getHWDecCodecCsp(const bool skipHWDecodeCheck, std::vector<std::unique_ptr<QSVDevice>>& devList) {
     DeviceCodecCsp HWDecCodecCsp;
     for (const auto& dev : devList) {
-        HWDecCodecCsp.push_back(std::make_pair((int)dev->deviceNum(), dev->getDecodeCodecCsp(inputParam->ctrl.skipHWDecodeCheck)));
+        HWDecCodecCsp.push_back(std::make_pair((int)dev->deviceNum(), dev->getDecodeCodecCsp(skipHWDecodeCheck)));
     }
-#endif
-    m_pStatus.reset(new EncodeStatus());
+    return HWDecCodecCsp;
+}
+
+RGY_ERR CQSVPipeline::InitInput(sInputParams *inputParam, DeviceCodecCsp& HWDecCodecCsp) {
+#if ENABLE_RAW_READER
+    m_pStatus = std::make_shared<EncodeStatus>();
 
     int subburnTrackId = 0;
     for (const auto &subburn : inputParam->vpp.subburn) {
@@ -1856,6 +1889,7 @@ RGY_ERR CQSVPipeline::InitInput(sInputParams *inputParam, std::vector<std::uniqu
     if (inputParam->vpp.afs.enable) deinterlacer++;
     if (inputParam->vpp.nnedi.enable) deinterlacer++;
     if (inputParam->vpp.yadif.enable) deinterlacer++;
+    if (inputParam->vpp.decomb.enable) deinterlacer++;
     if (deinterlacer > 0 && ((inputParam->input.picstruct & RGY_PICSTRUCT_INTERLACED) == 0)) {
         inputParam->input.picstruct = RGY_PICSTRUCT_AUTO;
     }
@@ -1863,10 +1897,11 @@ RGY_ERR CQSVPipeline::InitInput(sInputParams *inputParam, std::vector<std::uniqu
     m_poolPkt = std::make_unique<RGYPoolAVPacket>();
     m_poolFrame = std::make_unique<RGYPoolAVFrame>();
 
-    auto sts = initReaders(m_pFileReader, m_AudioReaders, &inputParam->input, inputCspOfRawReader,
+    auto sts = initReaders(m_pFileReader, m_AudioReaders, &inputParam->input, &inputParam->inprm, inputCspOfRawReader,
         m_pStatus, &inputParam->common, &inputParam->ctrl, HWDecCodecCsp, subburnTrackId,
         (ENABLE_VPP_FILTER_RFF) ? inputParam->vpp.rff.enable : false,
         (ENABLE_VPP_FILTER_AFS) ? inputParam->vpp.afs.enable : false,
+        inputParam->vpp.libplacebo_tonemapping.enable,
         m_poolPkt.get(), m_poolFrame.get(),
         nullptr, m_pPerfMonitor.get(), m_pQSVLog);
     if (sts != RGY_ERR_NONE) {
@@ -1957,9 +1992,10 @@ RGY_ERR CQSVPipeline::InitInput(sInputParams *inputParam, std::vector<std::uniqu
         if (!ENCODER_QSV) {
             m_nAVSyncMode |= RGY_AVSYNC_VFR;
             const auto timebaseStreamIn = to_rgy(pAVCodecReader->GetInputVideoStream()->time_base);
-            if ((timebaseStreamIn.inv() * m_inputFps.inv()).d() == 1 || timebaseStreamIn.n() > 1000) { //fpsを割り切れるtimebaseなら
+            if (!inputParam->common.timebase.is_valid()
+                && ((timebaseStreamIn.inv() * m_inputFps.inv()).d() == 1 || timebaseStreamIn.n() > 1000)) { //fpsを割り切れるtimebaseなら
                 if (!inputParam->vpp.afs.enable && !inputParam->vpp.rff.enable) {
-                    m_outputTimebase = m_inputFps.inv() * rgy_rational<int>(1, 8);
+                    m_outputTimebase = m_inputFps.inv() * rgy_rational<int>(1, 4);
                 }
             }
         }
@@ -1988,7 +2024,10 @@ RGY_ERR CQSVPipeline::InitInput(sInputParams *inputParam, std::vector<std::uniqu
             PrintMes(RGY_LOG_ERROR, _T("Failed to open dovi rpu \"%s\".\n"), inputParam->common.doviRpuFile.c_str());
             return RGY_ERR_FILE_OPEN;
         }
+    } else if (inputParam->common.doviRpuMetadataCopy) {
+        m_dovirpuMetadataCopy = true;
     }
+    m_doviProfile = inputParam->common.doviProfile;
 #endif //#if ENABLE_AVSW_READER
     return RGY_ERR_NONE;
 #else
@@ -2075,7 +2114,8 @@ RGY_ERR CQSVPipeline::CheckParam(sInputParams *inputParam) {
     auto outpar = std::make_pair(inputParam->nPAR[0], inputParam->nPAR[1]);
     if ((!inputParam->nPAR[0] || !inputParam->nPAR[1]) //SAR比の指定がない
         && inputParam->input.sar[0] && inputParam->input.sar[1] //入力側からSAR比を取得ずみ
-        && (inputParam->input.dstWidth == inputParam->input.srcWidth && inputParam->input.dstHeight == inputParam->input.srcHeight)) {//リサイズは行われない
+        && ((inputParam->input.dstWidth == inputParam->input.srcWidth && inputParam->input.dstHeight == inputParam->input.srcHeight)
+            || (inputParam->input.dstWidth == 0 || inputParam->input.dstHeight == 0))) {//リサイズは行われない
         outpar = std::make_pair(inputParam->input.sar[0], inputParam->input.sar[1]);
     }
     if (inputParam->input.dstWidth < 0 && inputParam->input.dstHeight < 0) {
@@ -2084,7 +2124,7 @@ RGY_ERR CQSVPipeline::CheckParam(sInputParams *inputParam) {
     }
 
     set_auto_resolution(inputParam->input.dstWidth, inputParam->input.dstHeight, outpar.first, outpar.second,
-        inputParam->input.srcWidth, inputParam->input.srcHeight, inputParam->input.sar[0], inputParam->input.sar[1], 2, 2, inputParam->inprm.resizeResMode, inputParam->input.crop);
+        inputParam->input.srcWidth, inputParam->input.srcHeight, inputParam->input.sar[0], inputParam->input.sar[1], 2, 2, inputParam->inprm.resizeResMode, inputParam->inprm.ignoreSAR, inputParam->input.crop);
 
     // 解像度の条件とcrop
     if (inputParam->input.dstWidth % 2 != 0) {
@@ -2129,7 +2169,9 @@ std::vector<VppType> CQSVPipeline::InitFiltersCreateVppList(const sInputParams *
     std::vector<VppType> filterPipeline;
     filterPipeline.reserve((size_t)VppType::CL_MAX);
 
-    if (cspConvRequired || cropRequired)   filterPipeline.push_back(VppType::MFX_CROP);
+    if (cspConvRequired || cropRequired) {
+        filterPipeline.push_back((inputParam->outputCsp == RGY_CHROMAFMT_RGB) ? VppType::CL_CROP : VppType::MFX_CROP);
+    }
     if (inputParam->vpp.colorspace.enable) {
         bool requireOpenCL = inputParam->vpp.colorspace.hdr2sdr.tonemap != HDR2SDR_DISABLED || inputParam->vpp.colorspace.lut3d.table_file.length() > 0;
         if (!requireOpenCL) {
@@ -2150,24 +2192,33 @@ std::vector<VppType> CQSVPipeline::InitFiltersCreateVppList(const sInputParams *
         }
         filterPipeline.push_back((requireOpenCL) ? VppType::CL_COLORSPACE : VppType::MFX_COLORSPACE);
     }
+    if (inputParam->vpp.libplacebo_tonemapping.enable) filterPipeline.push_back(VppType::CL_LIBPLACEBO_TONEMAP);
     if (inputParam->vpp.rff.enable)        filterPipeline.push_back(VppType::CL_RFF);
     if (inputParam->vpp.delogo.enable)     filterPipeline.push_back(VppType::CL_DELOGO);
     if (inputParam->vpp.afs.enable)        filterPipeline.push_back(VppType::CL_AFS);
     if (inputParam->vpp.nnedi.enable)      filterPipeline.push_back(VppType::CL_NNEDI);
     if (inputParam->vpp.yadif.enable)      filterPipeline.push_back(VppType::CL_YADIF);
+    if (inputParam->vpp.decomb.enable)     filterPipeline.push_back(VppType::CL_DECOMB);
     if (inputParam->vppmfx.deinterlace != MFX_DEINTERLACE_NONE)  filterPipeline.push_back(VppType::MFX_DEINTERLACE);
     if (inputParam->vpp.decimate.enable)   filterPipeline.push_back(VppType::CL_DECIMATE);
     if (inputParam->vpp.mpdecimate.enable) filterPipeline.push_back(VppType::CL_MPDECIMATE);
     if (inputParam->vpp.convolution3d.enable) filterPipeline.push_back(VppType::CL_CONVOLUTION3D);
     if (inputParam->vpp.smooth.enable)     filterPipeline.push_back(VppType::CL_DENOISE_SMOOTH);
     if (inputParam->vpp.dct.enable)        filterPipeline.push_back(VppType::CL_DENOISE_DCT);
+    if (inputParam->vpp.fft3d.enable)      filterPipeline.push_back(VppType::CL_DENOISE_FFT3D);
     if (inputParam->vpp.knn.enable)        filterPipeline.push_back(VppType::CL_DENOISE_KNN);
+    if (inputParam->vpp.nlmeans.enable)    filterPipeline.push_back(VppType::CL_DENOISE_NLMEANS);
     if (inputParam->vpp.pmd.enable)        filterPipeline.push_back(VppType::CL_DENOISE_PMD);
     if (inputParam->vppmfx.denoise.enable) filterPipeline.push_back(VppType::MFX_DENOISE);
     if (inputParam->vppmfx.imageStabilizer != 0) filterPipeline.push_back(VppType::MFX_IMAGE_STABILIZATION);
     if (inputParam->vppmfx.mctf.enable)    filterPipeline.push_back(VppType::MFX_MCTF);
     if (inputParam->vpp.subburn.size()>0)  filterPipeline.push_back(VppType::CL_SUBBURN);
-    if (     resizeRequired == RGY_VPP_RESIZE_TYPE_OPENCL) filterPipeline.push_back(VppType::CL_RESIZE);
+    if (inputParam->vpp.libplacebo_shader.size()>0)  filterPipeline.push_back(VppType::CL_LIBPLACEBO_SHADER);
+    if (     resizeRequired == RGY_VPP_RESIZE_TYPE_OPENCL
+#if ENABLE_LIBPLACEBO
+        || resizeRequired == RGY_VPP_RESIZE_TYPE_LIBPLACEBO
+#endif
+        ) filterPipeline.push_back(VppType::CL_RESIZE);
     else if (resizeRequired != RGY_VPP_RESIZE_TYPE_NONE)   filterPipeline.push_back(VppType::MFX_RESIZE);
     if (inputParam->vpp.unsharp.enable)    filterPipeline.push_back(VppType::CL_UNSHARP);
     if (inputParam->vpp.edgelevel.enable)  filterPipeline.push_back(VppType::CL_EDGELEVEL);
@@ -2178,6 +2229,7 @@ std::vector<VppType> CQSVPipeline::InitFiltersCreateVppList(const sInputParams *
     if (inputParam->vpp.curves.enable)     filterPipeline.push_back(VppType::CL_CURVES);
     if (inputParam->vpp.tweak.enable)      filterPipeline.push_back(VppType::CL_TWEAK);
     if (inputParam->vpp.deband.enable)     filterPipeline.push_back(VppType::CL_DEBAND);
+    if (inputParam->vpp.libplacebo_deband.enable)     filterPipeline.push_back(VppType::CL_LIBPLACEBO_DEBAND);
     if (inputParam->vpp.pad.enable)        filterPipeline.push_back(VppType::CL_PAD);
     if (inputParam->vppmfx.percPreEnc)     filterPipeline.push_back(VppType::MFX_PERC_ENC_PREFILTER);
     if (inputParam->vpp.overlay.size() > 0)  filterPipeline.push_back(VppType::CL_OVERLAY);
@@ -2250,11 +2302,18 @@ std::pair<RGY_ERR, std::unique_ptr<QSVVppMfx>> CQSVPipeline::AddFilterMFX(
     case VppType::MFX_MIRROR:              vppParams.mirrorType = params->mirrorType; break;
     case VppType::MFX_MCTF:                vppParams.mctf = params->mctf; break;
     case VppType::MFX_PERC_ENC_PREFILTER:  vppParams.percPreEnc = params->percPreEnc; break;
+    case VppType::MFX_AISUPRERES:
     case VppType::MFX_RESIZE:              vppParams.bUseResize = true;
                                            vppParams.resizeInterp = params->resizeInterp;
                                            vppParams.resizeMode = params->resizeMode;
+                                           vppParams.aiSuperRes.enable = params->aiSuperRes.enable;
                                            frameInfo.width = resize.first;
-                                           frameInfo.height = resize.second; break;
+                                           frameInfo.height = resize.second;
+                                           if (resize.first == 0 || resize.second == 0
+                                               || (frameInfo.width == frameIn.width && frameInfo.height == frameIn.height)) {
+                                               return { RGY_ERR_NONE, std::unique_ptr<QSVVppMfx>() };
+                                           }
+                                           break;
     case VppType::MFX_CROP:                frameInfo.width  -= (crop) ? (crop->e.left + crop->e.right) : 0;
                                            frameInfo.height -= (crop) ? (crop->e.up + crop->e.bottom)  : 0; break;
     case VppType::MFX_FPS_CONV:
@@ -2307,6 +2366,32 @@ RGY_ERR CQSVPipeline::AddFilterOpenCL(std::vector<std::unique_ptr<RGYFilter>>& c
         inputFrame = param->frameOut;
         m_encFps = param->baseFps;
         vuiInfo = filter->VuiOut();
+        //登録
+        clfilters.push_back(std::move(filter));
+        return RGY_ERR_NONE;
+    }
+    //libplacebo-tonemap
+    if (vppType == VppType::CL_LIBPLACEBO_TONEMAP) {
+        unique_ptr<RGYFilterLibplaceboToneMapping> filter(new RGYFilterLibplaceboToneMapping(m_cl));
+        shared_ptr<RGYFilterParamLibplaceboToneMapping> param(new RGYFilterParamLibplaceboToneMapping());
+        param->toneMapping = params->vpp.libplacebo_tonemapping;
+        param->hdrMetadataIn = m_hdrseiIn.get();
+        param->hdrMetadataOut = m_hdrseiOut.get();
+        param->vk = m_device->vulkan();
+        param->vui = vuiInfo;
+        param->frameIn = inputFrame;
+        param->frameOut = inputFrame;
+        param->baseFps = m_encFps;
+        auto sts = filter->init(param, m_pQSVLog);
+        if (sts != RGY_ERR_NONE) {
+            return sts;
+        }
+        //入力フレーム情報を更新
+        inputFrame = param->frameOut;
+        m_encFps = param->baseFps;
+#if ENABLE_LIBPLACEBO
+        vuiInfo = filter->VuiOut();
+#endif
         //登録
         clfilters.push_back(std::move(filter));
         return RGY_ERR_NONE;
@@ -2415,6 +2500,26 @@ RGY_ERR CQSVPipeline::AddFilterOpenCL(std::vector<std::unique_ptr<RGYFilter>>& c
         param->frameOut = inputFrame;
         param->baseFps = m_encFps;
         param->timebase = m_outputTimebase;
+        param->bOutOverwrite = false;
+        auto sts = filter->init(param, m_pQSVLog);
+        if (sts != RGY_ERR_NONE) {
+            return sts;
+        }
+        //入力フレーム情報を更新
+        inputFrame = param->frameOut;
+        m_encFps = param->baseFps;
+        //登録
+        clfilters.push_back(std::move(filter));
+        return RGY_ERR_NONE;
+    }
+    //decomb
+    if (vppType == VppType::CL_DECOMB) {
+        unique_ptr<RGYFilter> filter(new RGYFilterDecomb(m_cl));
+        shared_ptr<RGYFilterParamDecomb> param(new RGYFilterParamDecomb());
+        param->decomb = params->vpp.decomb;
+        param->frameIn = inputFrame;
+        param->frameOut = inputFrame;
+        param->baseFps = m_encFps;
         param->bOutOverwrite = false;
         auto sts = filter->init(param, m_pQSVLog);
         if (sts != RGY_ERR_NONE) {
@@ -2554,11 +2659,51 @@ RGY_ERR CQSVPipeline::AddFilterOpenCL(std::vector<std::unique_ptr<RGYFilter>>& c
         clfilters.push_back(std::move(filter));
         return RGY_ERR_NONE;
     }
+    //fft3d
+    if (vppType == VppType::CL_DENOISE_FFT3D) {
+        unique_ptr<RGYFilter> filter(new RGYFilterDenoiseFFT3D(m_cl));
+        shared_ptr<RGYFilterParamDenoiseFFT3D> param(new RGYFilterParamDenoiseFFT3D());
+        param->fft3d = params->vpp.fft3d;
+        param->frameIn = inputFrame;
+        param->frameOut = inputFrame;
+        param->baseFps = m_encFps;
+        param->bOutOverwrite = false;
+        auto sts = filter->init(param, m_pQSVLog);
+        if (sts != RGY_ERR_NONE) {
+            return sts;
+        }
+        //入力フレーム情報を更新
+        inputFrame = param->frameOut;
+        m_encFps = param->baseFps;
+        //登録
+        clfilters.push_back(std::move(filter));
+        return RGY_ERR_NONE;
+    }
     //knn
     if (vppType == VppType::CL_DENOISE_KNN) {
         unique_ptr<RGYFilter> filter(new RGYFilterDenoiseKnn(m_cl));
         shared_ptr<RGYFilterParamDenoiseKnn> param(new RGYFilterParamDenoiseKnn());
         param->knn = params->vpp.knn;
+        param->frameIn = inputFrame;
+        param->frameOut = inputFrame;
+        param->baseFps = m_encFps;
+        param->bOutOverwrite = false;
+        auto sts = filter->init(param, m_pQSVLog);
+        if (sts != RGY_ERR_NONE) {
+            return sts;
+        }
+        //入力フレーム情報を更新
+        inputFrame = param->frameOut;
+        m_encFps = param->baseFps;
+        //登録
+        clfilters.push_back(std::move(filter));
+        return RGY_ERR_NONE;
+    }
+    //nlmeans
+    if (vppType == VppType::CL_DENOISE_NLMEANS) {
+        unique_ptr<RGYFilter> filter(new RGYFilterDenoiseNLMeans(m_cl));
+        shared_ptr<RGYFilterParamDenoiseNLMeans> param(new RGYFilterParamDenoiseNLMeans());
+        param->nlmeans = params->vpp.nlmeans;
         param->frameIn = inputFrame;
         param->frameOut = inputFrame;
         param->baseFps = m_encFps;
@@ -2648,26 +2793,61 @@ RGY_ERR CQSVPipeline::AddFilterOpenCL(std::vector<std::unique_ptr<RGYFilter>>& c
         }
         return RGY_ERR_NONE;
     }
+    if (vppType == VppType::CL_LIBPLACEBO_SHADER) {
+        for (const auto& shader : params->vpp.libplacebo_shader) {
+            unique_ptr<RGYFilter> filter(new RGYFilterLibplaceboShader(m_cl));
+            shared_ptr<RGYFilterParamLibplaceboShader> param(new RGYFilterParamLibplaceboShader());
+            param->shader = shader;
+            param->frameIn = inputFrame;
+            param->frameOut = inputFrame;
+            if (param->shader.width > 0 && param->shader.height > 0) {
+                param->frameOut.width = param->shader.width;
+                param->frameOut.height = param->shader.height;
+            }
+            param->baseFps = m_encFps;
+            param->bOutOverwrite = false;
+            param->vk = m_device->vulkan();
+            auto sts = filter->init(param, m_pQSVLog);
+            if (sts != RGY_ERR_NONE) {
+                return sts;
+            }
+            //入力フレーム情報を更新
+            inputFrame = param->frameOut;
+            m_encFps = param->baseFps;
+            //登録
+            clfilters.push_back(std::move(filter));
+        }
+        return RGY_ERR_NONE;
+    }
     //リサイズ
     if (vppType == VppType::CL_RESIZE) {
-        auto filter = std::make_unique<RGYFilterResize>(m_cl);
-        shared_ptr<RGYFilterParamResize> param(new RGYFilterParamResize());
-        param->interp = (params->vpp.resize_algo != RGY_VPP_RESIZE_AUTO) ? params->vpp.resize_algo : RGY_VPP_RESIZE_SPLINE36;
-        param->frameIn = inputFrame;
-        param->frameOut = inputFrame;
-        param->frameOut.width = resize.first;
-        param->frameOut.height = resize.second;
-        param->baseFps = m_encFps;
-        param->bOutOverwrite = false;
-        auto sts = filter->init(param, m_pQSVLog);
-        if (sts != RGY_ERR_NONE) {
-            return sts;
+        if (resize.first > 0 && resize.second > 0
+            && (resize.first != inputFrame.width || resize.second != inputFrame.height)) {
+            auto filter = std::make_unique<RGYFilterResize>(m_cl);
+            shared_ptr<RGYFilterParamResize> param(new RGYFilterParamResize());
+            param->interp = (params->vpp.resize_algo != RGY_VPP_RESIZE_AUTO) ? params->vpp.resize_algo : RGY_VPP_RESIZE_SPLINE36;
+            param->frameIn = inputFrame;
+            param->frameOut = inputFrame;
+            param->frameOut.width = resize.first;
+            param->frameOut.height = resize.second;
+            param->baseFps = m_encFps;
+            param->bOutOverwrite = false;
+            if (isLibplaceboResizeFiter(params->vpp.resize_algo)) {
+                param->libplaceboResample = std::make_shared<RGYFilterParamLibplaceboResample>();
+                param->libplaceboResample->resample = params->vpp.resize_libplacebo;
+                param->libplaceboResample->resize_algo = param->interp;
+                param->libplaceboResample->vk = m_device->vulkan();
+            }
+            auto sts = filter->init(param, m_pQSVLog);
+            if (sts != RGY_ERR_NONE) {
+                return sts;
+            }
+            //入力フレーム情報を更新
+            inputFrame = param->frameOut;
+            m_encFps = param->baseFps;
+            //登録
+            clfilters.push_back(std::move(filter));
         }
-        //入力フレーム情報を更新
-        inputFrame = param->frameOut;
-        m_encFps = param->baseFps;
-        //登録
-        clfilters.push_back(std::move(filter));
         return RGY_ERR_NONE;
     }
     //unsharp
@@ -2758,6 +2938,7 @@ RGY_ERR CQSVPipeline::AddFilterOpenCL(std::vector<std::unique_ptr<RGYFilter>>& c
         param->tweak = params->vpp.tweak;
         param->frameIn = inputFrame;
         param->frameOut = inputFrame;
+        param->vui = vuiInfo;
         param->baseFps = m_encFps;
         param->bOutOverwrite = true;
         auto sts = filter->init(param, m_pQSVLog);
@@ -2780,6 +2961,27 @@ RGY_ERR CQSVPipeline::AddFilterOpenCL(std::vector<std::unique_ptr<RGYFilter>>& c
         param->frameOut = inputFrame;
         param->baseFps = m_encFps;
         param->bOutOverwrite = false;
+        auto sts = filter->init(param, m_pQSVLog);
+        if (sts != RGY_ERR_NONE) {
+            return sts;
+        }
+        //入力フレーム情報を更新
+        inputFrame = param->frameOut;
+        m_encFps = param->baseFps;
+        //登録
+        clfilters.push_back(std::move(filter));
+        return RGY_ERR_NONE;
+    }
+    //libplacebo deband
+    if (vppType == VppType::CL_LIBPLACEBO_DEBAND) {
+        auto filter = std::make_unique<RGYFilterLibplaceboDeband>(m_cl);
+        shared_ptr<RGYFilterParamLibplaceboDeband> param(new RGYFilterParamLibplaceboDeband());
+        param->frameIn = inputFrame;
+        param->frameOut = inputFrame;
+        param->baseFps = m_encFps;
+        param->bOutOverwrite = false;
+        param->deband = params->vpp.libplacebo_deband;
+        param->vk = m_device->vulkan();
         auto sts = filter->init(param, m_pQSVLog);
         if (sts != RGY_ERR_NONE) {
             return sts;
@@ -2889,34 +3091,25 @@ RGY_ERR CQSVPipeline::InitFilters(sInputParams *inputParam) {
         inputFrame.height = croppedHeight;
     }
 
-    //出力解像度が設定されていない場合は、入力解像度と同じにする
-    if (inputParam->input.dstWidth == 0) {
-        inputParam->input.dstWidth = croppedWidth;
-    }
-    if (inputParam->input.dstHeight == 0) {
-        inputParam->input.dstHeight = croppedHeight;
-    }
     const bool cspConvRequired = inputFrame.csp != getEncoderCsp(inputParam);
 
+    m_encWidth = croppedWidth;
+    m_encHeight = croppedHeight;
     //リサイザの出力すべきサイズ
-    int resizeWidth = croppedWidth;
-    int resizeHeight = croppedHeight;
-    m_encWidth = resizeWidth;
-    m_encHeight = resizeHeight;
+    int resizeWidth = 0;
+    int resizeHeight = 0;
     //指定のリサイズがあればそのサイズに設定する
     if (inputParam->input.dstWidth > 0 && inputParam->input.dstHeight > 0) {
-        m_encWidth = inputParam->input.dstWidth;
-        m_encHeight = inputParam->input.dstHeight;
-        resizeWidth = m_encWidth;
-        resizeHeight = m_encHeight;
-    }
-    if (inputParam->vpp.pad.enable) {
-        m_encWidth += inputParam->vpp.pad.right + inputParam->vpp.pad.left;
-        m_encHeight += inputParam->vpp.pad.bottom + inputParam->vpp.pad.top;
+        m_encWidth = resizeWidth = inputParam->input.dstWidth;
+        m_encHeight = resizeHeight = inputParam->input.dstHeight;
+        if (inputParam->vpp.pad.enable) {
+            resizeWidth -= (inputParam->vpp.pad.right + inputParam->vpp.pad.left);
+            resizeHeight -= (inputParam->vpp.pad.bottom + inputParam->vpp.pad.top);
+        }
     }
 
     RGY_VPP_RESIZE_TYPE resizeRequired = RGY_VPP_RESIZE_TYPE_NONE;
-    if (croppedWidth != resizeWidth || croppedHeight != resizeHeight) {
+    if (resizeWidth > 0 && resizeHeight > 0) {
         resizeRequired = getVppResizeType(inputParam->vpp.resize_algo);
         if (resizeRequired == RGY_VPP_RESIZE_TYPE_UNKNOWN) {
             PrintMes(RGY_LOG_ERROR, _T("Unknown resize type.\n"));
@@ -2926,6 +3119,7 @@ RGY_ERR CQSVPipeline::InitFilters(sInputParams *inputParam) {
     //リサイズアルゴリズムのパラメータはvpp側に設定されているので、設定をvppmfxに転写する
     inputParam->vppmfx.resizeInterp = resize_algo_rgy_to_enc(inputParam->vpp.resize_algo);
     inputParam->vppmfx.resizeMode = resize_mode_rgy_to_enc(inputParam->vpp.resize_mode);
+    inputParam->vppmfx.aiSuperRes.enable = inputParam->vpp.resize_algo == RGY_VPP_RESIZE_MFX_AI_SUPRERES;
 
     //フレームレートのチェック
     if (inputParam->input.fpsN == 0 || inputParam->input.fpsD == 0) {
@@ -2954,6 +3148,7 @@ RGY_ERR CQSVPipeline::InitFilters(sInputParams *inputParam) {
     if (inputParam->vpp.afs.enable) deinterlacer++;
     if (inputParam->vpp.nnedi.enable) deinterlacer++;
     if (inputParam->vpp.yadif.enable) deinterlacer++;
+    if (inputParam->vpp.decomb.enable) deinterlacer++;
     if (deinterlacer >= 2) {
         PrintMes(RGY_LOG_ERROR, _T("Activating 2 or more deinterlacer is not supported.\n"));
         return RGY_ERR_UNSUPPORTED;
@@ -2974,6 +3169,14 @@ RGY_ERR CQSVPipeline::InitFilters(sInputParams *inputParam) {
     m_encVUI = inputParam->common.out_vui;
     m_encVUI.apply_auto(inputParam->input.vui, m_encHeight);
     m_encVUI.setDescriptPreset();
+
+    if (inputParam->outputCsp == RGY_CHROMAFMT_RGB) {
+        m_encVUI.descriptpresent = 1;
+        if (m_encVUI.matrix     == RGY_MATRIX_UNSPECIFIED     || m_encVUI.matrix     == RGY_MATRIX_AUTO)     m_encVUI.matrix     = RGY_MATRIX_RGB;
+        if (m_encVUI.colorprim  == RGY_PRIM_UNSPECIFIED       || m_encVUI.colorprim  == RGY_PRIM_AUTO)       m_encVUI.colorprim  = RGY_PRIM_BT709;
+        if (m_encVUI.transfer   == RGY_TRANSFER_UNSPECIFIED   || m_encVUI.transfer   == RGY_TRANSFER_AUTO)   m_encVUI.transfer   = RGY_TRANSFER_IEC61966_2_1;
+        if (m_encVUI.colorrange == RGY_COLORRANGE_UNSPECIFIED || m_encVUI.colorrange == RGY_COLORRANGE_AUTO) m_encVUI.colorrange = RGY_COLORRANGE_FULL;
+    }
 
     m_vpFilters.clear();
 
@@ -3022,9 +3225,10 @@ RGY_ERR CQSVPipeline::InitFilters(sInputParams *inputParam) {
                 switch (param->frameOut.csp) { // OpenCLフィルタの内部形式への変換
                 case RGY_CSP_NV12: param->frameOut.csp = RGY_CSP_YV12; break;
                 case RGY_CSP_P010: param->frameOut.csp = RGY_CSP_YV12_16; break;
-                case RGY_CSP_AYUV: param->frameOut.csp = RGY_CSP_YUV444; break;
+                case RGY_CSP_VUYA: param->frameOut.csp = RGY_CSP_YUV444; break;
                 case RGY_CSP_Y410: param->frameOut.csp = RGY_CSP_YUV444_16; break;
                 case RGY_CSP_Y416: param->frameOut.csp = RGY_CSP_YUV444_16; break;
+                case RGY_CSP_MFX_RGB: param->frameOut.csp = RGY_CSP_RGB; break;
                 default:
                     break;
                 }
@@ -3094,7 +3298,6 @@ RGY_ERR CQSVPipeline::InitFilters(sInputParams *inputParam) {
 
     m_encWidth  = inputFrame.width;
     m_encHeight = inputFrame.height;
-
     return RGY_ERR_NONE;
 }
 
@@ -3171,7 +3374,8 @@ RGY_ERR CQSVPipeline::checkGPUListByEncoder(const sInputParams *prm, std::vector
             && prm->vppmfx.deinterlace == MFX_DEINTERLACE_NONE
             && !prm->vpp.afs.enable
             && !prm->vpp.nnedi.enable
-            && !prm->vpp.yadif.enable;
+            && !prm->vpp.yadif.enable
+            && !prm->vpp.decomb.enable;
         if (interlacedEncoding && (deviceFeature & ENC_FEATURE_INTERLACE) != ENC_FEATURE_INTERLACE) {
             message += strsprintf(_T("GPU #%d (%s) does not support %s interlaced encoding.\n"),
                 (*gpu)->deviceNum(), (*gpu)->name().c_str(), CodecToStr(prm->codec).c_str());
@@ -3191,9 +3395,20 @@ RGY_ERR CQSVPipeline::checkGPUListByEncoder(const sInputParams *prm, std::vector
     return RGY_ERR_NONE;
 }
 
-RGY_ERR CQSVPipeline::deviceAutoSelect(const sInputParams *prm, std::vector<std::unique_ptr<QSVDevice>>& gpuList) {
+RGY_ERR CQSVPipeline::deviceAutoSelect(const sInputParams *prm, std::vector<std::unique_ptr<QSVDevice>>& gpuList, const RGYDeviceUsageLockManager *devUsageLock) {
     if (gpuList.size() <= 1) {
         return RGY_ERR_NONE;
+    }
+    int maxDeviceUsageCount = 1;
+    std::vector<std::pair<int, int64_t>> deviceUsage;
+    if (gpuList.size() > 1) {
+        deviceUsage = m_deviceUsage->getUsage(devUsageLock);
+        for (size_t i = 0; i < deviceUsage.size(); i++) {
+            maxDeviceUsageCount = std::max(maxDeviceUsageCount, deviceUsage[i].first);
+            if (deviceUsage[i].first > 0) {
+                PrintMes(RGY_LOG_INFO, _T("Device #%d: %d usage.\n"), i, deviceUsage[i].first);
+            }
+        }
     }
 #if ENABLE_PERF_COUNTER
     PrintMes(RGY_LOG_DEBUG, _T("Auto select device from %d devices.\n"), (int)gpuList.size());
@@ -3209,9 +3424,11 @@ RGY_ERR CQSVPipeline::deviceAutoSelect(const sInputParams *prm, std::vector<std:
         std::this_thread::sleep_for(std::chrono::milliseconds(50));
     }
     auto entries = m_pPerfMonitor->GetPerfCountersSystem();
+#endif //#if ENABLE_PERF_COUNTER
 
     std::map<QSVDeviceNum, double> gpuscore;
     for (const auto &gpu : gpuList) {
+#if ENABLE_PERF_COUNTER
         auto counters = RGYGPUCounterWinEntries(entries).filter_luid(gpu->luid()).get();
         auto ve_utilization = std::max(
             RGYGPUCounterWinEntries(counters).filter_type(L"codec").sum(),
@@ -3221,15 +3438,21 @@ RGY_ERR CQSVPipeline::deviceAutoSelect(const sInputParams *prm, std::vector<std:
             RGYGPUCounterWinEntries(counters).filter_type(L"compute").max()), //vce-opencl
             RGYGPUCounterWinEntries(counters).filter_type(L"3d").max()), //qsv
             RGYGPUCounterWinEntries(counters).filter_type(L"videoprocessing").max());
-        double core_score = 0.0;
-        double cc_score = 0.0;
         double ve_score = 100.0 * (1.0 - std::pow(ve_utilization / 100.0, 1.0)) * prm->ctrl.gpuSelect.ve;
         double gpu_score = 100.0 * (1.0 - std::pow(gpu_utilization / 100.0, 1.5)) * prm->ctrl.gpuSelect.gpu;
-        double cl_score = gpu->devInfo() ? 0.0 : -100.0; // openclの初期化に成功したか?
+#else
+        double ve_score = 0.0;
+        double gpu_score = 0.0;
+#endif
+        double core_score = 0.0;
+        double cc_score = 0.0;
+        double cl_score = gpu->devInfo() ? 0.0 : maxDeviceUsageCount * -100.0; // openclの初期化に成功したか?
+        const int deviceUsageCount = (int)gpu->deviceNum() < (int)deviceUsage.size() ? deviceUsage[(int)gpu->deviceNum()].first : 0;
+        double usage_score = 100.0 * (maxDeviceUsageCount - deviceUsageCount) / (double)maxDeviceUsageCount;
 
-        gpuscore[gpu->deviceNum()] = cc_score + ve_score + gpu_score + core_score + cl_score;
-        PrintMes(RGY_LOG_DEBUG, _T("GPU #%d (%s) score: %.1f: VE %.1f, GPU %.1f, CC %.1f, Core %.1f, CL %.1f.\n"), gpu->deviceNum(), gpu->name().c_str(),
-            gpuscore[gpu->deviceNum()], ve_score, gpu_score, cc_score, core_score, cl_score);
+        gpuscore[gpu->deviceNum()] = usage_score + cc_score + ve_score + gpu_score + core_score + cl_score;
+        PrintMes(RGY_LOG_DEBUG, _T("GPU #%d (%s) score: %.1f: Use: %.1f, VE %.1f, GPU %.1f, CC %.1f, Core %.1f, CL %.1f.\n"), gpu->deviceNum(), gpu->name().c_str(),
+            gpuscore[gpu->deviceNum()], usage_score, ve_score, gpu_score, cc_score, core_score, cl_score);
     }
     std::sort(gpuList.begin(), gpuList.end(), [&](const std::unique_ptr<QSVDevice> &a, const std::unique_ptr<QSVDevice> &b) {
         if (gpuscore.at(a->deviceNum()) != gpuscore.at(b->deviceNum())) {
@@ -3242,12 +3465,16 @@ RGY_ERR CQSVPipeline::deviceAutoSelect(const sInputParams *prm, std::vector<std:
     for (const auto &gpu : gpuList) {
         PrintMes(RGY_LOG_DEBUG, _T("GPU #%d (%s): score %.1f\n"), gpu->deviceNum(), gpu->name().c_str(), gpuscore[gpu->deviceNum()]);
     }
-#endif //#if ENABLE_PERF_COUNTER
     return RGY_ERR_NONE;
 }
 
 RGY_ERR CQSVPipeline::InitSession(const sInputParams *inputParam, std::vector<std::unique_ptr<QSVDevice>>& deviceList) {
     auto err = RGY_ERR_NONE;
+    std::unique_ptr<RGYDeviceUsageLockManager> devUsageLock;
+    if (deviceList.size() > 1) {
+        m_deviceUsage = std::make_unique<RGYDeviceUsage>();
+        devUsageLock = m_deviceUsage->lock(); // ロックは親プロセス側でとる
+    }
     if (deviceList.size() == 0) {
         PrintMes(RGY_LOG_DEBUG, _T("No device found for QSV encoding!\n"));
         return RGY_ERR_DEVICE_NOT_FOUND;
@@ -3257,12 +3484,21 @@ RGY_ERR CQSVPipeline::InitSession(const sInputParams *inputParam, std::vector<st
         if ((err = checkGPUListByEncoder(inputParam, deviceList)) != RGY_ERR_NONE) {
             return err;
         }
-        if ((err = deviceAutoSelect(inputParam, deviceList)) != RGY_ERR_NONE) {
+        if ((err = deviceAutoSelect(inputParam, deviceList, devUsageLock.get())) != RGY_ERR_NONE) {
             return err;
         }
         m_device = std::move(deviceList.front());
         PrintMes(RGY_LOG_DEBUG, _T("InitSession: selected device #%d: %s.\n"), (int)m_device->deviceNum(), m_device->name().c_str());
     }
+    if (m_deviceUsage) {
+        // 登録を解除するプロセスを起動
+        const auto [err_run_proc, child_pid] = m_deviceUsage->startProcessMonitor((int)m_device->deviceNum());
+        if (err_run_proc == RGY_ERR_NONE) {
+            // プロセスが起動できたら、その子プロセスのIDを登録する
+            m_deviceUsage->add((int)m_device->deviceNum(), child_pid, devUsageLock.get());
+        }
+    }
+    devUsageLock.reset();
 
     //使用できる最大のversionをチェック
     m_device->mfxSession().QueryVersion(&m_mfxVer);
@@ -3363,14 +3599,27 @@ RGY_ERR CQSVPipeline::InitPowerThrottoling(sInputParams *pParams) {
     if (filterOpenCL > 0) {
         score_filter -= 1;
     }
+    const int parallelMul = (pParams->ctrl.parallelEnc.isEnabled()) ? pParams->ctrl.parallelEnc.parallelCount : 1;
     const bool speedLimit = pParams->ctrl.procSpeedLimit > 0 && pParams->ctrl.procSpeedLimit <= 240;
-    const int score = (speedLimit) ? 0 : score_codec + score_resolution + score_tu + score_filter;
+    const int score = (speedLimit) ? 0 : (score_codec + score_resolution + score_tu + score_filter) * parallelMul;
 
     //一定以上のスコアなら、throttolingをAuto、それ以外はthrottolingを有効にして消費電力を削減
     const int score_threshold = 7;
     const auto mode = (score >= score_threshold) ? RGYThreadPowerThrottlingMode::Auto : RGYThreadPowerThrottlingMode::Enabled;
-    PrintMes(RGY_LOG_DEBUG, _T("selected mode %s : score %d: codec %d, resolution %d, tu %d, filter %d, speed limit %s.\n"),
-        rgy_thread_power_throttoling_mode_to_str(mode), score, score_codec, score_resolution, score_tu, score_filter, speedLimit ? _T("on") : _T("off"));
+    PrintMes(RGY_LOG_DEBUG, _T("selected mode %s : score %d: codec %d, resolution %d, tu %d, filter %d, speed limit %s, parallelMul: %d.\n"),
+        rgy_thread_power_throttoling_mode_to_str(mode), score, score_codec, score_resolution, score_tu, score_filter, speedLimit ? _T("on") : _T("off"), parallelMul);
+
+    if (pParams->ctrl.parallelEnc.isEnabled()) {
+        // 並列エンコード時には音声スレッドと出力スレッドが重要なので、throttolingを有効にはならないように
+        auto& target = pParams->ctrl.threadParams.get(RGYThreadType::AUDIO);
+        if (target.throttling == RGYThreadPowerThrottlingMode::Unset) {
+            target.throttling = RGYThreadPowerThrottlingMode::Auto;
+        }
+        target = pParams->ctrl.threadParams.get(RGYThreadType::OUTPUT);
+        if (target.throttling == RGYThreadPowerThrottlingMode::Unset) {
+            target.throttling = RGYThreadPowerThrottlingMode::Auto;
+        }
+    }
 
     //Unsetのままの設定について自動決定したモードを適用
     for (int i = (int)RGYThreadType::ALL + 1; i < (int)RGYThreadType::END; i++) {
@@ -3431,6 +3680,9 @@ RGY_ERR CQSVPipeline::InitAvoidIdleClock(const sInputParams *pParams) {
 RGY_ERR CQSVPipeline::InitLog(sInputParams *pParams) {
     //ログの初期化
     m_pQSVLog.reset(new RGYLog(pParams->ctrl.logfile.c_str(), pParams->ctrl.loglevel, pParams->ctrl.logAddTime));
+    if (pParams->ctrl.parallelEnc.isChild() && pParams->ctrl.parallelEnc.sendData) {
+        m_pQSVLog->setLock(pParams->ctrl.parallelEnc.sendData->logMutex);
+    }
     if ((pParams->ctrl.logfile.length() > 0 || pParams->common.outputFilename.length() > 0) && pParams->input.type != RGY_INPUT_FMT_SM) {
         m_pQSVLog->writeFileHeader(pParams->common.outputFilename.c_str());
     }
@@ -3455,6 +3707,63 @@ RGY_ERR CQSVPipeline::InitPerfMonitor(const sInputParams *inputParam) {
         m_pQSVLog, &perfMonitorPrm)) {
         PrintMes(RGY_LOG_WARN, _T("Failed to initialize performance monitor, disabled.\n"));
         m_pPerfMonitor.reset();
+    }
+    return RGY_ERR_NONE;
+}
+
+RGY_ERR CQSVPipeline::InitParallelEncode(sInputParams *inputParam, const int maxEncoders) {
+    if (!inputParam->ctrl.parallelEnc.isEnabled()) {
+        return RGY_ERR_NONE;
+    }
+    const bool isChild = inputParam->ctrl.parallelEnc.isChild();
+    auto [sts, errmes] = RGYParallelEnc::isParallelEncPossible(inputParam, m_pFileReader.get());
+    if (sts != RGY_ERR_NONE) {
+        PrintMes(RGY_LOG_WARN, _T("%s"), errmes);
+        inputParam->ctrl.parallelEnc.parallelCount = 0;
+        inputParam->ctrl.parallelEnc.parallelId = -1;
+        return (isChild) ? sts : RGY_ERR_NONE; // 子スレッド側でエラーが起こった場合はエラー、親の場合は正常終了(並列動作を無効化して継続)を返す
+    }
+    // 並列処理が有効の場合、メインスレッドではエンコードは行わないので、m_deviceUsageは解放する
+    if (inputParam->ctrl.parallelEnc.isParent() && m_deviceUsage) {
+        m_deviceUsage->close();
+    }
+    if (inputParam->ctrl.parallelEnc.isParent()) {
+        // とんでもなく大きい値にする人がいそうなので、適当に制限する
+        const int maxParallelCount = std::max(4, maxEncoders * 2);
+        if (inputParam->ctrl.parallelEnc.parallelCount < 0) {
+            inputParam->ctrl.parallelEnc.parallelCount = maxEncoders;
+            PrintMes(RGY_LOG_DEBUG, _T("parallelCount set to %d\n"), inputParam->ctrl.parallelEnc.parallelCount);
+        } else if (inputParam->ctrl.parallelEnc.parallelCount > maxParallelCount) {
+            inputParam->ctrl.parallelEnc.parallelCount = maxParallelCount;
+            PrintMes(RGY_LOG_WARN, _T("Parallel count limited to %d\n"), inputParam->ctrl.parallelEnc.parallelCount);
+        }
+        if (inputParam->ctrl.parallelEnc.parallelCount <= 1) { // 並列数が1以下ならparallelを無効化
+            inputParam->ctrl.parallelEnc.parallelCount = 0;
+            inputParam->ctrl.parallelEnc.parallelId = -1;
+            PrintMes(RGY_LOG_DEBUG, _T("Parallel encoding disabled, as parallel count id set to %d.\n"), inputParam->ctrl.parallelEnc.parallelCount);
+            return RGY_ERR_NONE;
+        }
+    }
+    m_parallelEnc = std::make_unique<RGYParallelEnc>(m_pQSVLog);
+    if ((sts = m_parallelEnc->parallelRun(inputParam, m_pFileReader.get(), m_outputTimebase, m_pStatus.get())) != RGY_ERR_NONE) {
+        if (inputParam->ctrl.parallelEnc.isChild()) {
+            return sts; // 子スレッド側でエラーが起こった場合はエラー
+        }
+        // うまくいかなかった場合、並列処理を無効化して続行する
+        PrintMes(RGY_LOG_WARN, _T("Failed to initialize parallel encoding, disabled.\n"));
+        m_parallelEnc.reset();
+        // m_deviceUsageはいったん解放したので、登録を再追加
+        if (m_deviceUsage) {
+            m_deviceUsage = std::make_unique<RGYDeviceUsage>();
+            auto devUsageLock = m_deviceUsage->lock(); // ロックは親プロセス側でとる
+            // 登録を解除するプロセスを起動
+            const auto [err_run_proc, child_pid] = m_deviceUsage->startProcessMonitor((int)m_device->deviceNum());
+            if (err_run_proc == RGY_ERR_NONE) {
+                // プロセスが起動できたら、その子プロセスのIDを登録する
+                m_deviceUsage->add((int)m_device->deviceNum(), child_pid, devUsageLock.get());
+            }
+        }
+        return RGY_ERR_NONE; // 親の場合は正常終了(並列動作を無効化して継続)を返す
     }
     return RGY_ERR_NONE;
 }
@@ -3491,7 +3800,11 @@ RGY_ERR CQSVPipeline::Init(sInputParams *pParams) {
 
     RGY_ERR sts = RGY_ERR_NONE;
 
-    pParams->applyDOVIProfile();
+#if ENABLE_VULKAN
+    if (pParams->ctrl.enableVulkan == RGYParamInitVulkan::TargetVendor) {
+        setenv("VK_LOADER_DRIVERS_SELECT", "*intel*", 1);
+    }
+#endif
 
     if (pParams->bBenchmark) {
         pParams->common.AVMuxTarget = RGY_MUX_NONE;
@@ -3530,19 +3843,89 @@ RGY_ERR CQSVPipeline::Init(sInputParams *pParams) {
         PrintMes(RGY_LOG_DEBUG, _T("Set Process priority: %s.\n"), rgy_thread_priority_mode_to_str(priority));
     }
 
+    RGYParamThread threadParamThrottleDsiabled;
+    threadParamThrottleDsiabled.set(pParams->ctrl.threadParams.get(RGYThreadType::PROCESS).affinity, RGYThreadPriority::Normal, RGYThreadPowerThrottlingMode::Disabled);
+    threadParamThrottleDsiabled.apply(GetCurrentThread());
+
+#if defined(_WIN32) || defined(_WIN64)
+    if (!pParams->bDisableTimerPeriodTuning) {
+        m_bTimerPeriodTuning = true;
+        timeBeginPeriod(1);
+        PrintMes(RGY_LOG_DEBUG, _T("timeBeginPeriod(1)\n"));
+    }
+#endif //#if defined(_WIN32) || defined(_WIN64)
+
     m_sessionParams.threads = pParams->nSessionThreads;
     m_sessionParams.deviceCopy = pParams->gpuCopy;
     m_nAVSyncMode = pParams->common.AVSyncMode;
 
-    auto deviceList = getDeviceList(pParams->device, pParams->ctrl.enableOpenCL, pParams->memType, m_sessionParams, m_pQSVLog);
-    if (deviceList.size() == 0) {
-        PrintMes(RGY_LOG_DEBUG, _T("No device found for QSV encoding!\n"));
-        return RGY_ERR_DEVICE_NOT_FOUND;
+    DeviceCodecCsp HWDecCodecCsp;
+    auto deviceInfoCache = std::make_shared<QSVDeviceInfoCache>();
+    if ((sts = deviceInfoCache->loadCacheFile()) != RGY_ERR_NONE) {
+        if (sts == RGY_ERR_FILE_OPEN) { // ファイルは存在するが開けない
+            deviceInfoCache.reset(); // キャッシュの存在を無視して進める
+        }
+    } else {
+        HWDecCodecCsp = deviceInfoCache->getDeviceDecCodecCsp();
+        PrintMes(RGY_LOG_DEBUG, _T("HW dec codec csp support read from cache file.\n"));
+    }
+    std::vector<std::unique_ptr<QSVDevice>> deviceList;
+    auto getDevIdName = [&deviceList]() {
+        std::map<int, std::string> devIdName;
+        for (const auto& dev : deviceList) {
+            devIdName[(int)dev->deviceNum()] = tchar_to_string(dev->name());
+        }
+        return devIdName;
+    };
+    if (deviceInfoCache
+        && (deviceInfoCache->getDeviceIds().size() == 0
+        || (pParams->device == QSVDeviceNum::AUTO && deviceInfoCache->getDeviceIds().size() != HWDecCodecCsp.size())
+        || (pParams->device != QSVDeviceNum::AUTO && 
+            std::find_if(HWDecCodecCsp.begin(), HWDecCodecCsp.end(), [dev = (int)pParams->device](const std::pair<int, CodecCsp>& data) { return data.first == dev; }) == HWDecCodecCsp.end()))) {
+        deviceList = getDeviceList((deviceInfoCache->getDeviceIds().size() == 0) ? QSVDeviceNum::AUTO : pParams->device, pParams->ctrl.enableOpenCL, pParams->ctrl.enableVulkan, pParams->memType, m_sessionParams, deviceInfoCache, m_pQSVLog);
+        if (deviceList.size() == 0) {
+            PrintMes(RGY_LOG_DEBUG, _T("No device found for QSV encoding!\n"));
+            return RGY_ERR_DEVICE_NOT_FOUND;
+        }
+        HWDecCodecCsp = getHWDecCodecCsp(pParams->ctrl.skipHWDecodeCheck, deviceList);
+        deviceInfoCache->setDecCodecCsp(getDevIdName(), HWDecCodecCsp);
+        deviceInfoCache->saveCacheFile();
+        PrintMes(RGY_LOG_DEBUG, _T("HW dec codec csp support saved to cache file.\n"));
+        if (pParams->device != QSVDeviceNum::AUTO) {
+            for (auto it = deviceList.begin(); it != deviceList.end();) {
+                if ((*it)->deviceNum() != pParams->device) {
+                    it = deviceList.erase(it);
+                } else {
+                    it++;
+                }
+            }
+        }
     }
 
-    sts = InitInput(pParams, deviceList);
-    if (sts < RGY_ERR_NONE) return sts;
-    PrintMes(RGY_LOG_DEBUG, _T("InitInput: Success.\n"));
+    auto input_ret = std::async(std::launch::async, [&] {
+        threadParamThrottleDsiabled.apply(GetCurrentThread());
+        auto sts = InitInput(pParams, HWDecCodecCsp);
+        if (sts == RGY_ERR_NONE) {
+            pParams->applyDOVIProfile(m_pFileReader->getInputDOVIProfile());
+        }
+        return sts;
+    });
+
+    if (deviceList.size() == 0) {
+        deviceList = getDeviceList(pParams->device, pParams->ctrl.enableOpenCL, pParams->ctrl.enableVulkan, pParams->memType, m_sessionParams, deviceInfoCache, m_pQSVLog);
+        if (deviceList.size() == 0) {
+            PrintMes(RGY_LOG_INFO, _T("No device found for QSV encoding!\n"));
+            return RGY_ERR_DEVICE_NOT_FOUND;
+        }
+        if (deviceInfoCache) {
+            deviceInfoCache->setDeviceIds(getDevIdName());
+        }
+    }
+
+    m_devNames.clear();
+    for (const auto& dev : deviceList) {
+        m_devNames.push_back(dev->name());
+    }
 
     sts = InitSession(pParams, deviceList);
     RGY_ERR(sts, _T("Failed to initialize encode session."));
@@ -3550,23 +3933,36 @@ RGY_ERR CQSVPipeline::Init(sInputParams *pParams) {
 
     sts = InitOpenCL(pParams->ctrl.enableOpenCL, pParams->vpp.checkPerformance);
     if (sts < RGY_ERR_NONE) return sts;
+    PrintMes(RGY_LOG_DEBUG, _T("InitOpenCL: Success.\n"));
+
+    sts = input_ret.get();
+    if (sts < RGY_ERR_NONE) return sts;
+    PrintMes(RGY_LOG_DEBUG, _T("InitInput: Success.\n"));
+
+    // 並列動作の子は読み込みが終了したらすぐに並列動作を呼び出し
+    if (pParams->ctrl.parallelEnc.isChild()) {
+        sts = InitParallelEncode(pParams, (int)m_devNames.size());
+        if (sts < RGY_ERR_NONE) return sts;
+    }
 
     sts = CheckParam(pParams);
     if (sts != RGY_ERR_NONE) return sts;
     PrintMes(RGY_LOG_DEBUG, _T("CheckParam: Success.\n"));
 
-    m_encTimestamp = std::make_unique<RGYTimestamp>(pParams->common.timestampPassThrough);
-
     sts = InitMfxDecParams();
     if (sts < RGY_ERR_NONE) return sts;
+    PrintMes(RGY_LOG_DEBUG, _T("InitMfxDecParams: Success.\n"));
 
     sts = InitFilters(pParams);
     if (sts < RGY_ERR_NONE) return sts;
+    PrintMes(RGY_LOG_DEBUG, _T("InitFilters: Success.\n"));
 
     sts = InitMfxEncodeParams(pParams, deviceList);
     if (sts < RGY_ERR_NONE) return sts;
+    PrintMes(RGY_LOG_DEBUG, _T("InitMfxEncodeParams: Success.\n"));
 
     deviceList.clear();
+    if (deviceInfoCache) deviceInfoCache->updateCacheFile();
 
     sts = InitPowerThrottoling(pParams);
     if (sts < RGY_ERR_NONE) return sts;
@@ -3576,6 +3972,14 @@ RGY_ERR CQSVPipeline::Init(sInputParams *pParams) {
 
     sts = InitPerfMonitor(pParams);
     if (sts < RGY_ERR_NONE) return sts;
+
+    // 親はエンコード設定が完了してから並列動作を呼び出し
+    if (pParams->ctrl.parallelEnc.isParent()) {
+        sts = InitParallelEncode(pParams, (int)m_devNames.size());
+        if (sts < RGY_ERR_NONE) return sts;
+    }
+
+    m_encTimestamp = std::make_unique<RGYTimestamp>(pParams->common.timestampPassThrough, pParams->ctrl.parallelEnc.isParent() /*durationは子エンコーダで修正済み*/);
 
     sts = InitOutput(pParams);
     if (sts < RGY_ERR_NONE) return sts;
@@ -3600,14 +4004,6 @@ RGY_ERR CQSVPipeline::Init(sInputParams *pParams) {
 
     sts = InitVideoQualityMetric(pParams);
     if (sts < RGY_ERR_NONE) return sts;
-
-#if defined(_WIN32) || defined(_WIN64)
-    if (!pParams->bDisableTimerPeriodTuning) {
-        m_bTimerPeriodTuning = true;
-        timeBeginPeriod(1);
-        PrintMes(RGY_LOG_DEBUG, _T("timeBeginPeriod(1)\n"));
-    }
-#endif //#if defined(_WIN32) || defined(_WIN64)
 
     if ((sts = InitAvoidIdleClock(pParams)) != RGY_ERR_NONE) {
         return sts;
@@ -3678,6 +4074,8 @@ void CQSVPipeline::Close() {
 
     PrintMes(RGY_LOG_DEBUG, _T("Closing device...\n"));
     m_device.reset();
+    m_deviceUsage.reset();
+    m_parallelEnc.reset();
 
     m_trimParam.list.clear();
     m_trimParam.offset = 0;
@@ -3727,7 +4125,7 @@ void CQSVPipeline::Close() {
     m_dovirpu.reset();
     m_hdr10plusMetadataCopy = false;
     m_hdr10plus.reset();
-    m_hdrsei.reset();
+    m_hdrseiOut.reset();
 
     m_sessionParams.threads = 0;
     m_sessionParams.deviceCopy = false;
@@ -3842,7 +4240,7 @@ RGY_ERR CQSVPipeline::ResetMFXComponents(sInputParams* pParams) {
     //DeleteFrames();
     //PrintMes(RGY_LOG_DEBUG, _T("ResetMFXComponents: Frames deleted.\n"));
 
-    if ((err = CreatePipeline()) != RGY_ERR_NONE) {
+    if ((err = CreatePipeline(pParams)) != RGY_ERR_NONE) {
         return err;
     }
     if ((err = AllocFrames()) != RGY_ERR_NONE) {
@@ -3900,18 +4298,31 @@ bool CQSVPipeline::VppAfsRffAware() const {
     return vpp_afs_rff_aware;
 }
 
-RGY_ERR CQSVPipeline::CreatePipeline() {
+RGY_ERR CQSVPipeline::CreatePipeline(const sInputParams* prm) {
     m_pipelineTasks.clear();
 
+    if (m_parallelEnc && m_parallelEnc->id() < 0) {
+        // 親プロセスの子プロセスのデータ回収用
+        std::unique_ptr<PipelineTaskAudio> taskAudio;
+        if (m_pFileWriterListAudio.size() > 0) {
+            taskAudio = std::make_unique<PipelineTaskAudio>(m_pFileReader.get(), m_AudioReaders, m_pFileWriterListAudio, m_vpFilters, 0, m_mfxVer, m_pQSVLog);
+        }
+        const auto encOutputTimebase = (ENCODER_QSV) ? to_rgy(HW_NATIVE_TIMEBASE) : m_outputTimebase;
+        m_pipelineTasks.push_back(std::make_unique<PipelineTaskParallelEncBitstream>(m_pFileReader.get(), m_encTimestamp.get(), m_timecode.get(), m_parallelEnc.get(), m_pStatus.get(), m_encFps, encOutputTimebase, taskAudio, 0, m_mfxVer, m_pQSVLog));
+        return RGY_ERR_NONE;
+    }
+
+    // 並列処理時用の終了時刻 (この時刻は含まないようにする) -1の場合は制限なし(最後まで)
+    const auto parallelEncEndPts = (m_parallelEnc) ? m_parallelEnc->getVideoEndKeyPts() : -1ll;
     if (m_pFileReader->getInputCodec() == RGY_CODEC_UNKNOWN) {
-        m_pipelineTasks.push_back(std::make_unique<PipelineTaskInput>(&m_device->mfxSession(), m_device->allocator(), 0, m_pFileReader.get(), m_mfxVer, m_cl, m_pQSVLog));
+        m_pipelineTasks.push_back(std::make_unique<PipelineTaskInput>(&m_device->mfxSession(), m_device->allocator(), parallelEncEndPts, 0, m_pFileReader.get(), m_mfxVer, m_cl, m_pQSVLog));
     } else {
         auto err = err_to_rgy(m_device->mfxSession().JoinSession(m_mfxDEC->GetSession()));
         if (err != RGY_ERR_NONE) {
             PrintMes(RGY_LOG_ERROR, _T("Failed to join mfx vpp session: %s.\n"), get_err_mes(err));
             return err;
         }
-        m_pipelineTasks.push_back(std::make_unique<PipelineTaskMFXDecode>(&m_device->mfxSession(), 1, m_mfxDEC->mfxdec(), m_mfxDEC->mfxparams(), m_pFileReader.get(), m_mfxVer, m_pQSVLog));
+        m_pipelineTasks.push_back(std::make_unique<PipelineTaskMFXDecode>(&m_device->mfxSession(), 1, m_mfxDEC->mfxdec(), m_mfxDEC->mfxparams(), m_mfxDEC->skipAV1C(), parallelEncEndPts, m_pFileReader.get(), m_mfxVer, m_pQSVLog));
     }
     if (m_pFileWriterListAudio.size() > 0) {
         m_pipelineTasks.push_back(std::make_unique<PipelineTaskAudio>(m_pFileReader.get(), m_AudioReaders, m_pFileWriterListAudio, m_vpFilters, 0, m_mfxVer, m_pQSVLog));
@@ -3921,8 +4332,8 @@ RGY_ERR CQSVPipeline::CreatePipeline() {
     const auto inputFrameInfo = m_pFileReader->GetInputFrameInfo();
     const auto inputFpsTimebase = rgy_rational<int>((int)inputFrameInfo.fpsD, (int)inputFrameInfo.fpsN);
     const auto srcTimebase = (m_pFileReader->getInputTimebase().n() > 0 && m_pFileReader->getInputTimebase().is_valid()) ? m_pFileReader->getInputTimebase() : inputFpsTimebase;
-    if (m_trimParam.list.size() > 0) {
-        m_pipelineTasks.push_back(std::make_unique<PipelineTaskTrim>(m_trimParam, m_pFileReader.get(), srcTimebase, 0, m_mfxVer, m_pQSVLog));
+    if (m_trimParam.list.size() > 0 || prm->common.seekToSec > 0.0f || m_parallelEnc) {
+        m_pipelineTasks.push_back(std::make_unique<PipelineTaskTrim>(m_trimParam, m_pFileReader.get(), m_parallelEnc.get(), srcTimebase, 0, m_mfxVer, m_pQSVLog));
     }
     m_pipelineTasks.push_back(std::make_unique<PipelineTaskCheckPTS>(&m_device->mfxSession(), srcTimebase, m_outputTimebase, outFrameDuration, m_nAVSyncMode, m_timestampPassThrough, VppAfsRffAware() && m_pFileReader->rffAware(), m_mfxVer, m_pQSVLog));
 
@@ -3933,7 +4344,7 @@ RGY_ERR CQSVPipeline::CreatePipeline() {
                 PrintMes(RGY_LOG_ERROR, _T("Failed to join mfx vpp session: %s.\n"), get_err_mes(err));
                 return err;
             }
-            m_pipelineTasks.push_back(std::make_unique<PipelineTaskMFXVpp>(&m_device->mfxSession(), 1, filterBlock.vppmfx.get(), filterBlock.vppmfx->mfxparams(), filterBlock.vppmfx->mfxver(), m_timestampPassThrough, m_pQSVLog));
+            m_pipelineTasks.push_back(std::make_unique<PipelineTaskMFXVpp>(&m_device->mfxSession(), 1, filterBlock.vppmfx.get(), filterBlock.vppmfx->mfxparams(), filterBlock.vppmfx->mfxver(), m_outputTimebase, m_timestampPassThrough, m_pQSVLog));
         } else if (filterBlock.type == VppFilterType::FILTER_OPENCL) {
             if (!m_cl) {
                 PrintMes(RGY_LOG_ERROR, _T("OpenCL not enabled, OpenCL filters cannot be used.\n"), CPU_GEN_STR[m_device->CPUGen()]);
@@ -3978,7 +4389,7 @@ RGY_ERR CQSVPipeline::CreatePipeline() {
         }
     }
     if (m_pmfxENC) {
-        m_pipelineTasks.push_back(std::make_unique<PipelineTaskMFXEncode>(&m_device->mfxSession(), 1, m_pmfxENC.get(), m_mfxVer, m_encParams, m_timecode.get(), m_encTimestamp.get(), m_outputTimebase, m_dynamicRC, m_hdr10plus.get(), m_hdr10plusMetadataCopy, m_pQSVLog));
+        m_pipelineTasks.push_back(std::make_unique<PipelineTaskMFXEncode>(&m_device->mfxSession(), 1, m_pmfxENC.get(), m_mfxVer, m_encParams, m_timecode.get(), m_encTimestamp.get(), m_outputTimebase, m_dynamicRC, m_hdr10plus.get(), m_dovirpu.get(), m_pQSVLog));
     } else {
         m_pipelineTasks.push_back(std::make_unique<PipelineTaskOutputRaw>(&m_device->mfxSession(), 1, m_mfxVer, m_pQSVLog));
     }
@@ -4046,7 +4457,7 @@ RGY_ERR CQSVPipeline::RunEncode2() {
         if (err == RGY_ERR_NONE || err == RGY_ERR_MORE_DATA || err == RGY_ERR_MORE_SURFACE || err == RGY_ERR_MORE_BITSTREAM) return RGY_LOG_DEBUG;
         if (err > RGY_ERR_NONE) return RGY_LOG_WARN;
         return RGY_LOG_ERROR;
-    };
+        };
     struct PipelineTaskData {
         size_t task;
         std::unique_ptr<PipelineTaskOutput> data;
@@ -4058,7 +4469,7 @@ RGY_ERR CQSVPipeline::RunEncode2() {
         auto checkContinue = [&checkAbort](RGY_ERR& err) {
             if (checkAbort() || stdInAbort()) { err = RGY_ERR_ABORTED; return false; }
             return err >= RGY_ERR_NONE || err == RGY_ERR_MORE_DATA || err == RGY_ERR_MORE_SURFACE;
-        };
+            };
         while (checkContinue(err)) {
             if (dataqueue.empty()) {
                 speedCtrl.wait(m_pipelineTasks.front()->outputFrames());
@@ -4081,7 +4492,7 @@ RGY_ERR CQSVPipeline::RunEncode2() {
                         //出てきたものは先頭に追加していく
                         std::for_each(output.rbegin(), output.rend(), [itask = d.task, &dataqueue](auto&& o) {
                             dataqueue.push_front(PipelineTaskData(itask + 1, o));
-                        });
+                            });
                     }
                 } else { // pipelineの最終的なデータを出力
                     if ((err = d.data->write(m_pFileWriter.get(), m_device->allocator(), (m_cl) ? &m_cl->queue() : nullptr, m_videoQualityMetric.get())) != RGY_ERR_NONE) {
@@ -4116,7 +4527,7 @@ RGY_ERR CQSVPipeline::RunEncode2() {
         auto checkContinue = [&checkAbort](RGY_ERR& err) {
             if (checkAbort()) { err = RGY_ERR_ABORTED; return false; }
             return err >= RGY_ERR_NONE || err == RGY_ERR_MORE_SURFACE;
-        };
+            };
         for (size_t flushedTaskSend = 0, flushedTaskGet = 0; flushedTaskGet < m_pipelineTasks.size(); ) { // taskを前方からひとつづつflushしていく
             err = RGY_ERR_NONE;
             if (flushedTaskSend == flushedTaskGet) {
@@ -4138,7 +4549,7 @@ RGY_ERR CQSVPipeline::RunEncode2() {
                     //出てきたものは先頭に追加していく
                     std::for_each(output.rbegin(), output.rend(), [itask = d.task, &dataqueue](auto&& o) {
                         dataqueue.push_front(PipelineTaskData(itask + 1, o));
-                    });
+                        });
                     RGY_IGNORE_STS(err, RGY_ERR_MORE_DATA); //VPPなどでsendFrameがRGY_ERR_MORE_DATAだったが、フレームが出てくる場合がある
                 } else { // pipelineの最終的なデータを出力
                     if ((err = d.data->write(m_pFileWriter.get(), m_device->allocator(), (m_cl) ? &m_cl->queue() : nullptr, m_videoQualityMetric.get())) != RGY_ERR_NONE) {
@@ -4166,6 +4577,8 @@ RGY_ERR CQSVPipeline::RunEncode2() {
             }
         }
     }
+    // エラー終了の場合も含めキューをすべて開放する (m_pipelineTasksを解放する前に行う)
+    dataqueue.clear();
 
     if (m_videoQualityMetric) {
         PrintMes(RGY_LOG_DEBUG, _T("Flushing video quality metric calc.\n"));
@@ -4211,6 +4624,10 @@ RGY_ERR CQSVPipeline::RunEncode2() {
     }
     //この中でフレームの解放がなされる
     PrintMes(RGY_LOG_DEBUG, _T("Clear pipeline tasks and allocated frames...\n"));
+    // 依存関係があるため、m_pipelineTasksを後ろから解放する
+    for (auto it = m_pipelineTasks.rbegin(); it != m_pipelineTasks.rend(); ++it) {
+        it->reset();
+    }
     m_pipelineTasks.clear();
     PrintMes(RGY_LOG_DEBUG, _T("Waiting for writer to finish...\n"));
     m_pFileWriter->WaitFin();
@@ -4218,6 +4635,9 @@ RGY_ERR CQSVPipeline::RunEncode2() {
     if (m_videoQualityMetric) {
         PrintMes(RGY_LOG_DEBUG, _T("Write video quality metric results...\n"));
         m_videoQualityMetric->showResult();
+    }
+    if (m_deviceUsage) {
+        m_deviceUsage->close();
     }
     m_pStatus->WriteResults();
     if (filter_result.size()) {
@@ -4234,7 +4654,11 @@ RGY_ERR CQSVPipeline::RunEncode2() {
         }
     }
     PrintMes(RGY_LOG_DEBUG, _T("RunEncode2: finished.\n"));
-    return (err == RGY_ERR_NONE || err == RGY_ERR_MORE_DATA || err == RGY_ERR_MORE_SURFACE || err == RGY_ERR_MORE_BITSTREAM || err > RGY_ERR_NONE) ? RGY_ERR_NONE : err;
+    err = (err == RGY_ERR_NONE || err == RGY_ERR_MORE_DATA || err == RGY_ERR_MORE_SURFACE || err == RGY_ERR_MORE_BITSTREAM || err > RGY_ERR_NONE) ? RGY_ERR_NONE : err;
+    if (m_parallelEnc) {
+        m_parallelEnc->close(err == RGY_ERR_NONE);
+    }
+    return err;
 }
 
 void CQSVPipeline::PrintMes(RGYLogLevel log_level, const TCHAR *format, ...) {
@@ -4329,7 +4753,7 @@ std::pair<RGY_ERR, std::unique_ptr<QSVVideoParam>> CQSVPipeline::GetOutputVideoI
         prmset->videoPrm.mfx.CodecId = 0;
         // frameInfo から prmset->videoPrm.mfx.FrameInfo に値をコピーする
         prmset->videoPrm.mfx.FrameInfo.FourCC = csp_rgy_to_enc(frameInfo.csp);
-        prmset->videoPrm.mfx.FrameInfo.ChromaFormat = chromafmt_rgy_to_enc(RGY_CSP_CHROMA_FORMAT[frameInfo.csp]);
+        prmset->videoPrm.mfx.FrameInfo.ChromaFormat = mfx_fourcc_to_chromafmt(prmset->videoPrm.mfx.FrameInfo.FourCC);
         prmset->videoPrm.mfx.FrameInfo.PicStruct = picstruct_rgy_to_enc(frameInfo.picstruct);
         prmset->videoPrm.mfx.FrameInfo.BitDepthLuma = RGY_CSP_BIT_DEPTH[frameInfo.csp];
         prmset->videoPrm.mfx.FrameInfo.BitDepthChroma = RGY_CSP_BIT_DEPTH[frameInfo.csp];
@@ -4396,20 +4820,28 @@ RGY_ERR CQSVPipeline::CheckCurrentVideoParam(TCHAR *str, mfxU32 bufSize) {
     PRINT_INFO(    _T("CPU Info       %s\n"), cpuInfo);
     if (Check_HWUsed(impl)) {
         PRINT_INFO(_T("GPU Info       %s\n"), gpu_info);
-    }
-    if (Check_HWUsed(impl)) {
-        const TCHAR *adaptorType = _T("");
-        switch (m_device->adapterType()) {
-        case MFX_MEDIA_INTEGRATED: adaptorType = _T("i"); break;
-        case MFX_MEDIA_DISCRETE: adaptorType = _T("d"); break;
+        for (const auto& devName : m_devNames) {
+            if (devName != m_device->name()) {
+                PRINT_INFO(_T("               %s\n"), devName.c_str());
+            }
         }
-        static const TCHAR * const NUM_APPENDIX[] = { _T("st"), _T("nd"), _T("rd"), _T("th")};
-        mfxU32 iGPUID = GetAdapterID(m_device->mfxSession());
-        PRINT_INFO(    _T("Media SDK      QuickSyncVideo (hardware encoder)%s, %d%s GPU(%s), API v%d.%02d\n"),
-            get_low_power_str(outFrameInfo->videoPrm.mfx.LowPower), iGPUID + 1, NUM_APPENDIX[clamp(iGPUID, 0, _countof(NUM_APPENDIX) - 1)],
-            adaptorType, m_mfxVer.Major, m_mfxVer.Minor);
-    } else {
-        PRINT_INFO(    _T("Media SDK      software encoder, API v%d.%02d\n"), m_mfxVer.Major, m_mfxVer.Minor);
+
+        auto gpu_num_str = [](int id, int adaptor_type) {
+            const TCHAR *adaptorTypeStr = nullptr;
+            switch (adaptor_type) {
+            case MFX_MEDIA_INTEGRATED: adaptorTypeStr = _T("i"); break;
+            case MFX_MEDIA_DISCRETE: adaptorTypeStr = _T("d"); break;
+            }
+            static const TCHAR * const NUM_APPENDIX[] = { _T("st"), _T("nd"), _T("rd"), _T("th") };
+            auto str = strsprintf(_T("%d%s"), id, NUM_APPENDIX[clamp(id-1, 0, _countof(NUM_APPENDIX) - 1)]);
+            if (adaptorTypeStr) {
+                str += strsprintf(_T("(%s)"), adaptorTypeStr);
+            }
+            return str;
+        };
+        tstring gpuNumStr = gpu_num_str((int)m_device->deviceNum(), m_device->adapterType());
+        PRINT_INFO(_T("Media SDK      QuickSyncVideo API v%d.%02d,%s, %s GPU\n"), m_mfxVer.Major, m_mfxVer.Minor,
+            get_low_power_str(outFrameInfo->videoPrm.mfx.LowPower), gpuNumStr.c_str());
     }
     PRINT_INFO(    _T("Async Depth    %d frames\n"), m_nAsyncDepth);
     if (check_lib_version(m_mfxVer, MFX_LIB_VERSION_2_5)) {
@@ -4564,7 +4996,7 @@ RGY_ERR CQSVPipeline::CheckCurrentVideoParam(TCHAR *str, mfxU32 bufSize) {
             PRINT_INFO(_T("Scenario Info  %s\n"), get_cx_desc(list_scenario_info, outFrameInfo->cop3.ScenarioInfo));
         }
         if (check_lib_version(m_mfxVer, MFX_LIB_VERSION_2_9)
-            && outFrameInfo->tuneEncQualityPrm.TuneQuality != MFX_ENCODE_TUNE_DEFAULT
+            && outFrameInfo->tuneEncQualityPrm.TuneQuality != MFX_ENCODE_TUNE_OFF
             && get_cx_desc(list_enc_tune_quality_mode, outFrameInfo->tuneEncQualityPrm.TuneQuality) != nullptr) {
             PRINT_INFO(_T("Tune Quality   %s\n"), get_str_of_tune_bitmask(outFrameInfo->tuneEncQualityPrm.TuneQuality).c_str());
         }
@@ -4656,10 +5088,10 @@ RGY_ERR CQSVPipeline::CheckCurrentVideoParam(TCHAR *str, mfxU32 bufSize) {
             PRINT_INFO(_T("VUI            %s\n"), vui_str.c_str());
         }
         }
-        if (m_hdrsei) {
-            const auto masterdisplay = m_hdrsei->print_masterdisplay();
-            const auto maxcll = m_hdrsei->print_maxcll();
-            const auto atcsei = (enc_codec == RGY_CODEC_HEVC) ? m_hdrsei->print_atcsei() : "";
+        if (m_hdrseiOut) {
+            const auto masterdisplay = m_hdrseiOut->print_masterdisplay();
+            const auto maxcll = m_hdrseiOut->print_maxcll();
+            const auto atcsei = (enc_codec == RGY_CODEC_HEVC) ? m_hdrseiOut->print_atcsei() : "";
             if (masterdisplay.length() > 0) {
                 const tstring tstr = char_to_tstring(masterdisplay);
                 const auto splitpos = tstr.find(_T("WP("));
@@ -4678,8 +5110,22 @@ RGY_ERR CQSVPipeline::CheckCurrentVideoParam(TCHAR *str, mfxU32 bufSize) {
                 PRINT_INFO(_T("atcsei         %s\n"), char_to_tstring(atcsei).c_str());
             }
         }
+        if (m_hdr10plus) {
+            PRINT_INFO(_T("Dynamic HDR10  %s\n"), m_hdr10plus->inputJson().c_str());
+        } else if (m_hdr10plusMetadataCopy) {
+            PRINT_INFO(_T("Dynamic HDR10  %s\n"), _T("copy"));
+        }
+        if (m_doviProfile != RGY_DOVI_PROFILE_UNSET) {
+            tstring profile_copy;
+            if (m_doviProfile == RGY_DOVI_PROFILE_COPY) {
+                profile_copy = tstring(_T(" (")) + get_cx_desc(list_dovi_profile, m_pFileReader->getInputDOVIProfile()) + tstring(_T(")"));
+            }
+            PRINT_INFO(_T("dovi profile   %s%s\n"), get_cx_desc(list_dovi_profile, m_doviProfile), profile_copy.c_str());
+        }
         if (m_dovirpu) {
             PRINT_INFO(_T("dovi rpu       %s\n"), m_dovirpu->get_filepath().c_str());
+        } else if (m_dovirpuMetadataCopy) {
+            PRINT_INFO(_T("dovi rpu       %s\n"), _T("copy"));
         }
 
         //last line

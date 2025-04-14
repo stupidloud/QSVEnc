@@ -192,6 +192,14 @@ bool rgy_file_exists(const std::wstring& filepath) {
     return std::filesystem::exists(filepath) && std::filesystem::is_regular_file(filepath);
 }
 
+bool rgy_directory_exists(const std::string& directorypath) {
+    return std::filesystem::exists(directorypath) && std::filesystem::is_directory(directorypath);
+}
+
+bool rgy_directory_exists(const std::wstring& directorypath) {
+    return std::filesystem::exists(directorypath) && std::filesystem::is_directory(directorypath);
+}
+
 bool rgy_get_filesize(const char *filepath, uint64_t *filesize) {
 #if defined(_WIN32) || defined(_WIN64)
     const auto filepathw = char_to_wstring(filepath);
@@ -297,6 +305,16 @@ tstring getExePath() {
 }
 
 #endif //#if defined(_WIN32) || defined(_WIN64)
+
+void rgy_file_remove(const char *path) {
+    ::remove(path);
+}
+#if defined(_WIN32) || defined(_WIN64)
+void rgy_file_remove(const wchar_t *path) {
+    _wremove(path);
+}
+#endif
+
 tstring getExeDir() {
     return PathRemoveFileSpecFixed(getExePath()).second;
 }

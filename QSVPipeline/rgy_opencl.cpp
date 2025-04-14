@@ -105,6 +105,28 @@ static inline const char *stristr(const char *str, const char *substr) {
     return NULL;
 }
 
+static std::string uuidToString(const void *uuid) {
+    std::string str;
+    const uint8_t *buf = (const uint8_t *)uuid;
+    for (size_t i = 0; i < CL_UUID_SIZE_KHR; ++i) {
+        char tmp[4];
+        sprintf_s(tmp, "%02x", buf[i]);
+        str += tmp;
+    }
+    return str;
+};
+
+static std::string luidToString(const void *uuid) {
+    std::string str;
+    const uint8_t *buf = (const uint8_t *)uuid;
+    for (size_t i = 0; i < CL_LUID_SIZE_KHR; ++i) {
+        char tmp[4];
+        sprintf_s(tmp, "%02x", buf[i]);
+        str += tmp;
+    }
+    return str;
+};
+
 static bool checkVendor(const char *str, const char *VendorName) {
     if (VendorName == nullptr) {
         return true;
@@ -308,6 +330,7 @@ int initOpenCLGlobal() {
 
     LOAD(clCreateBuffer);
     LOAD(clCreateImage);
+    LOAD_NO_CHECK(clCreateImageWithProperties);
     LOAD(clReleaseMemObject);
     LOAD(clGetMemObjectInfo);
     LOAD(clGetImageInfo);
@@ -343,6 +366,12 @@ int initOpenCLGlobal() {
     LOAD(clGetEventProfilingInfo);
     LOAD(clEnqueueWaitForEvents);
     LOAD(clEnqueueMarker);
+
+    LOAD_NO_CHECK(clCreateSemaphoreWithPropertiesKHR);
+    LOAD_NO_CHECK(clEnqueueWaitSemaphoresKHR);
+    LOAD_NO_CHECK(clEnqueueSignalSemaphoresKHR);
+    LOAD_NO_CHECK(clGetSemaphoreInfoKHR);
+    LOAD_NO_CHECK(clReleaseSemaphoreKHR);
 
     LOAD(clFlush);
     LOAD(clFinish);
@@ -533,6 +562,39 @@ RGYOpenCLEventInfo RGYOpenCLEvent::getInfo() const {
     return info;
 }
 
+RGY_ERR RGYOpenCLSemaphore::wait(RGYOpenCLQueue &queue, const std::vector<RGYOpenCLEvent> &wait_events, RGYOpenCLEvent *event) {
+    if (!semaphore_ || !*semaphore_) {
+        return RGY_ERR_NULL_PTR;
+    }
+    std::vector<cl_event> cl_wait_events(wait_events.size());
+    for (size_t i = 0; i < wait_events.size(); i++) {
+        cl_wait_events[i] = wait_events[i]();
+    }
+    cl_event *event_ptr = (event) ? event->reset_ptr() : nullptr;
+    cl_int err = clEnqueueWaitSemaphoresKHR(queue(), 1, semaphore_.get(), nullptr, (cl_uint)cl_wait_events.size(), cl_wait_events.data(), event_ptr);
+    return err_cl_to_rgy(err);
+}
+
+RGY_ERR RGYOpenCLSemaphore::signal(RGYOpenCLQueue &queue, const std::vector<RGYOpenCLEvent> &wait_events, RGYOpenCLEvent *event) {
+    if (!semaphore_ || !*semaphore_) {
+        return RGY_ERR_NULL_PTR;
+    }
+    std::vector<cl_event> cl_wait_events(wait_events.size());
+    for (size_t i = 0; i < wait_events.size(); i++) {
+        cl_wait_events[i] = wait_events[i]();
+    }
+    cl_event *event_ptr = (event) ? event->reset_ptr() : nullptr;
+    cl_int err = clEnqueueSignalSemaphoresKHR(queue(), 1, semaphore_.get(), nullptr, (cl_uint)cl_wait_events.size(), cl_wait_events.data(), event_ptr);
+    return err_cl_to_rgy(err);
+}
+
+void RGYOpenCLSemaphore::release() {
+    if (semaphore_ && *semaphore_) {
+        clReleaseSemaphoreKHR(*semaphore_);
+    }
+    semaphore_.reset();
+}
+
 RGYOpenCLDeviceInfoVecWidth::RGYOpenCLDeviceInfoVecWidth() :
     w_char(std::make_pair(0,0)),
     w_short(std::make_pair(0,0)),
@@ -590,7 +652,9 @@ RGYOpenCLDeviceInfo::RGYOpenCLDeviceInfo() :
     driver_version(),
     profile(),
     version(),
-    extensions()
+    extensions(),
+    uuid(),
+    luid()
 #if ENCODER_QSV || CLFILTERS_AUF
     ,
     ip_version_intel(0),
@@ -705,6 +769,8 @@ RGYOpenCLDeviceInfo RGYOpenCLDevice::info() const {
         clGetInfo(clGetDeviceInfo, m_device, CL_DEVICE_PROFILE, &info.profile);
         clGetInfo(clGetDeviceInfo, m_device, CL_DEVICE_VERSION, &info.version);
         clGetInfo(clGetDeviceInfo, m_device, CL_DEVICE_EXTENSIONS, &info.extensions);
+        clGetDeviceInfo(m_device, CL_DEVICE_UUID_KHR, sizeof(info.uuid), info.uuid, nullptr);
+        clGetDeviceInfo(m_device, CL_DEVICE_LUID_KHR, sizeof(info.luid), info.luid, nullptr);
 #if ENCODER_QSV || CLFILTERS_AUF
         clGetInfo(clGetDeviceInfo, m_device, CL_DEVICE_IP_VERSION_INTEL, &info.ip_version_intel);
         clGetInfo(clGetDeviceInfo, m_device, CL_DEVICE_ID_INTEL, &info.id_intel);
@@ -1060,7 +1126,7 @@ RGY_ERR RGYOpenCLPlatform::createDeviceListD3D9(cl_device_type device_type, void
 #endif
 }
 
-RGY_ERR RGYOpenCLPlatform::createDeviceListVA(cl_device_type device_type, void *vadev, const bool tryMode) {
+RGY_ERR RGYOpenCLPlatform::createDeviceListVA(cl_device_type device_type, void *vadev, [[maybe_unused]] const bool tryMode) {
 #if !ENABLE_RGY_OPENCL_VA
     UNREFERENCED_PARAMETER(device_type);
     UNREFERENCED_PARAMETER(vadev);
@@ -1227,6 +1293,35 @@ RGYOpenCLPlatformInfo RGYOpenCLPlatform::info() const {
     }
     return info;
 }
+
+RGY_ERR RGYOpenCLPlatform::setDev(cl_device_id dev, void *d3d9dev, void *d3d11dev) {
+    m_devices.clear(); m_devices.push_back(dev);
+    if (d3d9dev) {
+        m_d3d9dev = d3d9dev;
+#if ENABLE_RGY_OPENCL_D3D9
+        if (checkExtension("cl_khr_dx9_media_sharing")) {
+            LOAD_KHR(clGetDeviceIDsFromDX9MediaAdapterKHR);
+            LOAD_KHR(clCreateFromDX9MediaSurfaceKHR);
+            LOAD_KHR(clEnqueueAcquireDX9MediaSurfacesKHR);
+            LOAD_KHR(clEnqueueReleaseDX9MediaSurfacesKHR);
+        }
+#endif
+    }
+    if (d3d11dev) {
+        m_d3d11dev = d3d11dev;
+#if ENABLE_RGY_OPENCL_D3D11
+        if (checkExtension("cl_khr_d3d11_sharing")) {
+            LOAD_KHR(clGetDeviceIDsFromD3D11KHR);
+            LOAD_KHR(clCreateFromD3D11BufferKHR);
+            LOAD_KHR(clCreateFromD3D11Texture2DKHR);
+            LOAD_KHR(clCreateFromD3D11Texture3DKHR);
+            LOAD_KHR(clEnqueueAcquireD3D11ObjectsKHR);
+            LOAD_KHR(clEnqueueReleaseD3D11ObjectsKHR);
+        }
+#endif
+    }
+    return RGY_ERR_NONE;
+};
 
 bool RGYOpenCLPlatform::isVendor(const char *vendor) const {
     return checkVendor(info().vendor.c_str(), vendor);
@@ -1576,7 +1671,7 @@ static const auto RGY_DX9_ADAPTER_TYPE_TO_STR = make_array<std::pair<cl_dx9_medi
 
 MAP_PAIR_0_1(cldx9adaptertype, cl, cl_dx9_media_adapter_type_khr, str, const TCHAR *, RGY_DX9_ADAPTER_TYPE_TO_STR, 0, _T("unknown"));
 
-static RGYCLMemObjInfo getRGYCLMemObjectInfo(cl_mem mem) {
+RGYCLMemObjInfo getRGYCLMemObjectInfo(cl_mem mem) {
     if (mem == 0) {
         return RGYCLMemObjInfo();
     }
@@ -2311,6 +2406,10 @@ RGY_ERR RGYOpenCLContext::setPlane(int value, RGYFrameInfo *dst, const sInputCro
     return setPlane(value, dst, dstOffset, queue, {}, event);
 }
 RGY_ERR RGYOpenCLContext::setPlane(int value, RGYFrameInfo *planeDst, const sInputCrop *dstOffset, RGYOpenCLQueue &queue, const std::vector<RGYOpenCLEvent> &wait_events, RGYOpenCLEvent *event) {
+    sInputCrop planeCropNone = { 0 };
+    if (dstOffset == nullptr) {
+        dstOffset = &planeCropNone;
+    }
     if (planeDst->mem_type == RGY_MEM_TYPE_CPU) {
         if (RGY_CSP_BIT_DEPTH[planeDst->csp] > 8) {
             for (int y = dstOffset->e.up; y < planeDst->height - dstOffset->e.bottom; y++) {
@@ -2651,19 +2750,26 @@ std::unique_ptr<RGYCLFrame> RGYOpenCLContext::createFrameBuffer(const RGYFrameIn
     cl_int err = CL_SUCCESS;
     int pixsize = (RGY_CSP_BIT_DEPTH[frame.csp] + 7) / 8;
     switch (frame.csp) {
-    case RGY_CSP_RGB24R:
+    case RGY_CSP_BGR24R:
     case RGY_CSP_RGB24:
     case RGY_CSP_BGR24:
     case RGY_CSP_YC48:
         pixsize *= 3;
         break;
-    case RGY_CSP_RGB32R:
+    case RGY_CSP_BGR32R:
     case RGY_CSP_RGB32:
     case RGY_CSP_BGR32:
+    case RGY_CSP_ARGB32:
+    case RGY_CSP_ABGR32:
+    case RGY_CSP_RBGA32:
         pixsize *= 4;
         break;
-    case RGY_CSP_AYUV:
-    case RGY_CSP_AYUV_16:
+    case RGY_CSP_RBGA64:
+    case RGY_CSP_RGBA_FP16_P:
+        pixsize *= 8;
+        break;
+    case RGY_CSP_VUYA:
+    case RGY_CSP_VUYA_16:
         pixsize *= 4;
         break;
     case RGY_CSP_YUY2:
@@ -2763,9 +2869,48 @@ std::unique_ptr<RGYCLFrameInterop> RGYOpenCLContext::createFrameFromD3D11Surface
     }
     for (int i = 0; i < RGY_CSP_PLANES[frame.csp]; i++) {
         cl_int err = CL_SUCCESS;
-        clframe.ptr[i] = (uint8_t *)clCreateFromD3D11Texture2DKHR(m_context.get(), flags, (ID3D11Texture2D *)surf, i, &err);
+        try {
+            clframe.ptr[i] = (uint8_t *)clCreateFromD3D11Texture2DKHR(m_context.get(), flags, (ID3D11Texture2D *)surf, i, &err);
+        } catch (...) {
+            CL_LOG(RGY_LOG_ERROR, _T("Failed to create image from DX11 texture 2D: crushed when calling clCreateFromD3D11Texture2DKHR: 0x%p[%d].\n"), cl_errmes(err), surf, i);
+            err = CL_INVALID_MEM_OBJECT;
+        }
         if (err != CL_SUCCESS) {
             CL_LOG(RGY_LOG_ERROR, _T("Failed to create image from DX11 texture 2D: %s\n"), cl_errmes(err));
+            for (int j = i - 1; j >= 0; j--) {
+                if (clframe.ptr[j] != nullptr) {
+                    clReleaseMemObject((cl_mem)clframe.ptr[j]);
+                    clframe.ptr[j] = nullptr;
+                }
+            }
+            return std::unique_ptr<RGYCLFrameInterop>();
+        }
+    }
+    auto meminfo = getRGYCLMemObjectInfo((cl_mem)clframe.ptr[0]);
+    clframe.mem_type = (meminfo.isImageNormalizedType()) ? RGY_MEM_TYPE_GPU_IMAGE_NORMALIZED : RGY_MEM_TYPE_GPU_IMAGE;
+    return std::make_unique<RGYCLFrameInterop>(clframe, flags, RGY_INTEROP_DX11, queue, m_log);
+#endif
+}
+
+std::unique_ptr<RGYCLFrameInterop> RGYOpenCLContext::createFrameFromD3D11SurfacePlanar(const RGYFrameInfo &frame, RGYOpenCLQueue& queue, cl_mem_flags flags) {
+#if !ENABLE_RGY_OPENCL_D3D11
+    CL_LOG(RGY_LOG_ERROR, _T("OpenCL d3d11 interop not supported in this build.\n"));
+    return std::unique_ptr<RGYCLFrameInterop>();
+#else
+    if (m_platform->d3d11dev() == nullptr) {
+        CL_LOG(RGY_LOG_ERROR, _T("OpenCL platform not associated with d3d11 device.\n"));
+        return std::unique_ptr<RGYCLFrameInterop>();
+    }
+    RGYFrameInfo clframe = frame;
+    for (int i = 0; i < _countof(clframe.ptr); i++) {
+        clframe.ptr[i] = nullptr;
+        clframe.pitch[i] = 0;
+    }
+    for (int i = 0; i < RGY_CSP_PLANES[frame.csp]; i++) {
+        cl_int err = CL_SUCCESS;
+        clframe.ptr[i] = (uint8_t *)clCreateFromD3D11Texture2DKHR(m_context.get(), flags, (ID3D11Texture2D *)frame.ptr[i], 0, &err);
+        if (err != CL_SUCCESS) {
+            CL_LOG(RGY_LOG_ERROR, _T("Failed to create image from DX11 texture 2D (planar %d): %s\n"), i, cl_errmes(err));
             for (int j = i - 1; j >= 0; j--) {
                 if (clframe.ptr[j] != nullptr) {
                     clReleaseMemObject((cl_mem)clframe.ptr[j]);

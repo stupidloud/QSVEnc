@@ -41,10 +41,17 @@ struct nal_info {
     const uint8_t *ptr;
     uint8_t type;
     size_t size;
+    int nuh_layer_id;
+    int temporal_id;
 };
 
 struct unit_info {
     uint8_t type;
+    uint8_t extension_flag;
+    uint8_t has_size_flag;
+    int temporal_id;
+    int spatial_id;
+    int obu_offset;
     std::vector<uint8_t> unit_data;
 };
 
@@ -78,6 +85,39 @@ enum : uint8_t {
     NALU_HEVC_SUFFIX_SEI  = 40,
     NALU_HEVC_UNSPECIFIED = 62,
     NALU_HEVC_INVALID     = 64,
+
+    NALU_VVC_TRAIL       = 0,
+    NALU_VVC_STSA        = 1,
+    NALU_VVC_RADL        = 2,
+    NALU_VVC_RASL        = 3,
+    NALU_VVC_RSV_VCL_4   = 4,
+    NALU_VVC_RSV_VCL_5   = 5,
+    NALU_VVC_RSV_VCL_6   = 6,
+    NALU_VVC_IDR_W_RADL  = 7,
+    NALU_VVC_IDR_N_LP    = 8,
+    NALU_VVC_CRA         = 9,
+    NALU_VVC_GDR         = 10,
+    NALU_VVC_RSV_IRAP_11 = 11,
+    NALU_VVC_OPI         = 12,
+    NALU_VVC_DCI         = 13,
+    NALU_VVC_VPS         = 14,
+    NALU_VVC_SPS         = 15,
+    NALU_VVC_PPS         = 16,
+    NALU_VVC_PREFIX_APS  = 17,
+    NALU_VVC_SUFFIX_APS  = 18,
+    NALU_VVC_PH          = 19,
+    NALU_VVC_AUD         = 20,
+    NALU_VVC_EOS         = 21,
+    NALU_VVC_EOB         = 22,
+    NALU_VVC_PREFIX_SEI  = 23,
+    NALU_VVC_SUFFIX_SEI  = 24,
+    NALU_VVC_FD          = 25,
+    NALU_VVC_RSV_NVCL_26 = 26,
+    NALU_VVC_RSV_NVCL_27 = 27,
+    NALU_VVC_UNSPEC_28   = 28,
+    NALU_VVC_UNSPEC_29   = 29,
+    NALU_VVC_UNSPEC_30   = 30,
+    NALU_VVC_UNSPEC_31   = 31,
 
     OBU_SEQUENCE_HEADER        = 1,
     OBU_TEMPORAL_DELIMITER     = 2,
@@ -144,6 +184,28 @@ enum PayloadType {
     CUBEMAP_PROJECTION                   = 151,
     REGION_WISE_PACKING                  = 155,
     REGIONAL_NESTING                     = 157,
+    MCTS_EXTRACTION_INFO_SETS                   = 158,
+    MCTS_EXTRACTION_INFO_NESTING                = 159,
+    LAYERS_NOT_PRESENT_5                        = 160,
+    INTER_LAYER_CONSTRAINED_TILE_SETS           = 161,
+    BSP_NESTING                                 = 162,
+    BSP_INITIAL_ARRIVAL_TIME                    = 163,
+    SUB_BITSTREAM_PROPERTY                      = 164,
+    ALPHA_CHANNEL_INFO                          = 165,
+    OVERLAY_INFO                                = 166,
+    TEMPORAL_MV_PREDICTION_CONSTRAINTS          = 167,
+    FRAME_FIELD_INFO                            = 168,
+    THREE_DIMENSIONAL_REFERENCE_DISPLAYS_INFO   = 176,
+    DEPTH_REPRESENTATION_INFO_5                 = 177,
+    MULTIVIEW_SCENE_INFO_5                      = 178,
+    MULTIVIEW_ACQUISITION_INFO_5                = 179,
+    MULTIVIEW_VIEW_POSITION_5                   = 180,
+    ALTERNATIVE_DEPTH_INFO                      = 181,
+    SEI_MANIFEST                                = 200,
+    SEI_PREFIX_INDICATION                       = 201,
+    ANNOTATED_REGIONS                           = 202,
+    SUBPIC_LEVEL_INFO                           = 203,
+    SAMPLE_ASPECT_RATIO_INFO                    = 204,
 };
 
 std::vector<uint8_t> unnal(const uint8_t *ptr, size_t len);
@@ -173,6 +235,21 @@ uint8_t gen_obu_header(const uint8_t obu_type);
 size_t get_av1_uleb_size_bytes(uint64_t value);
 std::vector<uint8_t> get_av1_uleb_size_data(uint64_t value);
 std::vector<uint8_t> gen_av1_obu_metadata(const uint8_t metadata_type, const std::vector<uint8_t>& metadata);
+int get_hevc_sei_size(size_t& size, const uint8_t *ptr);
+std::vector<uint8_t> gen_hevc_alpha_channel_info_sei(const int mode);
+
+enum RGYHDRMetadataPrmIndex {
+    G_X,
+    G_Y,
+    B_X,
+    B_Y,
+    R_X,
+    R_Y,
+    WP_X,
+    WP_Y,
+    L_Max,
+    L_Min,
+};
 
 struct RGYHDRMetadataPrm {
     int maxcll;
@@ -229,7 +306,23 @@ struct DOVIProfile {
     VideoVUIInfo vui;
 };
 
+static const uint8_t av1_itut_t35_header_hdr10plus[] = {
+    0xB5, // country code
+    0x00, 0x3C, // provider_code
+    0x00, 0x01, // provider_oriented_code
+    0x04, // application_identifier
+    0x01  // application_mode
+};
+
+static const uint8_t av1_itut_t35_header_dovirpu[] = {
+    0xB5, // country code
+    0x00, 0x3B, // provider_code
+    0x00, 0x00, 0x08, 0x00 // provider_oriented_code
+};
+
 const DOVIProfile *getDOVIProfile(const int id);
+
+std::pair<int, std::string> convert_dovi_rpu(std::vector<uint8_t>& data, const RGYDOVIProfile doviProfileDst, const RGYDOVIRpuConvertParam *prm);
 
 class DOVIRpu {
 public:
@@ -238,17 +331,19 @@ public:
     DOVIRpu();
     ~DOVIRpu();
     int init(const TCHAR *rpu_file);
-    int get_next_rpu_nal(std::vector<uint8_t>& bytes, const int64_t id);
+    int get_next_rpu_nal(std::vector<uint8_t>& bytes, const RGYDOVIProfile doviProfileDst, const RGYDOVIRpuConvertParam *prm, const int64_t id);
+    int get_next_rpu_obu(std::vector<uint8_t>& bytes, const RGYDOVIProfile doviProfileDst, const RGYDOVIRpuConvertParam *prm, const int64_t id);
+    int get_next_rpu(std::vector<uint8_t>& bytes, const RGYDOVIProfile doviProfileDst, const RGYDOVIRpuConvertParam *prm, const int64_t id, const RGY_CODEC codec);
     const tstring& get_filepath() const;
-
+    static std::vector<uint8_t> wrap_rpu_av1_obu(const std::vector<uint8_t>& rpu);
 protected:
     int fillBuffer();
-    int get_next_rpu(std::vector<uint8_t>& bytes);
-    int get_next_rpu(std::vector<uint8_t>& bytes, const int64_t id);
+    int get_next_rpu(std::vector<uint8_t>& bytes, const RGYDOVIProfile doviProfileDst, const RGYDOVIRpuConvertParam *prm);
+    int get_next_rpu(std::vector<uint8_t>& bytes, const RGYDOVIProfile doviProfileDst, const RGYDOVIRpuConvertParam *prm, const int64_t id);
 
     decltype(find_header_c)* m_find_header;
     tstring m_filepath;
-    std::unique_ptr<FILE, decltype(&fclose)> m_fp;
+    std::unique_ptr<FILE, fp_deleter> m_fp;
     std::vector<uint8_t> m_buffer;
     int64_t m_datasize;
     int64_t m_dataoffset;
@@ -256,5 +351,90 @@ protected:
 
     std::unordered_map<int64_t, std::vector<uint8_t>> m_rpus;
 };
+
+struct RGYAACHeader {
+    static const int HEADER_BYTE_SIZE = 7;
+    bool id;
+    bool protection;
+    int profile;     // 00 ... main, 01 ... lc, 10 ... ssr
+    int samplerate;
+    bool private_bit;
+    uint32_t channel;
+    bool original;
+    bool home;
+    bool copyright;
+    bool copyright_start;
+    uint32_t aac_frame_length; // AACヘッダを含む
+    int adts_buffer_fullness;
+    int no_raw_data_blocks_in_frame;
+
+    static bool is_adts_sync(const uint16_t *ptr);
+    static bool is_valid(const uint8_t *buf, const size_t size);
+    int parse(const uint8_t *buf, const size_t size);
+    int sampleRateIdxToRate(const uint32_t idx);
+};
+
+class RGYBitWriter {
+private:
+    std::vector<uint8_t> data;
+    uint8_t current_byte;
+    uint8_t bits_written;
+
+    void flush_byte() {
+        if (bits_written > 0) {
+            // Left-align any remaining bits
+            current_byte <<= (8 - bits_written);
+            data.push_back(current_byte);
+            current_byte = 0;
+            bits_written = 0;
+        }
+    }
+public:
+    RGYBitWriter() : current_byte(0), bits_written(0) {}
+    void write(bool value) {
+        current_byte = (current_byte << 1) | (value ? 1 : 0);
+        bits_written++;
+
+        if (bits_written == 8) {
+            flush_byte();
+        }
+    }
+    void write_n(uint32_t value, uint32_t n) {
+        for (int32_t i = n - 1; i >= 0; i--) {
+            write((value >> i) & 1);
+        }
+    }
+    const std::vector<uint8_t>& get_data() const { return data; }
+    const bool aligned() const { return bits_written == 0; }
+};
+
+static void write_av1_variable_bits(RGYBitWriter& writer, uint32_t value, uint32_t n) {
+    uint32_t max = 1u << n;
+
+    if (value > max) {
+        uint32_t remaining = value;
+
+        while (true) {
+            uint32_t tmp = remaining >> n;
+            uint32_t clipped = tmp << n;
+            remaining -= clipped;
+
+            uint32_t byte = (clipped - max) >> n;
+            writer.write_n(byte, n);
+            writer.write(true); // read_more
+
+            // Stop once the remaining can be written in N bits
+            if (remaining <= max) {
+                break;
+            }
+        }
+
+        writer.write_n(remaining, n);
+    } else {
+        writer.write_n(value, n);
+    }
+
+    writer.write(false);
+}
 
 #endif //__RGY_BITSTREAM_H__

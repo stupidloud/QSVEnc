@@ -641,15 +641,34 @@ int parse_print_options(const TCHAR *option_name, const TCHAR *arg1, const QSVDe
         return 1;
     }
     if (0 == _tcscmp(option_name, _T("check-codecs"))) {
-        _ftprintf(stdout, _T("%s\n"), getAVCodecs((RGYAVCodecType)(RGY_AVCODEC_DEC | RGY_AVCODEC_ENC)).c_str());
+        _ftprintf(stdout, _T("Video\n"));
+        _ftprintf(stdout, _T("%s\n"), getAVCodecs((RGYAVCodecType)(RGY_AVCODEC_DEC), { AVMEDIA_TYPE_VIDEO }).c_str());
+        _ftprintf(stdout, _T("\nAudio\n"));
+        _ftprintf(stdout, _T("%s\n"), getAVCodecs((RGYAVCodecType)(RGY_AVCODEC_DEC | RGY_AVCODEC_ENC), { AVMEDIA_TYPE_AUDIO }).c_str());
+        _ftprintf(stdout, _T("\nSbutitles\n"));
+        _ftprintf(stdout, _T("%s\n"), getAVCodecs((RGYAVCodecType)(RGY_AVCODEC_DEC | RGY_AVCODEC_ENC), { AVMEDIA_TYPE_SUBTITLE }).c_str());
+        _ftprintf(stdout, _T("\nData / Attachment\n"));
+        _ftprintf(stdout, _T("%s\n"), getAVCodecs((RGYAVCodecType)(RGY_AVCODEC_DEC | RGY_AVCODEC_ENC), { AVMEDIA_TYPE_DATA, AVMEDIA_TYPE_ATTACHMENT }).c_str());
         return 1;
     }
     if (0 == _tcscmp(option_name, _T("check-encoders"))) {
-        _ftprintf(stdout, _T("%s\n"), getAVCodecs(RGY_AVCODEC_ENC).c_str());
+        _ftprintf(stdout, _T("Audio\n"));
+        _ftprintf(stdout, _T("%s\n"), getAVCodecs((RGYAVCodecType)(RGY_AVCODEC_ENC), { AVMEDIA_TYPE_AUDIO }).c_str());
+        _ftprintf(stdout, _T("\nSbutitles\n"));
+        _ftprintf(stdout, _T("%s\n"), getAVCodecs((RGYAVCodecType)(RGY_AVCODEC_ENC), { AVMEDIA_TYPE_SUBTITLE }).c_str());
+        _ftprintf(stdout, _T("\nData / Attachment\n"));
+        _ftprintf(stdout, _T("%s\n"), getAVCodecs((RGYAVCodecType)(RGY_AVCODEC_ENC), { AVMEDIA_TYPE_DATA, AVMEDIA_TYPE_ATTACHMENT }).c_str());
         return 1;
     }
     if (0 == _tcscmp(option_name, _T("check-decoders"))) {
-        _ftprintf(stdout, _T("%s\n"), getAVCodecs(RGY_AVCODEC_DEC).c_str());
+        _ftprintf(stdout, _T("Video\n"));
+        _ftprintf(stdout, _T("%s\n"), getAVCodecs((RGYAVCodecType)(RGY_AVCODEC_DEC), { AVMEDIA_TYPE_VIDEO }).c_str());
+        _ftprintf(stdout, _T("\nAudio\n"));
+        _ftprintf(stdout, _T("%s\n"), getAVCodecs((RGYAVCodecType)(RGY_AVCODEC_DEC), { AVMEDIA_TYPE_AUDIO }).c_str());
+        _ftprintf(stdout, _T("\nSbutitles\n"));
+        _ftprintf(stdout, _T("%s\n"), getAVCodecs((RGYAVCodecType)(RGY_AVCODEC_DEC), { AVMEDIA_TYPE_SUBTITLE }).c_str());
+        _ftprintf(stdout, _T("\nData / Attachment\n"));
+        _ftprintf(stdout, _T("%s\n"), getAVCodecs((RGYAVCodecType)(RGY_AVCODEC_DEC), { AVMEDIA_TYPE_DATA, AVMEDIA_TYPE_ATTACHMENT }).c_str());
         return 1;
     }
     if (0 == _tcscmp(option_name, _T("check-profiles"))) {
@@ -1039,9 +1058,7 @@ RGY_ERR run_benchmark(sInputParams *params) {
 
 int run(int argc, TCHAR *argv[]) {
 #if defined(_WIN32) || defined(_WIN64)
-    if (check_locale_is_ja()) {
-        _tsetlocale(LC_ALL, _T("Japanese"));
-    }
+    _tsetlocale(LC_CTYPE, _T(".UTF8"));
 #endif //#if defined(_WIN32) || defined(_WIN64)
 
     if (argc == 1) {
@@ -1183,7 +1200,12 @@ int run(int argc, TCHAR *argv[]) {
         _tsetlocale(LC_ALL, _T("Japanese"));
     }
 #endif //#if defined(_WIN32) || defined(_WIN64)
-
+    if (Params.ctrl.processMonitorDevUsageReset) {
+        return processMonitorRGYDeviceResetEntry();
+    }
+    if (Params.ctrl.processMonitorDevUsage) {
+        return processMonitorRGYDeviceUsage((int)Params.device);
+    }
     if (Params.bBenchmark) {
         return run_benchmark(&Params);
     }

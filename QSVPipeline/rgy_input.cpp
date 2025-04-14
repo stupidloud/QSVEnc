@@ -103,6 +103,7 @@ RGYConvertCSP::RGYConvertCSP(int threads, RGYParamThread threadParam) :
     m_csp_from(RGY_CSP_NA),
     m_csp_to(RGY_CSP_NA),
     m_uv_only(false),
+    m_alpha(nullptr),
     m_threads(threads),
     m_th(), m_heStart(), m_heFin(), m_heFinCopy(),
     m_threadParam(threadParam), m_prm() {
@@ -127,9 +128,14 @@ const ConvertCSP *RGYConvertCSP::getFunc(RGY_CSP csp_from, RGY_CSP csp_to, bool 
         m_csp_from = csp_from;
         m_csp_to = csp_to;
         m_uv_only = uv_only;
+        m_alpha = get_copy_alpha_func(csp_from, csp_to);
         m_csp = get_convert_csp_func(csp_from, csp_to, uv_only, simd);
     }
     return m_csp;
+}
+
+const ConvertCSP *RGYConvertCSP::getFunc(RGY_CSP csp_from, RGY_CSP csp_to, RGY_SIMD simd) {
+    return getFunc(csp_from, csp_to, m_uv_only, simd);
 }
 
 int RGYConvertCSP::run(int interlaced, void **dst, const void **src, int width, int src_y_pitch_byte, int src_uv_pitch_byte, int dst_y_pitch_byte, int height, int dst_height, int *crop) {
@@ -145,13 +151,21 @@ int RGYConvertCSP::run(int interlaced, void **dst, const void **src, int width, 
         for (int ith = 0; ith < m_threads; ith++) {
             auto heStart = std::unique_ptr<void, handle_deleter>(CreateEvent(nullptr, false, false, nullptr), handle_deleter());
             auto heFin = std::unique_ptr<void, handle_deleter>(CreateEvent(nullptr, false, false, nullptr), handle_deleter());
-            m_th.push_back(std::thread([heStart = heStart.get(), heFin = heFin.get(), ithId = ith, threadN = m_threads, threadParam = m_threadParam, prm = &m_prm, cspfunc = &m_csp]() {
+            m_th.push_back(std::thread([heStart = heStart.get(), heFin = heFin.get(), ithId = ith, threadN = m_threads, threadParam = m_threadParam,
+                prm = &m_prm, cspfunc = &m_csp, alphafunc = m_alpha, csp_from = m_csp_from, csp_to = m_csp_to]() {
                 threadParam.apply(GetCurrentThread());
                 WaitForSingleObject((HANDLE)heStart, INFINITE);
                 while (!prm->abort) {
                     (*cspfunc)->func[prm->interlaced](prm->dst, prm->src,
                         prm->width, prm->src_y_pitch_byte, prm->src_uv_pitch_byte, prm->dst_y_pitch_byte,
                         prm->height, prm->dst_height, ithId, threadN, prm->crop);
+                    if (alphafunc) {
+                        const int dstPlaneOffset = RGY_CSP_PLANES[csp_from] - 1;
+                        const int srcPlaneOffset = RGY_CSP_PLANES[csp_to] - 1;
+                        alphafunc(prm->dst + dstPlaneOffset, prm->src + srcPlaneOffset,
+                            prm->width, prm->src_y_pitch_byte, 0, prm->dst_y_pitch_byte,
+                            prm->height, prm->dst_height, ithId, threadN, prm->crop);
+                    }
                     SetEvent((HANDLE)heFin);
                     WaitForSingleObject((HANDLE)heStart, INFINITE);
                 }
@@ -179,6 +193,13 @@ int RGYConvertCSP::run(int interlaced, void **dst, const void **src, int width, 
         m_csp->func[interlaced](dst, src,
             width, src_y_pitch_byte, src_uv_pitch_byte, dst_y_pitch_byte,
             height, dst_height, 0, 1, crop);
+        if (m_alpha) {
+            const int dstPlaneOffset = RGY_CSP_PLANES[m_csp_from] - 1;
+            const int srcPlaneOffset = RGY_CSP_PLANES[m_csp_to] - 1;
+            m_alpha(dst + dstPlaneOffset, src + srcPlaneOffset,
+                width, src_y_pitch_byte, src_uv_pitch_byte, dst_y_pitch_byte,
+                height, dst_height, 0, 1, crop);
+        }
     }
     if (m_th.size() > 0) {
         WaitForMultipleObjects((uint32_t)m_heFinCopy.size(), m_heFinCopy.data(), TRUE, INFINITE);
@@ -395,6 +416,7 @@ static RGY_ERR initOtherReaders(
         }
         inputInfoAVAudioReader.procSpeedLimit = ctrl->procSpeedLimit;
         inputInfoAVAudioReader.AVSyncMode = RGY_AVSYNC_AUTO;
+        inputInfoAVAudioReader.seekRatio = common->seekRatio;
         inputInfoAVAudioReader.seekSec = common->seekSec;
         inputInfoAVAudioReader.seekToSec = common->seekToSec;
         inputInfoAVAudioReader.logFramePosList = ctrl->logFramePosList.getFilename(src.filename, _T(".framelist.csv"));
@@ -439,6 +461,7 @@ RGY_ERR initReaders(
     shared_ptr<RGYInput>& pFileReader,
     vector<shared_ptr<RGYInput>>& otherReaders,
     VideoInfo *input,
+    const RGYParamInput *inprm,
     const RGY_CSP inputCspOfRawReader,
     const shared_ptr<EncodeStatus> pStatus,
     const RGYParamCommon *common,
@@ -447,6 +470,7 @@ RGY_ERR initReaders(
     const int subburnTrackId,
     const bool vpp_afs,
     const bool vpp_rff,
+    const bool vpp_require_hdr_metadata,
     RGYPoolAVPacket *poolPkt,
     RGYPoolAVFrame *poolFrame,
     RGYListRef<RGYFrameDataQP> *qpTableListRef,
@@ -548,6 +572,9 @@ RGY_ERR initReaders(
 #if ENABLE_AVISYNTH_READER
     RGYInputAvsPrm inputPrmAvs(inputPrm);
 #endif
+#if ENABLE_VAPOURSYNTH_READER
+    RGYInputVpyPrm inputPrmVpy(inputPrm);
+#endif
 #if ENABLE_AVSW_READER
     RGYInputAvcodecPrm inputInfoAVCuvid(inputPrm);
 #endif
@@ -568,6 +595,7 @@ RGY_ERR initReaders(
         inputPrmAvs.nAudioSelectCount = common->nAudioSelectCount;
         inputPrmAvs.ppAudioSelect = common->ppAudioSelectList;
         inputPrmAvs.avsdll = ctrl->avsdll;
+        inputPrmAvs.seekRatio = common->seekRatio;
         pInputPrm = &inputPrmAvs;
         log->write(RGY_LOG_DEBUG, RGY_LOGT_IN, _T("avs reader selected.\n"));
         pFileReader.reset(new RGYInputAvs());
@@ -576,6 +604,9 @@ RGY_ERR initReaders(
 #if ENABLE_VAPOURSYNTH_READER
     case RGY_INPUT_FMT_VPY:
     case RGY_INPUT_FMT_VPY_MT:
+        inputPrmVpy.vsdir = ctrl->vsdir;
+        inputPrmVpy.seekRatio = common->seekRatio;
+        pInputPrm = &inputPrmVpy;
         log->write(RGY_LOG_DEBUG, RGY_LOGT_IN, _T("vpy reader selected.\n"));
         pFileReader.reset(new RGYInputVpy());
         break;
@@ -598,6 +629,7 @@ RGY_ERR initReaders(
         inputInfoAVCuvid.videoAvgFramerate = rgy_rational<int>(input->fpsN, input->fpsD);
         inputInfoAVCuvid.analyzeSec = common->demuxAnalyzeSec;
         inputInfoAVCuvid.probesize = common->demuxProbesize;
+        inputInfoAVCuvid.pixFmtStr = common->inputPixFmtStr;
         inputInfoAVCuvid.inputRetry = common->inputRetry;
         inputInfoAVCuvid.nTrimCount = common->nTrimCount;
         inputInfoAVCuvid.pTrimList = common->pTrimList;
@@ -615,6 +647,7 @@ RGY_ERR initReaders(
         inputInfoAVCuvid.nAttachmentSelectCount = common->nAttachmentSelectCount;
         inputInfoAVCuvid.procSpeedLimit = ctrl->procSpeedLimit;
         inputInfoAVCuvid.AVSyncMode = RGY_AVSYNC_AUTO;
+        inputInfoAVCuvid.seekRatio = common->seekRatio;
         inputInfoAVCuvid.seekSec = common->seekSec;
         inputInfoAVCuvid.seekToSec = common->seekToSec;
         inputInfoAVCuvid.logFramePosList = ctrl->logFramePosList.getFilename(common->inputFilename, _T(".framelist.csv"));
@@ -624,16 +657,18 @@ RGY_ERR initReaders(
         inputInfoAVCuvid.queueInfo = (perfMonitor) ? perfMonitor->GetQueueInfoPtr() : nullptr;
         inputInfoAVCuvid.HWDecCodecCsp = &HWDecCodecCsp;
         inputInfoAVCuvid.videoDetectPulldown = !vpp_rff && !vpp_afs && common->AVSyncMode == RGY_AVSYNC_AUTO;
-        inputInfoAVCuvid.hdr10plusMetadataCopy = common->hdr10plusMetadataCopy;
-        inputInfoAVCuvid.parseHDRmetadata = common->maxCll == maxCLLSource || common->masterDisplay == masterDisplaySource;
+        inputInfoAVCuvid.parseHDRmetadata = common->maxCll == maxCLLSource || common->masterDisplay == masterDisplaySource || vpp_require_hdr_metadata;
+        inputInfoAVCuvid.hdr10plusMetadataCopy = common->hdr10plusMetadataCopy || vpp_require_hdr_metadata;
+        inputInfoAVCuvid.doviRpuMetadataCopy = common->doviRpuMetadataCopy || vpp_require_hdr_metadata;
         inputInfoAVCuvid.interlaceAutoFrame = input->picstruct == RGY_PICSTRUCT_AUTO;
         inputInfoAVCuvid.qpTableListRef = qpTableListRef;
         inputInfoAVCuvid.inputOpt = common->inputOpt;
         inputInfoAVCuvid.lowLatency = ctrl->lowLatency;
         inputInfoAVCuvid.timestampPassThrough = common->timestampPassThrough;
         inputInfoAVCuvid.hevcbsf = common->hevcbsf;
+        inputInfoAVCuvid.avswDecoder = inprm->avswDecoder;
         pInputPrm = &inputInfoAVCuvid;
-        log->write(RGY_LOG_DEBUG, RGY_LOGT_IN, _T("avhw reader selected.\n"));
+        log->write(RGY_LOG_DEBUG, RGY_LOGT_IN, _T("avhw/sw reader selected.\n"));
         pFileReader.reset(new RGYInputAvcodec());
         } break;
 #endif //#if ENABLE_AVSW_READER

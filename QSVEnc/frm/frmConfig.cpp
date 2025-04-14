@@ -234,8 +234,6 @@ System::Void frmConfig::LoadLocalStg() {
     LocalStg.MKVMuxerPath    = String(_ex_stg->s_mux[MUXER_MKV].fullpath).ToString();
     LocalStg.TC2MP4ExeName   = String(_ex_stg->s_mux[MUXER_TC2MP4].filename).ToString();
     LocalStg.TC2MP4Path      = String(_ex_stg->s_mux[MUXER_TC2MP4].fullpath).ToString();
-    LocalStg.MPGMuxerExeName = String(_ex_stg->s_mux[MUXER_MPG].filename).ToString();
-    LocalStg.MPGMuxerPath    = String(_ex_stg->s_mux[MUXER_MPG].fullpath).ToString();
     LocalStg.MP4RawExeName   = String(_ex_stg->s_mux[MUXER_MP4_RAW].filename).ToString();
     LocalStg.MP4RawPath      = String(_ex_stg->s_mux[MUXER_MP4_RAW].fullpath).ToString();
 
@@ -303,7 +301,6 @@ System::Void frmConfig::SaveLocalStg() {
     GetCHARfromString(_ex_stg->s_mux[MUXER_MP4].fullpath,     sizeof(_ex_stg->s_mux[MUXER_MP4].fullpath),     LocalStg.MP4MuxerPath);
     GetCHARfromString(_ex_stg->s_mux[MUXER_MKV].fullpath,     sizeof(_ex_stg->s_mux[MUXER_MKV].fullpath),     LocalStg.MKVMuxerPath);
     GetCHARfromString(_ex_stg->s_mux[MUXER_TC2MP4].fullpath,  sizeof(_ex_stg->s_mux[MUXER_TC2MP4].fullpath),  LocalStg.TC2MP4Path);
-    GetCHARfromString(_ex_stg->s_mux[MUXER_MPG].fullpath,     sizeof(_ex_stg->s_mux[MUXER_MPG].fullpath),     LocalStg.MPGMuxerPath);
     GetCHARfromString(_ex_stg->s_mux[MUXER_MP4_RAW].fullpath, sizeof(_ex_stg->s_mux[MUXER_MP4_RAW].fullpath), LocalStg.MP4RawPath);
     for (int i = 0; i < _ex_stg->s_aud_ext_count; i++)
         GetCHARfromString(_ex_stg->s_aud_ext[i].fullpath, sizeof(_ex_stg->s_aud_ext[i].fullpath), LocalStg.audEncPath[i]);
@@ -315,7 +312,6 @@ System::Void frmConfig::SetLocalStg() {
     fcgTXMP4MuxerPath->Text       = LocalStg.MP4MuxerPath;
     fcgTXMKVMuxerPath->Text       = LocalStg.MKVMuxerPath;
     fcgTXTC2MP4Path->Text         = LocalStg.TC2MP4Path;
-    fcgTXMPGMuxerPath->Text       = LocalStg.MPGMuxerPath;
     fcgTXMP4RawPath->Text         = LocalStg.MP4RawPath;
     fcgTXCustomAudioTempDir->Text = LocalStg.CustomAudTmpDir;
     fcgTXCustomTempDir->Text      = LocalStg.CustomTmpDir;
@@ -324,14 +320,12 @@ System::Void frmConfig::SetLocalStg() {
     fcgLBMP4MuxerPath->Text       = LocalStg.MP4MuxerExeName + LOAD_CLI_STRING(AUO_CONFIG_SPECIFY_EXE_PATH);
     fcgLBMKVMuxerPath->Text       = LocalStg.MKVMuxerExeName + LOAD_CLI_STRING(AUO_CONFIG_SPECIFY_EXE_PATH);
     fcgLBTC2MP4Path->Text         = LocalStg.TC2MP4ExeName   + LOAD_CLI_STRING(AUO_CONFIG_SPECIFY_EXE_PATH);
-    fcgLBMPGMuxerPath->Text       = LocalStg.MPGMuxerExeName + LOAD_CLI_STRING(AUO_CONFIG_SPECIFY_EXE_PATH);
     fcgLBMP4RawPath->Text         = LocalStg.MP4RawExeName   + LOAD_CLI_STRING(AUO_CONFIG_SPECIFY_EXE_PATH);
 
     fcgTXVideoEncoderPath->SelectionStart = fcgTXVideoEncoderPath->Text->Length;
     fcgTXMP4MuxerPath->SelectionStart     = fcgTXMP4MuxerPath->Text->Length;
     fcgTXTC2MP4Path->SelectionStart       = fcgTXTC2MP4Path->Text->Length;
     fcgTXMKVMuxerPath->SelectionStart     = fcgTXMKVMuxerPath->Text->Length;
-    fcgTXMPGMuxerPath->SelectionStart     = fcgTXMPGMuxerPath->Text->Length;
     fcgTXMP4RawPath->SelectionStart       = fcgTXMP4RawPath->Text->Length;
 }
 
@@ -833,7 +827,7 @@ System::Void frmConfig::InitComboBox() {
     setComboBox(fcgCXFunctionMode,    list_qsv_function_mode);
     setComboBox(fcgCXCodecLevel,      list_avc_level);
     setComboBox(fcgCXCodecProfile,    list_avc_profile);
-    setComboBox(fcgCXOutputCsp,       list_output_csp);
+    setComboBox(fcgCXOutputCsp,       list_output_csp, (int)_countof(list_output_csp) - 4);
     setComboBox(fcgCXBitDepth,        bit_depth_desc);
     setComboBox(fcgCXQualityPreset,   list_quality);
     setComboBox(fcgCXInterlaced,      list_interlaced_mfx_gui);
@@ -861,6 +855,11 @@ System::Void frmConfig::InitComboBox() {
     setComboBox(fcgCXVppDenoiseDctStep, list_vpp_denoise_dct_step_gui);
     setComboBox(fcgCXVppDenoiseDctBlockSize, list_vpp_denoise_dct_block_size);
     setComboBox(fcgCXVppDenoiseConv3DMatrix, list_vpp_convolution3d_matrix);
+    setComboBox(fcgCXVppDenoiseNLMeansPatch,  list_vpp_nlmeans_block_size);
+    setComboBox(fcgCXVppDenoiseNLMeansSearch, list_vpp_nlmeans_block_size);
+    setComboBox(fcgCXVppDenoiseFFT3DBlockSize, list_vpp_fft3d_block_size);
+    setComboBox(fcgCXVppDenoiseFFT3DTemporal, list_vpp_fft3d_temporal_gui);
+    setComboBox(fcgCXVppDenoiseFFT3DPrecision, list_vpp_fp_prec);
     setComboBox(fcgCXVppDetailEnhance, list_vpp_detail_enahance);
 
     setComboBox(fcgCXVppResizeAlg,   list_vpp_resize);
@@ -874,6 +873,9 @@ System::Void frmConfig::InitComboBox() {
     setComboBox(fcgCXVppNnediErrorType, list_vpp_nnedi_error_type);
     setComboBox(fcgCXVppYadifMode,      list_vpp_yadif_mode_gui);
     setComboBox(fcgCXVppDebandSample,   list_vpp_deband_gui);
+    setComboBox(fcgCXVppDeband,         list_vpp_deband_names);
+    setComboBox(fcgCXVppLibplaceboDebandDither, list_vpp_libplacebo_deband_dither_mode);
+    setComboBox(fcgCXVppLibplaceboDebandLUTSize, list_vpp_libplacebo_deband_lut_size);
 
     setComboBox(fcgCXImageStabilizer, list_vpp_image_stabilizer);
     setComboBox(fcgCXRotate,          list_rotate_angle_ja);
@@ -884,12 +886,6 @@ System::Void frmConfig::InitComboBox() {
     setMuxerCmdExNames(fcgCXMP4CmdEx, MUXER_MP4);
     setMuxerCmdExNames(fcgCXMKVCmdEx, MUXER_MKV);
     setMuxerCmdExNames(fcgCXInternalCmdEx, MUXER_INTERNAL);
-#ifdef HIDE_MPEG2
-    fcgCXMPGCmdEx->Items->Clear();
-    fcgCXMPGCmdEx->Items->Add("");
-#else
-    setMuxerCmdExNames(fcgCXMPGCmdEx, MUXER_MPG);
-#endif
 
     setAudioEncoderNames();
 
@@ -909,7 +905,6 @@ System::Void frmConfig::SetTXMaxLenAll() {
     SetTXMaxLen(fcgTXMP4MuxerPath,       sizeof(sys_dat->exstg->s_mux[MUXER_MP4].fullpath) - 1);
     SetTXMaxLen(fcgTXMKVMuxerPath,       sizeof(sys_dat->exstg->s_mux[MUXER_MKV].fullpath) - 1);
     SetTXMaxLen(fcgTXTC2MP4Path,         sizeof(sys_dat->exstg->s_mux[MUXER_TC2MP4].fullpath) - 1);
-    SetTXMaxLen(fcgTXMPGMuxerPath,       sizeof(sys_dat->exstg->s_mux[MUXER_MPG].fullpath) - 1);
     SetTXMaxLen(fcgTXMP4RawPath,         sizeof(sys_dat->exstg->s_mux[MUXER_MP4_RAW].fullpath) - 1);
     SetTXMaxLen(fcgTXCustomTempDir,      sizeof(sys_dat->exstg->s_local.custom_tmp_dir) - 1);
     SetTXMaxLen(fcgTXCustomAudioTempDir, sizeof(sys_dat->exstg->s_local.custom_audio_tmp_dir) - 1);
@@ -1213,9 +1208,11 @@ System::Void frmConfig::fcgChangeEnabled(System::Object^  sender, System::EventA
     fcggroupBoxResize->Enabled = fcgCBVppResize->Checked;
     fcgPNVppDenoiseMFX->Visible = (fcgCXVppDenoiseMethod->SelectedIndex == get_cx_index(list_vpp_denoise, _T("denoise")));
     fcgPNVppDenoiseKnn->Visible = (fcgCXVppDenoiseMethod->SelectedIndex == get_cx_index(list_vpp_denoise, _T("knn")));
+    fcgPNVppDenoiseNLMeans->Visible = (fcgCXVppDenoiseMethod->SelectedIndex == get_cx_index(list_vpp_denoise, _T("nlmeans")));
     fcgPNVppDenoisePmd->Visible = (fcgCXVppDenoiseMethod->SelectedIndex == get_cx_index(list_vpp_denoise, _T("pmd")));
     fcgPNVppDenoiseSmooth->Visible = (fcgCXVppDenoiseMethod->SelectedIndex == get_cx_index(list_vpp_denoise, _T("smooth")));
     fcgPNVppDenoiseDct->Visible = (fcgCXVppDenoiseMethod->SelectedIndex == get_cx_index(list_vpp_denoise, _T("denoise-dct")));
+    fcgPNVppDenoiseFFT3D->Visible = (fcgCXVppDenoiseMethod->SelectedIndex == get_cx_index(list_vpp_denoise, _T("fft3d")));
     fcgPNVppDenoiseConv3D->Visible = (fcgCXVppDenoiseMethod->SelectedIndex == get_cx_index(list_vpp_denoise, _T("convolution3d")));
     fcgPNVppDetailEnhanceMFX->Visible = (fcgCXVppDetailEnhance->SelectedIndex == get_cx_index(list_vpp_detail_enahance, _T("detail-enhance")));
     fcgPNVppUnsharp->Visible = (fcgCXVppDetailEnhance->SelectedIndex == get_cx_index(list_vpp_detail_enahance, _T("unsharp")));
@@ -1224,7 +1221,9 @@ System::Void frmConfig::fcgChangeEnabled(System::Object^  sender, System::EventA
     fcgPNVppAfs->Visible = (fcgCXVppDeinterlace->SelectedIndex == get_cx_index(list_deinterlace_gui, L"自動フィールドシフト"));
     fcgPNVppNnedi->Visible = (fcgCXVppDeinterlace->SelectedIndex == get_cx_index(list_deinterlace_gui, L"nnedi"));
     fcgPNVppYadif->Visible = (fcgCXVppDeinterlace->SelectedIndex == get_cx_index(list_deinterlace_gui, L"yadif"));
-    fcggroupBoxVppDeband->Enabled = fcgCBVppDebandEnable->Checked;
+    fcgPNVppDecomb->Visible = (fcgCXVppDeinterlace->SelectedIndex == get_cx_index(list_deinterlace_gui, L"decomb"));
+    fcgPNVppDeband->Visible = (fcgCXVppDeband->SelectedIndex == get_cx_index(list_vpp_deband_names, _T("deband")));
+    fcgPNVppLibplaceboDeband->Visible = (fcgCXVppDeband->SelectedIndex == get_cx_index(list_vpp_deband_names, _T("libplacebo-deband")));
 
     this->ResumeLayout();
     this->PerformLayout();
@@ -1417,12 +1416,6 @@ System::Void frmConfig::InitForm() {
     //イベントセット
     SetTXMaxLenAll(); //テキストボックスの最大文字数
     SetAllCheckChangedEvents(this); //変更の確認,ついでにNUのEnterEvent
-#ifdef HIDE_MPEG2
-    if (fcgtabControlMux->TabPages->Count >= 3) {
-        tabPageMpgMux = fcgtabControlMux->TabPages[2];
-        fcgtabControlMux->TabPages->RemoveAt(2);
-    }
-#endif
     //表示位置の調整
     AdjustLocation();
     //キー設定
@@ -1471,11 +1464,6 @@ System::Void frmConfig::LoadLangText() {
     LOAD_CLI_TEXT(fcgLBMKVMuxerPath);
     LOAD_CLI_TEXT(fcgLBMKVMuxerCmdEx);
     LOAD_CLI_TEXT(fcgCBMKVMuxerExt);
-    LOAD_CLI_TEXT(fcgtabPageMPG);
-    LOAD_CLI_TEXT(fcgBTMPGMuxerPath);
-    LOAD_CLI_TEXT(fcgLBMPGMuxerPath);
-    LOAD_CLI_TEXT(fcgLBMPGMuxerCmdEx);
-    LOAD_CLI_TEXT(fcgCBMPGMuxerExt);
     LOAD_CLI_TEXT(fcgtabPageMux);
     LOAD_CLI_TEXT(fcgLBMuxPriority);
     LOAD_CLI_TEXT(fcgCBMuxMinimize);
@@ -1583,7 +1571,7 @@ System::Void frmConfig::LoadLangText() {
     LOAD_CLI_TEXT(fcgLBVppDenoiseMFX);
     LOAD_CLI_TEXT(fcgLBImageStabilizer);
     LOAD_CLI_TEXT(fcgLBRotate);
-    LOAD_CLI_TEXT(fcgCBVppDebandEnable);
+    LOAD_CLI_TEXT(fcggroupBoxVppDeband);
     LOAD_CLI_TEXT(fcgCBVppDebandRandEachFrame);
     LOAD_CLI_TEXT(fcgCBVppDebandBlurFirst);
     LOAD_CLI_TEXT(fcgLBVppDebandSample);
@@ -1595,6 +1583,12 @@ System::Void frmConfig::LoadLangText() {
     LOAD_CLI_TEXT(fcgLBVppDebandThreY);
     LOAD_CLI_TEXT(fcgLBVppDebandThreshold);
     LOAD_CLI_TEXT(fcgLBVppDebandRange);
+    LOAD_CLI_TEXT(fcgLBVppLibplaceboDebandIteration);
+    LOAD_CLI_TEXT(fcgLBVppLibplaceboDebandRadius);
+    LOAD_CLI_TEXT(fcgLBVppLibplaceboDebandThreshold);
+    LOAD_CLI_TEXT(fcgLBVppLibplaceboDebandGrain);
+    LOAD_CLI_TEXT(fcgLBVppLibplaceboDebandDither);
+    LOAD_CLI_TEXT(fcgLBVppLibplaceboDebandLUTSize);
     LOAD_CLI_TEXT(fcggroupBoxVppDetailEnahance);
     LOAD_CLI_TEXT(fcgLBVppWarpsharpDepth);
     LOAD_CLI_TEXT(fcgLBVppWarpsharpThreshold);
@@ -1620,9 +1614,19 @@ System::Void frmConfig::LoadLangText() {
     LOAD_CLI_TEXT(fcgLBVppDenoiseDctStep);
     LOAD_CLI_TEXT(fcgLBVppDenoiseDctSigma);
     LOAD_CLI_TEXT(fcgLBVppDenoiseDctBlockSize);
+    LOAD_CLI_TEXT(fcgLBVppDenoiseFFT3DSigma);
+    LOAD_CLI_TEXT(fcgLBVppDenoiseFFT3DAmount);
+    LOAD_CLI_TEXT(fcgLBVppDenoiseFFT3DBlockSize);
+    LOAD_CLI_TEXT(fcgLBVppDenoiseFFT3DOverlap);
+    LOAD_CLI_TEXT(fcgLBVppDenoiseFFT3DTemporal);
+    LOAD_CLI_TEXT(fcgLBVppDenoiseFFT3DPrecision);
     LOAD_CLI_TEXT(fcgLBVppDenoiseKnnThreshold);
     LOAD_CLI_TEXT(fcgLBVppDenoiseKnnStrength);
     LOAD_CLI_TEXT(fcgLBVppDenoiseKnnRadius);
+    LOAD_CLI_TEXT(fcgLBVppDenoiseNLMeansPatch);
+    LOAD_CLI_TEXT(fcgLBVppDenoiseNLMeansSearch);
+    LOAD_CLI_TEXT(fcgLBVppDenoiseNLMeansSigma);
+    LOAD_CLI_TEXT(fcgLBVppDenoiseNLMeansH);
     LOAD_CLI_TEXT(fcgLBVppDenoisePmdThreshold);
     LOAD_CLI_TEXT(fcgLBVppDenoisePmdStrength);
     LOAD_CLI_TEXT(fcgLBVppDenoisePmdApplyCount);
@@ -1645,6 +1649,10 @@ System::Void frmConfig::LoadLangText() {
     LOAD_CLI_TEXT(fcgLBVppAfsAnalyze);
     LOAD_CLI_TEXT(fcgLBVppAfsMethodSwitch);
     LOAD_CLI_TEXT(fcgLBVppYadifMode);
+    LOAD_CLI_TEXT(fcgCBVppDecombFull);
+    LOAD_CLI_TEXT(fcgCBVppDecombBlend);
+    LOAD_CLI_TEXT(fcgLBVppDecombThreshold);
+    LOAD_CLI_TEXT(fcgLBVppDecombDthreshold);
     LOAD_CLI_TEXT(fcgLBVppNnediErrorType);
     LOAD_CLI_TEXT(fcgLBVppNnediPrescreen);
     LOAD_CLI_TEXT(fcgLBVppNnediPrec);
@@ -1819,10 +1827,14 @@ System::Void frmConfig::ConfToFrm(CONF_GUIEX *cnf) {
             denoise_idx = get_cx_index(list_vpp_denoise, _T("smooth"));
         } else if (prm_qsv.vpp.dct.enable) {
             denoise_idx = get_cx_index(list_vpp_denoise, _T("denoise-dct"));
+        } else if (prm_qsv.vpp.fft3d.enable) {
+            denoise_idx = get_cx_index(list_vpp_denoise, _T("fft3d"));
         } else if (prm_qsv.vppmfx.denoise.enable) {
             denoise_idx = get_cx_index(list_vpp_denoise, _T("denoise"));
         } else if (prm_qsv.vpp.convolution3d.enable) {
             denoise_idx = get_cx_index(list_vpp_denoise, _T("convolution3d"));
+        } else if (prm_qsv.vpp.nlmeans.enable) {
+            denoise_idx = get_cx_index(list_vpp_denoise, _T("nlmeans"));
         }
         SetCXIndex(fcgCXVppDenoiseMethod, denoise_idx);
 
@@ -1845,15 +1857,29 @@ System::Void frmConfig::ConfToFrm(CONF_GUIEX *cnf) {
             deinterlacer_idx = get_cx_index(list_deinterlace_gui, L"nnedi");
         } else if (prm_qsv.vpp.yadif.enable) {
             deinterlacer_idx = get_cx_index(list_deinterlace_gui, L"yadif");
+        } else if (prm_qsv.vpp.decomb.enable) {
+            deinterlacer_idx = get_cx_index(list_deinterlace_gui, L"decomb");
         } else if (prm_qsv.vppmfx.deinterlace > 0) {
             deinterlacer_idx = get_cx_index(list_deinterlace_gui, prm_qsv.vppmfx.deinterlace);
         }
         SetCXIndex(fcgCXVppDeinterlace, deinterlacer_idx);
+ 
+        int deband_idx = 0;
+        if (prm_qsv.vpp.deband.enable) {
+            deband_idx = get_cx_index(list_vpp_deband_names, _T("deband"));
+        } else if (prm_qsv.vpp.libplacebo_deband.enable) {
+            deband_idx = get_cx_index(list_vpp_deband_names, _T("libplacebo-deband"));
+        }
+        SetCXIndex(fcgCXVppDeband, deband_idx);
 
         SetNUValue(fcgNUVppDenoiseMFX, prm_qsv.vppmfx.denoise.strength);
         SetNUValue(fcgNUVppDenoiseKnnRadius, prm_qsv.vpp.knn.radius);
         SetNUValue(fcgNUVppDenoiseKnnStrength, prm_qsv.vpp.knn.strength);
         SetNUValue(fcgNUVppDenoiseKnnThreshold, prm_qsv.vpp.knn.lerp_threshold);
+        SetCXIndex(fcgCXVppDenoiseNLMeansPatch, get_cx_index(list_vpp_nlmeans_block_size, (int)prm_qsv.vpp.nlmeans.patchSize));
+        SetCXIndex(fcgCXVppDenoiseNLMeansSearch, get_cx_index(list_vpp_nlmeans_block_size, (int)prm_qsv.vpp.nlmeans.searchSize));
+        SetNUValue(fcgNUVppDenoiseNLMeansSigma, prm_qsv.vpp.nlmeans.sigma);
+        SetNUValue(fcgNUVppDenoiseNLMeansH, prm_qsv.vpp.nlmeans.h);
         SetNUValue(fcgNUVppDenoisePmdApplyCount, prm_qsv.vpp.pmd.applyCount);
         SetNUValue(fcgNUVppDenoisePmdStrength, prm_qsv.vpp.pmd.strength);
         SetNUValue(fcgNUVppDenoisePmdThreshold, prm_qsv.vpp.pmd.threshold);
@@ -1862,12 +1888,18 @@ System::Void frmConfig::ConfToFrm(CONF_GUIEX *cnf) {
         SetCXIndex(fcgCXVppDenoiseDctStep, get_cx_index(list_vpp_denoise_dct_step_gui, (int)prm_qsv.vpp.dct.step));
         SetNUValue(fcgNUVppDenoiseDctSigma, prm_qsv.vpp.dct.sigma);
         SetCXIndex(fcgCXVppDenoiseDctBlockSize, get_cx_index(list_vpp_denoise_dct_block_size, (int)prm_qsv.vpp.dct.block_size));
+        SetNUValue(fcgNUVppDenoiseFFT3DSigma, prm_qsv.vpp.fft3d.sigma);
+        SetNUValue(fcgNUVppDenoiseFFT3DAmount, prm_qsv.vpp.fft3d.amount);
+        SetCXIndex(fcgCXVppDenoiseFFT3DBlockSize, get_cx_index(list_vpp_fft3d_block_size, (int)prm_qsv.vpp.fft3d.block_size));
+        SetNUValue(fcgNUVppDenoiseFFT3DOverlap, prm_qsv.vpp.fft3d.overlap);
+        SetCXIndex(fcgCXVppDenoiseFFT3DTemporal, get_cx_index(list_vpp_fft3d_temporal_gui, (int)prm_qsv.vpp.fft3d.temporal));
+        SetCXIndex(fcgCXVppDenoiseFFT3DPrecision, get_cx_index(list_vpp_fp_prec, (int)prm_qsv.vpp.fft3d.precision));
+
         SetCXIndex(fcgCXVppDenoiseConv3DMatrix, get_cx_index(list_vpp_convolution3d_matrix, (int)prm_qsv.vpp.convolution3d.matrix));
         SetNUValue(fcgNUVppDenoiseConv3DThreshYSpatial, prm_qsv.vpp.convolution3d.threshYspatial);
         SetNUValue(fcgNUVppDenoiseConv3DThreshCSpatial, prm_qsv.vpp.convolution3d.threshCspatial);
         SetNUValue(fcgNUVppDenoiseConv3DThreshYTemporal, prm_qsv.vpp.convolution3d.threshYtemporal);
         SetNUValue(fcgNUVppDenoiseConv3DThreshCTemporal, prm_qsv.vpp.convolution3d.threshCtemporal);
-        fcgCBVppDebandEnable->Checked = prm_qsv.vpp.deband.enable;
         SetNUValue(fcgNUVppDebandRange, prm_qsv.vpp.deband.range);
         SetNUValue(fcgNUVppDebandThreY, prm_qsv.vpp.deband.threY);
         SetNUValue(fcgNUVppDebandThreCb, prm_qsv.vpp.deband.threCb);
@@ -1877,6 +1909,13 @@ System::Void frmConfig::ConfToFrm(CONF_GUIEX *cnf) {
         SetCXIndex(fcgCXVppDebandSample, get_cx_index(list_vpp_deband_gui, prm_qsv.vpp.deband.sample));
         fcgCBVppDebandBlurFirst->Checked = prm_qsv.vpp.deband.blurFirst;
         fcgCBVppDebandRandEachFrame->Checked = prm_qsv.vpp.deband.randEachFrame;
+        SetNUValue(fcgNUVppLibplaceboDebandIteration, prm_qsv.vpp.libplacebo_deband.iterations);
+        SetNUValue(fcgNUVppLibplaceboDebandRadius,    prm_qsv.vpp.libplacebo_deband.radius);
+        SetNUValue(fcgNUVppLibplaceboDebandThreshold, prm_qsv.vpp.libplacebo_deband.threshold);
+        SetNUValue(fcgNUVppLibplaceboDebandGrainY,    prm_qsv.vpp.libplacebo_deband.grainY);
+        SetNUValue(fcgNUVppLibplaceboDebandGrainC,    prm_qsv.vpp.libplacebo_deband.grainC >= 0.0f ? prm_qsv.vpp.libplacebo_deband.grainC : prm_qsv.vpp.libplacebo_deband.grainY);
+        SetCXIndex(fcgCXVppLibplaceboDebandDither,    get_cx_index(list_vpp_libplacebo_deband_dither_mode, (int)prm_qsv.vpp.libplacebo_deband.dither));
+        SetCXIndex(fcgCXVppLibplaceboDebandLUTSize,   get_cx_index(list_vpp_libplacebo_deband_lut_size, prm_qsv.vpp.libplacebo_deband.lut_size));
         SetNUValue(fcgNUVppUnsharpRadius, prm_qsv.vpp.unsharp.radius);
         SetNUValue(fcgNUVppUnsharpWeight, prm_qsv.vpp.unsharp.weight);
         SetNUValue(fcgNUVppUnsharpThreshold, prm_qsv.vpp.unsharp.threshold);
@@ -1913,6 +1952,10 @@ System::Void frmConfig::ConfToFrm(CONF_GUIEX *cnf) {
         SetCXIndex(fcgCXVppNnediQual, get_cx_index(list_vpp_nnedi_quality, prm_qsv.vpp.nnedi.quality));
         SetCXIndex(fcgCXVppNnediErrorType, get_cx_index(list_vpp_nnedi_error_type, prm_qsv.vpp.nnedi.errortype));
         SetCXIndex(fcgCXVppYadifMode, get_cx_index(list_vpp_yadif_mode_gui, prm_qsv.vpp.yadif.mode));
+        fcgCBVppDecombFull->Checked = prm_qsv.vpp.decomb.full != 0;
+        fcgCBVppDecombBlend->Checked = prm_qsv.vpp.decomb.blend != 0;
+        SetNUValue(fcgNUVppDecombThreshold, prm_qsv.vpp.decomb.threshold);
+        SetNUValue(fcgNUVppDecombDthreshold, prm_qsv.vpp.decomb.dthreshold);
 
         //fcgCBSSIM->Checked = prm_qsv.ssim;
         //fcgCBPSNR->Checked = prm_qsv.psnr;
@@ -1967,8 +2010,6 @@ System::Void frmConfig::ConfToFrm(CONF_GUIEX *cnf) {
         SetCXIndex(fcgCXMP4BoxTempDir,       cnf->mux.mp4_temp_dir);
         fcgCBMKVMuxerExt->Checked          = cnf->mux.disable_mkvext == 0;
         SetCXIndex(fcgCXMKVCmdEx,            cnf->mux.mkv_mode);
-        fcgCBMPGMuxerExt->Checked          = cnf->mux.disable_mpgext == 0;
-        SetCXIndex(fcgCXMPGCmdEx,            cnf->mux.mpg_mode);
         fcgCBMuxMinimize->Checked          = cnf->mux.minimized != 0;
         SetCXIndex(fcgCXMuxPriority,         cnf->mux.priority);
         SetCXIndex(fcgCXInternalCmdEx,       cnf->mux.internal_mode);
@@ -2085,6 +2126,12 @@ System::String^ frmConfig::FrmToConf(CONF_GUIEX *cnf) {
     prm_qsv.vpp.knn.strength = (float)fcgNUVppDenoiseKnnStrength->Value;
     prm_qsv.vpp.knn.lerp_threshold = (float)fcgNUVppDenoiseKnnThreshold->Value;
 
+    prm_qsv.vpp.nlmeans.enable = fcgCXVppDenoiseMethod->SelectedIndex == get_cx_index(list_vpp_denoise, _T("nlmeans"));
+    prm_qsv.vpp.nlmeans.patchSize = list_vpp_nlmeans_block_size[fcgCXVppDenoiseNLMeansPatch->SelectedIndex].value;
+    prm_qsv.vpp.nlmeans.searchSize = list_vpp_nlmeans_block_size[fcgCXVppDenoiseNLMeansSearch->SelectedIndex].value;
+    prm_qsv.vpp.nlmeans.sigma = (float)fcgNUVppDenoiseNLMeansSigma->Value;
+    prm_qsv.vpp.nlmeans.h = (float)fcgNUVppDenoiseNLMeansH->Value;
+
     prm_qsv.vpp.pmd.enable = fcgCXVppDenoiseMethod->SelectedIndex == get_cx_index(list_vpp_denoise, _T("pmd"));
     prm_qsv.vpp.pmd.applyCount = (int)fcgNUVppDenoisePmdApplyCount->Value;
     prm_qsv.vpp.pmd.strength = (float)fcgNUVppDenoisePmdStrength->Value;
@@ -2098,6 +2145,14 @@ System::String^ frmConfig::FrmToConf(CONF_GUIEX *cnf) {
     prm_qsv.vpp.dct.step = list_vpp_denoise_dct_step[fcgCXVppDenoiseDctStep->SelectedIndex].value;
     prm_qsv.vpp.dct.sigma = (float)fcgNUVppDenoiseDctSigma->Value;
     prm_qsv.vpp.dct.block_size = list_vpp_denoise_dct_block_size[fcgCXVppDenoiseDctBlockSize->SelectedIndex].value;
+
+    prm_qsv.vpp.fft3d.enable = fcgCXVppDenoiseMethod->SelectedIndex == get_cx_index(list_vpp_denoise, _T("fft3d"));
+    prm_qsv.vpp.fft3d.sigma = (float)fcgNUVppDenoiseFFT3DSigma->Value;
+    prm_qsv.vpp.fft3d.amount = (float)fcgNUVppDenoiseFFT3DAmount->Value;
+    prm_qsv.vpp.fft3d.block_size = list_vpp_fft3d_block_size[fcgCXVppDenoiseFFT3DBlockSize->SelectedIndex].value;
+    prm_qsv.vpp.fft3d.overlap = (float)fcgNUVppDenoiseFFT3DOverlap->Value;
+    prm_qsv.vpp.fft3d.temporal = list_vpp_fft3d_temporal_gui[fcgCXVppDenoiseFFT3DTemporal->SelectedIndex].value;
+    prm_qsv.vpp.fft3d.precision = (VppFpPrecision)list_vpp_fp_prec[fcgCXVppDenoiseFFT3DPrecision->SelectedIndex].value;
 
     prm_qsv.vppmfx.denoise.enable = fcgCXVppDenoiseMethod->SelectedIndex == get_cx_index(list_vpp_denoise, _T("denoise"));
     prm_qsv.vppmfx.denoise.strength = (int)fcgNUVppDenoiseMFX->Value;
@@ -2122,7 +2177,7 @@ System::String^ frmConfig::FrmToConf(CONF_GUIEX *cnf) {
     prm_qsv.vppmfx.detail.enable = fcgCXVppDetailEnhance->SelectedIndex == get_cx_index(list_vpp_detail_enahance, _T("detail-enhance"));
     prm_qsv.vppmfx.detail.strength = (int)fcgNUVppDetailEnhanceMFX->Value;
 
-    prm_qsv.vpp.deband.enable = fcgCBVppDebandEnable->Checked;
+    prm_qsv.vpp.deband.enable = fcgCXVppDeband->SelectedIndex == get_cx_index(list_vpp_deband_names, _T("deband"));
     prm_qsv.vpp.deband.range = (int)fcgNUVppDebandRange->Value;
     prm_qsv.vpp.deband.threY = (int)fcgNUVppDebandThreY->Value;
     prm_qsv.vpp.deband.threCb = (int)fcgNUVppDebandThreCb->Value;
@@ -2132,6 +2187,15 @@ System::String^ frmConfig::FrmToConf(CONF_GUIEX *cnf) {
     prm_qsv.vpp.deband.sample = list_vpp_deband_gui[fcgCXVppDebandSample->SelectedIndex].value;
     prm_qsv.vpp.deband.blurFirst = fcgCBVppDebandBlurFirst->Checked;
     prm_qsv.vpp.deband.randEachFrame = fcgCBVppDebandRandEachFrame->Checked;
+ 
+    prm_qsv.vpp.libplacebo_deband.enable     = fcgCXVppDeband->SelectedIndex == get_cx_index(list_vpp_deband_names, _T("libplacebo-deband"));
+    prm_qsv.vpp.libplacebo_deband.iterations = (int)fcgNUVppLibplaceboDebandIteration->Value;
+    prm_qsv.vpp.libplacebo_deband.radius     = (float)fcgNUVppLibplaceboDebandRadius->Value;
+    prm_qsv.vpp.libplacebo_deband.threshold  = (float)fcgNUVppLibplaceboDebandThreshold->Value;
+    prm_qsv.vpp.libplacebo_deband.grainY     = (float)fcgNUVppLibplaceboDebandGrainY->Value;
+    prm_qsv.vpp.libplacebo_deband.grainC     = (float)fcgNUVppLibplaceboDebandGrainC->Value;
+    prm_qsv.vpp.libplacebo_deband.dither     = (VppLibplaceboDebandDitherMode)list_vpp_libplacebo_deband_dither_mode[fcgCXVppLibplaceboDebandDither->SelectedIndex].value;
+    prm_qsv.vpp.libplacebo_deband.lut_size   = list_vpp_libplacebo_deband_lut_size[fcgCXVppLibplaceboDebandLUTSize->SelectedIndex].value;
 
     prm_qsv.vpp.afs.enable             = (fcgCXVppDeinterlace->SelectedIndex == get_cx_index(list_deinterlace_gui, L"自動フィールドシフト"));
     prm_qsv.vpp.afs.timecode           = false;
@@ -2160,12 +2224,19 @@ System::String^ frmConfig::FrmToConf(CONF_GUIEX *cnf) {
     prm_qsv.vpp.nnedi.pre_screen       = (VppNnediPreScreen)list_vpp_nnedi_pre_screen_gui[fcgCXVppNnediPrescreen->SelectedIndex].value;
     prm_qsv.vpp.nnedi.errortype        = (VppNnediErrorType)list_vpp_nnedi_error_type[fcgCXVppNnediErrorType->SelectedIndex].value;
 
-    prm_qsv.vpp.yadif.enable = (fcgCXVppDeinterlace->SelectedIndex == get_cx_index(list_deinterlace_gui, L"yadif"));
-    prm_qsv.vpp.yadif.mode = (VppYadifMode)list_vpp_yadif_mode_gui[fcgCXVppYadifMode->SelectedIndex].value;
+    prm_qsv.vpp.yadif.enable           = (fcgCXVppDeinterlace->SelectedIndex == get_cx_index(list_deinterlace_gui, L"yadif"));
+    prm_qsv.vpp.yadif.mode             = (VppYadifMode)list_vpp_yadif_mode_gui[fcgCXVppYadifMode->SelectedIndex].value;
+
+    prm_qsv.vpp.decomb.enable          = (fcgCXVppDeinterlace->SelectedIndex == get_cx_index(list_deinterlace_gui, L"decomb"));
+    prm_qsv.vpp.decomb.full            = fcgCBVppDecombFull->Checked;
+    prm_qsv.vpp.decomb.blend           = fcgCBVppDecombBlend->Checked;
+    prm_qsv.vpp.decomb.threshold       = (int)fcgNUVppDecombThreshold->Value;
+    prm_qsv.vpp.decomb.dthreshold      = (int)fcgNUVppDecombDthreshold->Value;
 
     if (!prm_qsv.vpp.afs.enable
         && !prm_qsv.vpp.nnedi.enable
         && !prm_qsv.vpp.yadif.enable
+        && !prm_qsv.vpp.decomb.enable
     ) {
         prm_qsv.vppmfx.deinterlace = list_deinterlace_gui[fcgCXVppDeinterlace->SelectedIndex].value;
     }
@@ -2227,8 +2298,6 @@ System::String^ frmConfig::FrmToConf(CONF_GUIEX *cnf) {
     cnf->mux.mp4_temp_dir           = fcgCXMP4BoxTempDir->SelectedIndex;
     cnf->mux.disable_mkvext         = !fcgCBMKVMuxerExt->Checked;
     cnf->mux.mkv_mode               = fcgCXMKVCmdEx->SelectedIndex;
-    cnf->mux.disable_mpgext         = !fcgCBMPGMuxerExt->Checked;
-    cnf->mux.mpg_mode               = fcgCXMPGCmdEx->SelectedIndex;
     cnf->mux.minimized              = fcgCBMuxMinimize->Checked;
     cnf->mux.priority               = fcgCXMuxPriority->SelectedIndex;
     cnf->mux.internal_mode          = fcgCXInternalCmdEx->SelectedIndex;
@@ -2517,9 +2586,19 @@ System::Void frmConfig::SetHelpToolTips() {
     SET_TOOL_TIP_EX(fcgCXVppDenoiseDctStep);
     SET_TOOL_TIP_EX(fcgNUVppDenoiseDctSigma);
     SET_TOOL_TIP_EX(fcgCXVppDenoiseDctBlockSize);
+    SET_TOOL_TIP_EX(fcgNUVppDenoiseFFT3DSigma);
+    SET_TOOL_TIP_EX(fcgNUVppDenoiseFFT3DAmount);
+    SET_TOOL_TIP_EX(fcgCXVppDenoiseFFT3DBlockSize);
+    SET_TOOL_TIP_EX(fcgNUVppDenoiseFFT3DOverlap);
+    SET_TOOL_TIP_EX(fcgCXVppDenoiseFFT3DTemporal);
+    SET_TOOL_TIP_EX(fcgCXVppDenoiseFFT3DPrecision);
     SET_TOOL_TIP_EX(fcgNUVppDenoiseKnnRadius);
     SET_TOOL_TIP_EX(fcgNUVppDenoiseKnnStrength);
     SET_TOOL_TIP_EX(fcgNUVppDenoiseKnnThreshold);
+    SET_TOOL_TIP_EX(fcgCXVppDenoiseNLMeansPatch);
+    SET_TOOL_TIP_EX(fcgCXVppDenoiseNLMeansSearch);
+    SET_TOOL_TIP_EX(fcgNUVppDenoiseNLMeansSigma);
+    SET_TOOL_TIP_EX(fcgNUVppDenoiseNLMeansH);
     SET_TOOL_TIP_EX(fcgCXVppDetailEnhance);
     SET_TOOL_TIP_EX(fcgNUVppWarpsharpBlur);
     SET_TOOL_TIP_EX(fcgNUVppWarpsharpThreshold);
@@ -2532,7 +2611,7 @@ System::Void frmConfig::SetHelpToolTips() {
     SET_TOOL_TIP_EX(fcgNUVppUnsharpRadius);
     SET_TOOL_TIP_EX(fcgNUVppUnsharpThreshold);
     SET_TOOL_TIP_EX(fcgNUVppUnsharpWeight);
-    SET_TOOL_TIP_EX(fcgCBVppDebandEnable);
+    SET_TOOL_TIP_EX(fcggroupBoxVppDeband);
     SET_TOOL_TIP_EX(fcgNUVppDebandRange);
     SET_TOOL_TIP_EX(fcgNUVppDebandThreY);
     SET_TOOL_TIP_EX(fcgNUVppDebandThreCb);
@@ -2542,6 +2621,13 @@ System::Void frmConfig::SetHelpToolTips() {
     SET_TOOL_TIP_EX(fcgCXVppDebandSample);
     SET_TOOL_TIP_EX(fcgCBVppDebandBlurFirst);
     SET_TOOL_TIP_EX(fcgCBVppDebandRandEachFrame);
+    SET_TOOL_TIP_EX(fcgNUVppLibplaceboDebandIteration);
+    SET_TOOL_TIP_EX(fcgNUVppLibplaceboDebandRadius);
+    SET_TOOL_TIP_EX(fcgNUVppLibplaceboDebandThreshold);
+    SET_TOOL_TIP_EX(fcgNUVppLibplaceboDebandGrainY);
+    SET_TOOL_TIP_EX(fcgNUVppLibplaceboDebandGrainC);
+    SET_TOOL_TIP_EX(fcgCXVppLibplaceboDebandDither);
+    SET_TOOL_TIP_EX(fcgCXVppLibplaceboDebandLUTSize);
     SET_TOOL_TIP_EX(fcgCXVppDeinterlace);
     SET_TOOL_TIP_EX(fcgNUVppAfsUp);
     SET_TOOL_TIP_EX(fcgNUVppAfsBottom);
@@ -2566,6 +2652,10 @@ System::Void frmConfig::SetHelpToolTips() {
     SET_TOOL_TIP_EX(fcgCBVppAfsSmooth);
     SET_TOOL_TIP_EX(fcgCBVppAfsTune);
     SET_TOOL_TIP_EX(fcgCXVppYadifMode);
+    SET_TOOL_TIP_EX(fcgCBVppDecombFull);
+    SET_TOOL_TIP_EX(fcgCBVppDecombBlend);
+    SET_TOOL_TIP_EX(fcgNUVppDecombThreshold);
+    SET_TOOL_TIP_EX(fcgNUVppDecombDthreshold);
     SET_TOOL_TIP_EX(fcgCXVppNnediNns);
     SET_TOOL_TIP_EX(fcgCXVppNnediNsize);
     SET_TOOL_TIP_EX(fcgCXVppNnediQual);
@@ -2617,9 +2707,6 @@ System::Void frmConfig::SetHelpToolTips() {
     SET_TOOL_TIP_EX(fcgCBMKVMuxerExt);
     SET_TOOL_TIP_EX(fcgCXMKVCmdEx);
     SET_TOOL_TIP_EX(fcgBTMKVMuxerPath);
-    SET_TOOL_TIP_EX(fcgCBMPGMuxerExt);
-    SET_TOOL_TIP_EX(fcgCXMPGCmdEx);
-    SET_TOOL_TIP_EX(fcgBTMPGMuxerPath);
     SET_TOOL_TIP_EX(fcgCXMuxPriority);
     //バッチファイル実行
     SET_TOOL_TIP_EX(fcgCBRunBatBefore);

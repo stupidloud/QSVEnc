@@ -65,6 +65,15 @@ tstring GetQSVEncVersion() {
     if (ENABLE_LIBASS_SUBBURN != 0 && ENABLE_AVSW_READER != 0) version += _T(", sub");
 #endif
     version += _T("\n");
+    version += _T(" others\n");
+    version += strsprintf(_T("  libass     : %s\n"), ENABLED_INFO[ENABLE_LIBASS_SUBBURN]);
+    version += strsprintf(_T("  libdovi    : %s\n"), ENABLED_INFO[ENABLE_LIBDOVI]);
+#if (defined(_WIN32) || defined(_WIN64))
+    version += strsprintf(_T("  d3d11      : %s\n"), ENABLED_INFO[ENABLE_D3D11]);
+#else
+    version += strsprintf(_T("  vulkan     : %s\n"), ENABLED_INFO[ENABLE_VULKAN]);
+#endif
+    version += strsprintf(_T("  libplacebo : %s\n"), ENABLED_INFO[ENABLE_LIBPLACEBO]);
     return version;
 }
 
@@ -245,8 +254,8 @@ tstring encoder_help() {
         });
     str += strsprintf(_T("\n")
         _T("   --output-depth <int>        output bit depth (default: 8)\n")
-        _T("   --output-csp <string>       output colorspace (default: i420)\n")
-        _T("                                 - i420, i422, i444\n")
+        _T("   --output-csp <string>       output colorspace (default: yuv420)\n")
+        _T("                                 - yuv420, yuv422, yuv444, rgb\n")
         _T("\n"));
     str += strsprintf(_T("\n")
         _T("   --function-mode              select QSV function mode.\n")
@@ -2023,7 +2032,7 @@ int parse_cmd(sInputParams *pParams, const char *cmda, bool ignore_parse_err) {
     LocalFree(argvw);
 
     vector<TCHAR *> argv_tchar;
-    for (int i = 0; i < argv_tstring.size(); i++) {
+    for (size_t i = 0; i < argv_tstring.size(); i++) {
         argv_tchar.push_back((TCHAR *)argv_tstring[i].data());
     }
     argv_tchar.push_back(_T("")); // 最後に空白を追加

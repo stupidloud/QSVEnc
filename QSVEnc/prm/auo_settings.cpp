@@ -457,6 +457,7 @@ void guiEx_settings::load_aud(BOOL internal) {
         s_aud[i].pipe_input   = GetPrivateProfileInt(            encoder_section, "pipe_input",    0, ini_fileName);
         s_aud[i].disable_log  = GetPrivateProfileInt(            encoder_section, "disable_log",   0, ini_fileName);
         s_aud[i].unsupported_mp4  = GetPrivateProfileInt(    encoder_section, "unsupported_mp4",   0, ini_fileName);
+        s_aud[i].enable_rf64      = GetPrivateProfileInt(    encoder_section, "enable_rf64",       0, ini_fileName);
 
         sprintf_s(encoder_section, sizeof(encoder_section), "%s%s", INI_SECTION_MODE, s_aud[i].keyName);
         int tmp_count = GetPrivateProfileInt(encoder_section, "count", 0, ini_fileName);
@@ -557,14 +558,13 @@ void guiEx_settings::load_mux() {
     char muxer_section[INI_KEY_MAX_LEN];
     char key[INI_KEY_MAX_LEN];
 
-    static const int MUX_COUNT = 6;
-    static const char * MUXER_TYPE[MUX_COUNT]    = { "MUXER_MP4", "MUXER_MKV", "MUXER_TC2MP4", "MUXER_MPG", "MUXER_MP4_RAW", "MUXER_INTERNAL" };
-    static const char * MUXER_OUT_EXT[MUX_COUNT] = {      ".mp4",      ".mkv",         ".mp4",      ".mpg",          ".mp4",             ".*" };
+    static const char * MUXER_TYPE[MUXER_MAX_COUNT]    = { "MUXER_MP4", "MUXER_MKV", "MUXER_TC2MP4", "MUXER_MP4_RAW", "MUXER_INTERNAL" };
+    static const char * MUXER_OUT_EXT[MUXER_MAX_COUNT] = {      ".mp4",      ".mkv",         ".mp4",          ".mp4",             ".*" };
 
     clear_mux();
 
 
-    s_mux_count = MUX_COUNT;
+    s_mux_count = MUXER_MAX_COUNT;
     s_mux_mc.init(ini_filesize + s_mux_count * sizeof(MUXER_SETTINGS));
     s_mux = (MUXER_SETTINGS *)s_mux_mc.CutMem(s_mux_count * sizeof(MUXER_SETTINGS));
     for (i = 0; i < s_mux_count; i++) {
@@ -652,6 +652,7 @@ void guiEx_settings::load_local() {
     s_local.default_audio_encoder_ext = GetPrivateProfileInt(   ini_section_main, "default_audio_encoder",     DEFAULT_AUDIO_ENCODER_EXT,     conf_fileName);
     s_local.default_audio_encoder_in  = GetPrivateProfileInt(   ini_section_main, "default_audio_encoder_in",  DEFAULT_AUDIO_ENCODER_IN,      conf_fileName);
     s_local.default_audenc_use_in     = GetPrivateProfileInt(   ini_section_main, "default_audenc_use_in",     DEFAULT_AUDIO_ENCODER_USE_IN,  conf_fileName);
+    s_local.av_length_threshold       = GetPrivateProfileDouble(ini_section_main, "av_length_threshold",       DEFAULT_AV_LENGTH_DIFF_THRESOLD, conf_fileName);
 #if ENCODER_QSV
     s_local.force_bluray              = GetPrivateProfileInt(   ini_section_main, "force_bluray",              DEFAULT_FORCE_BLURAY,          conf_fileName);
     s_local.perf_monitor              = GetPrivateProfileInt(   ini_section_main, "perf_monitor",              DEFAULT_PERF_MONITOR,          conf_fileName);
@@ -736,6 +737,7 @@ void guiEx_settings::save_local() {
     WritePrivateProfileIntWithDefault(   ini_section_main, "default_audio_encoder",     s_local.default_audio_encoder_ext, DEFAULT_AUDIO_ENCODER_EXT,     conf_fileName);
     WritePrivateProfileIntWithDefault(   ini_section_main, "default_audio_encoder_in",  s_local.default_audio_encoder_in,  DEFAULT_AUDIO_ENCODER_IN,      conf_fileName);
     WritePrivateProfileIntWithDefault(   ini_section_main, "default_audenc_use_in",     s_local.default_audenc_use_in,     DEFAULT_AUDIO_ENCODER_USE_IN,  conf_fileName);
+    WritePrivateProfileDoubleWithDefault(ini_section_main, "av_length_threshold",       s_local.av_length_threshold,       DEFAULT_AV_LENGTH_DIFF_THRESOLD,conf_fileName);
 #if ENCODER_QSV
     WritePrivateProfileIntWithDefault(   ini_section_main, "force_bluray",              s_local.force_bluray,              DEFAULT_FORCE_BLURAY,          conf_fileName);
     WritePrivateProfileIntWithDefault(   ini_section_main, "perf_monitor",              s_local.perf_monitor,              DEFAULT_PERF_MONITOR,          conf_fileName);

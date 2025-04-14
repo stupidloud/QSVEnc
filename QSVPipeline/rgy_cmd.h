@@ -53,6 +53,8 @@ static const auto CODEPAGE_CMDARG = _T("--process-codepage");
 static const auto CODEPAGE_CMDARG_APPLIED = _T("--process-codepage-applied");
 #endif //#if defined(_WIN32) || defined(_WIN64)
 
+std::vector<tstring> splitCommandLine(const TCHAR *cmd);
+
 tstring encoder_help();
 const TCHAR *cmd_short_opt_to_long(TCHAR short_opt);
 int cmd_string_to_bool(bool *b, const tstring &str);
@@ -71,6 +73,8 @@ void print_cmd_error_invalid_value(tstring strOptionName, tstring strErrorValue,
 
 template<typename T>
 void print_cmd_error_invalid_value(tstring strErrorMessage, tstring strOptionName, tstring strErrorValue, const T *list, int list_length = std::numeric_limits<int>::max());
+
+std::vector<CX_DESC> get_libplacebo_only_resize_list();
 
 int parse_log_level_param(const TCHAR *option_name, const TCHAR *arg_value, RGYParamLogLevel& loglevel);
 int parse_one_vpp_option(const TCHAR *option_name, const TCHAR *strInput[], int &i, int nArgNum, RGYParamVpp *vpp, sArgsData *argData);
