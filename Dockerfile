@@ -10,12 +10,12 @@ RUN apt update && apt install -qq -y \
 # Build FFmpeg
 RUN cd /tmp && curl https://www.ffmpeg.org/releases/ffmpeg-4.4.5.tar.xz | tar xJf - && \
     cd ffmpeg-4.4.* && \
-    ./configure --enable-shared --enable-nonfree --enable-libfdk-aac --enable-libass && \
+    ./configure --prefix=/bin --enable-shared --enable-nonfree --enable-libfdk-aac --enable-libass && \
     make -s -j$(nproc) && \
     make install && \
     ldconfig && \
-    ls -la /usr/local/lib/libavcodec* && \
-    ffmpeg -version
+    ls -la /bin/lib/libavcodec* && \
+    /bin/bin/ffmpeg -version
 
 # Final stage
 FROM ubuntu:jammy
@@ -39,14 +39,14 @@ RUN apt update && apt install -y --no-install-recommends \
     rm -rf /var/lib/apt/lists/*
 
 # Copy FFmpeg from builder stage
-COPY --from=builder /usr/local/lib /usr/local/lib
-COPY --from=builder /usr/local/bin /usr/local/bin
-COPY --from=builder /usr/local/include /usr/local/include
-COPY --from=builder /usr/local/share /usr/local/share
+COPY --from=builder /bin/lib /usr/lib
+COPY --from=builder /bin/bin /usr/bin
+COPY --from=builder /bin/include /usr/include
+COPY --from=builder /bin/share /usr/share
 
 # Update library cache
 RUN ldconfig && \
-    ls -la /usr/local/lib/libavcodec* && \
+    ls -la /usr/lib/libavcodec* && \
     ffmpeg -version
 
 # Install the latest QSVEnc release for Ubuntu
