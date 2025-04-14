@@ -71,6 +71,15 @@ typedef struct {
     func_vs_getVSApi       getVSApi;
 } vsscript_t;
 
+class RGYInputVpyPrm : public RGYInputPrm {
+public:
+    tstring vsdir;
+    float seekRatio; //開始位置を指定する場合の割合 (0.0～1.0)、並列エンコード時に使用
+    RGYInputVpyPrm(RGYInputPrm base);
+
+    virtual ~RGYInputVpyPrm() {};
+};
+
 class RGYInputVpy : public RGYInput {
 public:
     RGYInputVpy();
@@ -79,12 +88,21 @@ public:
     virtual void Close() override;
 
     void setFrameToAsyncBuffer(int n, const VSFrameRef* f);
+
+    virtual int64_t GetVideoFirstKeyPts() const override;
+    virtual bool seekable() const override {
+        return true;
+    }
+    virtual bool timestampStable() const override {
+        return true;
+    }
+
 protected:
     virtual RGY_ERR Init(const TCHAR *strFileName, VideoInfo *pInputInfo, const RGYInputPrm *prm) override;
     virtual RGY_ERR LoadNextFrameInternal(RGYFrame *pSurface) override;
 
     void release_vapoursynth();
-    int load_vapoursynth();
+    int load_vapoursynth(const tstring& vsdir);
     int initAsyncEvents();
     void closeAsyncEvents();
     const VSFrameRef* getFrameFromAsyncBuffer(int n) {
@@ -105,7 +123,9 @@ protected:
     const VSAPI *m_sVSapi;
     VSScript *m_sVSscript;
     VSNodeRef *m_sVSnode;
-    int m_nAsyncFrames;
+    int m_asyncThreads;
+    int m_asyncFrames;
+    int m_startFrame;
 
     vsscript_t m_sVS;
 };

@@ -26,11 +26,20 @@
 // ------------------------------------------------------------------------------------------
 
 #include "rgy_input_vpy.h"
+#include "rgy_filesystem.h"
 #if ENABLE_VAPOURSYNTH_READER
 #include <algorithm>
 #include <sstream>
 #include <map>
 #include <fstream>
+
+
+RGYInputVpyPrm::RGYInputVpyPrm(RGYInputPrm base) :
+    RGYInputPrm(base),
+    vsdir(),
+    seekRatio(0.0f) {
+
+}
 
 RGYInputVpy::RGYInputVpy() :
     m_pAsyncBuffer(),
@@ -41,7 +50,9 @@ RGYInputVpy::RGYInputVpy() :
     m_sVSapi(nullptr),
     m_sVSscript(nullptr),
     m_sVSnode(nullptr),
-    m_nAsyncFrames(0),
+    m_asyncThreads(0),
+    m_asyncFrames(0),
+    m_startFrame(0),
     m_sVS() {
     memset(m_pAsyncBuffer, 0, sizeof(m_pAsyncBuffer));
     memset(m_hAsyncEventFrameSetFin,   0, sizeof(m_hAsyncEventFrameSetFin));
@@ -66,21 +77,30 @@ void RGYInputVpy::release_vapoursynth() {
     memset(&m_sVS, 0, sizeof(m_sVS));
 }
 
-int RGYInputVpy::load_vapoursynth() {
+int RGYInputVpy::load_vapoursynth(const tstring& vapoursynthpath) {
     release_vapoursynth();
+
 #if defined(_WIN32) || defined(_WIN64)
-    const TCHAR *vsscript_dll_name = _T("vsscript.dll");
-    if (NULL == (m_sVS.hVSScriptDLL = LoadLibrary(vsscript_dll_name))) {
+    if (vapoursynthpath.length() > 0) {
+        if (rgy_directory_exists(vapoursynthpath)) {
+            SetDllDirectory(vapoursynthpath.c_str());
+            AddMessage(RGY_LOG_DEBUG, _T("VapourSynth path \"%s\" set.\n"), vapoursynthpath.c_str());
+        } else {
+            AddMessage(RGY_LOG_WARN, _T("VapourSynth path \"%s\" does not exist, ignored.\n"), vapoursynthpath.c_str());
+        }
+    }
+    const TCHAR *vpy_dll_target = _T("vsscript.dll");
+    if (NULL == (m_sVS.hVSScriptDLL = RGY_LOAD_LIBRARY(vpy_dll_target))) {
 #else
     //VapourSynthを介してpython3のsoをロードするにはdlopenにRTLD_GLOBALが必要。
-    const TCHAR *vsscript_dll_name = _T("libvapoursynth-script.so");
-    if (NULL == (m_sVS.hVSScriptDLL = dlopen(vsscript_dll_name, RTLD_LAZY|RTLD_GLOBAL))) {
+    const TCHAR *vpy_dll_target = _T("libvapoursynth-script.so");
+    if (NULL == (m_sVS.hVSScriptDLL = dlopen(vpy_dll_target, RTLD_LAZY|RTLD_GLOBAL))) {
 #endif
-        AddMessage(RGY_LOG_ERROR, _T("Failed to load %s.\n"), vsscript_dll_name);
+        AddMessage(RGY_LOG_ERROR, _T("Failed to load %s.\n"), vpy_dll_target);
         return 1;
     }
 
-    static auto vs_func_list = make_array<std::pair<void **, const char*>>(
+    auto vs_func_list = make_array<std::pair<void **, const char*>>(
         std::make_pair( (void **)&m_sVS.init,           (VPY_X64) ? "vsscript_init"           : "_vsscript_init@0"            ),
         std::make_pair( (void **)&m_sVS.finalize,       (VPY_X64) ? "vsscript_finalize"       : "_vsscript_finalize@0"        ),
         std::make_pair( (void **)&m_sVS.evaluateScript, (VPY_X64) ? "vsscript_evaluateScript" : "_vsscript_evaluateScript@16" ),
@@ -113,7 +133,7 @@ int RGYInputVpy::initAsyncEvents() {
 
 void RGYInputVpy::closeAsyncEvents() {
     m_bAbortAsync = true;
-    for (int i_frame = m_nCopyOfInputFrames; i_frame < m_nAsyncFrames; i_frame++) {
+    for (int i_frame = m_nCopyOfInputFrames; i_frame < m_asyncFrames; i_frame++) {
         const VSFrameRef *src_frame = getFrameFromAsyncBuffer(i_frame);
         m_sVSapi->freeFrame(src_frame);
     }
@@ -140,9 +160,9 @@ void RGYInputVpy::setFrameToAsyncBuffer(int n, const VSFrameRef* f) {
     m_pAsyncBuffer[n & (ASYNC_BUFFER_SIZE-1)] = f;
     SetEvent(m_hAsyncEventFrameSetFin[n & (ASYNC_BUFFER_SIZE-1)]);
 
-    if (m_nAsyncFrames < m_inputVideoInfo.frames && !m_bAbortAsync) {
-        m_sVSapi->getFrameAsync(m_nAsyncFrames, m_sVSnode, frameDoneCallback, this);
-        m_nAsyncFrames++;
+    if (m_asyncFrames < m_inputVideoInfo.frames && !m_bAbortAsync) {
+        m_sVSapi->getFrameAsync(m_asyncFrames, m_sVSnode, frameDoneCallback, this);
+        m_asyncFrames++;
     }
 }
 
@@ -168,7 +188,8 @@ int RGYInputVpy::getRevInfo(const char *vsVersionString) {
 RGY_ERR RGYInputVpy::Init(const TCHAR *strFileName, VideoInfo *pInputInfo, const RGYInputPrm *prm) {
     m_inputVideoInfo = *pInputInfo;
 
-    if (load_vapoursynth()) {
+    auto vpyPrm = reinterpret_cast<const RGYInputVpyPrm *>(prm);
+    if (load_vapoursynth(vpyPrm->vsdir)) {
         return RGY_ERR_NULL_PTR;
     }
 
@@ -345,14 +366,19 @@ RGY_ERR RGYInputVpy::Init(const TCHAR *strFileName, VideoInfo *pInputInfo, const
         m_inputVideoInfo.bitdepth = RGY_CSP_BIT_DEPTH[m_inputCsp];
     }
 
-    m_nAsyncFrames = vsvideoinfo->numFrames;
-    m_nAsyncFrames = (std::min)(m_nAsyncFrames, vscoreinfo.numThreads);
-    m_nAsyncFrames = (std::min)(m_nAsyncFrames, ASYNC_BUFFER_SIZE-1);
-    if (m_inputVideoInfo.type != RGY_INPUT_FMT_VPY_MT) {
-        m_nAsyncFrames = 1;
+    m_startFrame = 0;
+    if (vpyPrm->seekRatio > 0.0f) {
+        m_startFrame = (int)(vpyPrm->seekRatio * m_inputVideoInfo.frames);
     }
+    m_asyncThreads = vsvideoinfo->numFrames - m_startFrame;
+    m_asyncThreads = (std::min)(m_asyncThreads, vscoreinfo.numThreads);
+    m_asyncThreads = (std::min)(m_asyncThreads, ASYNC_BUFFER_SIZE-1);
+    if (m_inputVideoInfo.type != RGY_INPUT_FMT_VPY_MT) {
+        m_asyncThreads = 1;
+    }
+    m_asyncFrames = m_startFrame + m_asyncThreads;
 
-    for (int i = 0; i < m_nAsyncFrames; i++) {
+    for (int i = m_startFrame; i < m_asyncFrames; i++) {
         m_sVSapi->getFrameAsync(i, m_sVSnode, frameDoneCallback, this);
     }
 
@@ -372,6 +398,11 @@ RGY_ERR RGYInputVpy::Init(const TCHAR *strFileName, VideoInfo *pInputInfo, const
 }
 #pragma warning(pop)
 
+int64_t RGYInputVpy::GetVideoFirstKeyPts() const {
+    auto inputFps = rgy_rational<int>(m_inputVideoInfo.fpsN, m_inputVideoInfo.fpsD);
+    return rational_rescale(m_startFrame, getInputTimebase().inv(), inputFps);
+}
+
 void RGYInputVpy::Close() {
     AddMessage(RGY_LOG_DEBUG, _T("Closing...\n"));
     closeAsyncEvents();
@@ -390,36 +421,41 @@ void RGYInputVpy::Close() {
     m_sVSapi = nullptr;
     m_sVSscript = nullptr;
     m_sVSnode = nullptr;
-    m_nAsyncFrames = 0;
+    m_asyncThreads = 0;
+    m_asyncFrames = 0;
     m_encSatusInfo.reset();
     AddMessage(RGY_LOG_DEBUG, _T("Closed.\n"));
 }
 
 RGY_ERR RGYInputVpy::LoadNextFrameInternal(RGYFrame *pSurface) {
-    if ((int)m_encSatusInfo->m_sData.frameIn >= m_inputVideoInfo.frames
+    if ((int)(m_encSatusInfo->m_sData.frameIn + m_startFrame) >= m_inputVideoInfo.frames
         //m_encSatusInfo->m_nInputFramesがtrimの結果必要なフレーム数を大きく超えたら、エンコードを打ち切る
         //ちょうどのところで打ち切ると他のストリームに影響があるかもしれないので、余分に取得しておく
-        || getVideoTrimMaxFramIdx() < (int)m_encSatusInfo->m_sData.frameIn - TRIM_OVERREAD_FRAMES) {
+        || getVideoTrimMaxFramIdx() < (int)(m_encSatusInfo->m_sData.frameIn + m_startFrame) - TRIM_OVERREAD_FRAMES) {
         return RGY_ERR_MORE_DATA;
     }
 
-    const VSFrameRef *src_frame = getFrameFromAsyncBuffer(m_encSatusInfo->m_sData.frameIn);
+    const VSFrameRef *src_frame = getFrameFromAsyncBuffer(m_encSatusInfo->m_sData.frameIn + m_startFrame);
     if (src_frame == nullptr) {
         return RGY_ERR_MORE_DATA;
     }
+    if (pSurface) {
+        void *dst_array[RGY_MAX_PLANES];
+        pSurface->ptrArray(dst_array);
+        const void *src_array[RGY_MAX_PLANES] = { m_sVSapi->getReadPtr(src_frame, 0), m_sVSapi->getReadPtr(src_frame, 1), m_sVSapi->getReadPtr(src_frame, 2), nullptr };
+        m_convert->run((m_inputVideoInfo.picstruct & RGY_PICSTRUCT_INTERLACED) ? 1 : 0,
+            dst_array, src_array,
+            m_inputVideoInfo.srcWidth, m_sVSapi->getStride(src_frame, 0), m_sVSapi->getStride(src_frame, 1),
+            pSurface->pitch(), m_inputVideoInfo.srcHeight, m_inputVideoInfo.srcHeight, m_inputVideoInfo.crop.c);
 
-    void *dst_array[3];
-    pSurface->ptrArray(dst_array);
-    const void *src_array[3] = { m_sVSapi->getReadPtr(src_frame, 0), m_sVSapi->getReadPtr(src_frame, 1), m_sVSapi->getReadPtr(src_frame, 2) };
-    m_convert->run((m_inputVideoInfo.picstruct & RGY_PICSTRUCT_INTERLACED) ? 1 : 0,
-        dst_array, src_array,
-        m_inputVideoInfo.srcWidth, m_sVSapi->getStride(src_frame, 0), m_sVSapi->getStride(src_frame, 1),
-        pSurface->pitch(), m_inputVideoInfo.srcHeight, m_inputVideoInfo.srcHeight, m_inputVideoInfo.crop.c);
-
+        auto inputFps = rgy_rational<int>(m_inputVideoInfo.fpsN, m_inputVideoInfo.fpsD);
+        pSurface->setDuration(rational_rescale(1, getInputTimebase().inv(), inputFps));
+        pSurface->setTimestamp(rational_rescale(m_encSatusInfo->m_sData.frameIn + m_startFrame, getInputTimebase().inv(), inputFps));
+    }
     m_sVSapi->freeFrame(src_frame);
 
     m_encSatusInfo->m_sData.frameIn++;
-    m_nCopyOfInputFrames = m_encSatusInfo->m_sData.frameIn;
+    m_nCopyOfInputFrames = m_encSatusInfo->m_sData.frameIn + m_startFrame;
 
     return m_encSatusInfo->UpdateDisplay();
 }

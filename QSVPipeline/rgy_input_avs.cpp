@@ -110,8 +110,24 @@ static const TCHAR *avisynth_dll_name = _T("libavisynth.so");
 #endif
 
 static const int RGY_AVISYNTH_INTERFACE_25 = 2;
-static const int RGY_AVISYNTH_INTERFACE_6  = 6; 
-
+static const int RGY_AVISYNTH_INTERFACE_6  = 6;
+#if AVS_INTERF_VER >= 11
+int AVSC_CC rgy_avs_get_pitch_p(const AVS_VideoFrame * p, int plane) {
+    switch (plane) {
+    case AVS_PLANAR_U:
+    case AVS_PLANAR_V:
+        return p->_pitchUV;
+    }
+    return p->_pitch;
+}
+const uint8_t* AVSC_CC rgy_avs_get_read_ptr_p(const AVS_VideoFrame * p, int plane) {
+    switch (plane) {
+    case AVS_PLANAR_U: return p->_vfb->data + p->_offsetU;
+    case AVS_PLANAR_V: return p->_vfb->data + p->_offsetV;
+    default:           return p->_vfb->data + p->_offset;
+    }
+}
+#else
 int AVSC_CC rgy_avs_get_pitch_p(const AVS_VideoFrame * p, int plane) {
     switch (plane) {
     case AVS_PLANAR_U:
@@ -120,7 +136,6 @@ int AVSC_CC rgy_avs_get_pitch_p(const AVS_VideoFrame * p, int plane) {
     }
     return p->pitch;
 }
-
 const uint8_t* AVSC_CC rgy_avs_get_read_ptr_p(const AVS_VideoFrame * p, int plane) {
     switch (plane) {
     case AVS_PLANAR_U: return p->vfb->data + p->offsetU;
@@ -128,12 +143,15 @@ const uint8_t* AVSC_CC rgy_avs_get_read_ptr_p(const AVS_VideoFrame * p, int plan
     default:           return p->vfb->data + p->offset;
     }
 }
+#endif
+
 
 RGYInputAvsPrm::RGYInputAvsPrm(RGYInputPrm base) :
     RGYInputPrm(base),
     nAudioSelectCount(0),
     ppAudioSelect(nullptr),
-    avsdll() {
+    avsdll(),
+    seekRatio(0.0f) {
 
 }
 
@@ -142,6 +160,7 @@ RGYInputAvs::RGYInputAvs() :
     m_sAVSclip(nullptr),
     m_sAVSinfo(nullptr),
     m_sAvisynth(),
+    m_startFrame(0),
 #if ENABLE_AVSW_READER
     m_audio(),
     m_format(unique_ptr<AVFormatContext, decltype(&avformat_free_context)>(nullptr, &avformat_free_context)),
@@ -437,8 +456,8 @@ RGY_ERR RGYInputAvs::Init(const TCHAR *strFileName, VideoInfo *pInputInfo, const
         CSPMap( AVS_CS_YUV444P12,  RGY_CSP_YUV444_12, RGY_CSP_YUV444_16 ),
         CSPMap( AVS_CS_YUV444P14,  RGY_CSP_YUV444_14, RGY_CSP_YUV444_16 ),
         CSPMap( AVS_CS_YUV444P16,  RGY_CSP_YUV444_16, RGY_CSP_YUV444_16 ),
-        CSPMap( AVS_CS_BGR24,      RGY_CSP_RGB24R,    (ENCODER_NVENC) ? RGY_CSP_RGB : RGY_CSP_RGB32 ),
-        CSPMap( AVS_CS_BGR32,      RGY_CSP_RGB32R,    (ENCODER_NVENC) ? RGY_CSP_RGB : RGY_CSP_RGB32 )
+        CSPMap( AVS_CS_BGR24,      RGY_CSP_BGR24R,    (ENCODER_NVENC) ? RGY_CSP_RGB : RGY_CSP_BGR32 ),
+        CSPMap( AVS_CS_BGR32,      RGY_CSP_BGR32R,    (ENCODER_NVENC) ? RGY_CSP_RGB : RGY_CSP_BGR32 )
     );
 
     const RGY_CSP prefered_csp = m_inputVideoInfo.csp;
@@ -502,6 +521,10 @@ RGY_ERR RGYInputAvs::Init(const TCHAR *strFileName, VideoInfo *pInputInfo, const
     }
     rgy_reduce(m_inputVideoInfo.fpsN, m_inputVideoInfo.fpsD);
 
+    if (avsPrm->seekRatio > 0.0f) {
+        m_startFrame = (int)(avsPrm->seekRatio * m_inputVideoInfo.frames);
+    }
+
     if (avsPrm != nullptr && avsPrm->nAudioSelectCount > 0) {
         if (!avs_has_audio(m_sAVSinfo)) {
             AddMessage(RGY_LOG_WARN, _T("avs has no audio.\n"));
@@ -544,6 +567,11 @@ RGY_ERR RGYInputAvs::Init(const TCHAR *strFileName, VideoInfo *pInputInfo, const
 }
 #pragma warning(pop)
 
+int64_t RGYInputAvs::GetVideoFirstKeyPts() const {
+    auto inputFps = rgy_rational<int>(m_inputVideoInfo.fpsN, m_inputVideoInfo.fpsD);
+    return rational_rescale(m_startFrame, getInputTimebase().inv(), inputFps);
+}
+
 void RGYInputAvs::Close() {
     AddMessage(RGY_LOG_DEBUG, _T("Closing...\n"));
 #if ENABLE_AVSW_READER
@@ -564,33 +592,43 @@ void RGYInputAvs::Close() {
 }
 
 RGY_ERR RGYInputAvs::LoadNextFrameInternal(RGYFrame *pSurface) {
-    if ((int)m_encSatusInfo->m_sData.frameIn >= m_inputVideoInfo.frames
+    if ((int)(m_startFrame + m_encSatusInfo->m_sData.frameIn) >= m_inputVideoInfo.frames
         //m_encSatusInfo->m_nInputFramesがtrimの結果必要なフレーム数を大きく超えたら、エンコードを打ち切る
         //ちょうどのところで打ち切ると他のストリームに影響があるかもしれないので、余分に取得しておく
-        || getVideoTrimMaxFramIdx() < (int)m_encSatusInfo->m_sData.frameIn - TRIM_OVERREAD_FRAMES) {
+        || getVideoTrimMaxFramIdx() < (int)(m_startFrame + m_encSatusInfo->m_sData.frameIn) - TRIM_OVERREAD_FRAMES) {
         return RGY_ERR_MORE_DATA;
     }
+    if (pSurface) {
+        AVS_VideoFrame *frame = m_sAvisynth->f_get_frame(m_sAVSclip, m_startFrame + m_encSatusInfo->m_sData.frameIn);
+        if (frame == nullptr) {
+            return RGY_ERR_MORE_DATA;
+        }
+        auto avs_err = m_sAvisynth->f_clip_get_error(m_sAVSclip);
+        if (avs_err) {
+            AddMessage(RGY_LOG_ERROR, _T("Unknown error when reading video frame from avisynth: %d.\n"), avs_err);
+            return RGY_ERR_UNKNOWN;
+        }
 
-    AVS_VideoFrame *frame = m_sAvisynth->f_get_frame(m_sAVSclip, m_encSatusInfo->m_sData.frameIn);
-    if (frame == nullptr) {
-        return RGY_ERR_MORE_DATA;
+        void *dst_array[RGY_MAX_PLANES];
+        pSurface->ptrArray(dst_array);
+        const void *src_array[RGY_MAX_PLANES] = {
+            m_sAvisynth->f_get_read_ptr_p(frame, AVS_PLANAR_Y),
+            m_sAvisynth->f_get_read_ptr_p(frame, AVS_PLANAR_U),
+            m_sAvisynth->f_get_read_ptr_p(frame, AVS_PLANAR_V),
+            nullptr
+        };
+
+        m_convert->run((m_inputVideoInfo.picstruct & RGY_PICSTRUCT_INTERLACED) ? 1 : 0,
+            dst_array, src_array,
+            m_inputVideoInfo.srcWidth, m_sAvisynth->f_get_pitch_p(frame, AVS_PLANAR_Y), m_sAvisynth->f_get_pitch_p(frame, AVS_PLANAR_U),
+            pSurface->pitch(), m_inputVideoInfo.srcHeight, m_inputVideoInfo.srcHeight, m_inputVideoInfo.crop.c);
+
+        m_sAvisynth->f_release_video_frame(frame);
+
+        auto inputFps = rgy_rational<int>(m_inputVideoInfo.fpsN, m_inputVideoInfo.fpsD);
+        pSurface->setDuration(rational_rescale(1, getInputTimebase().inv(), inputFps));
+        pSurface->setTimestamp(rational_rescale(m_startFrame + m_encSatusInfo->m_sData.frameIn, getInputTimebase().inv(), inputFps));
     }
-    auto avs_err = m_sAvisynth->f_clip_get_error(m_sAVSclip);
-    if (avs_err) {
-        AddMessage(RGY_LOG_ERROR, _T("Unknown error when reading video frame from avisynth: %d.\n"), avs_err);
-        return RGY_ERR_UNKNOWN;
-    }
-
-    void *dst_array[3];
-    pSurface->ptrArray(dst_array);
-    const void *src_array[3] = { m_sAvisynth->f_get_read_ptr_p(frame, AVS_PLANAR_Y), m_sAvisynth->f_get_read_ptr_p(frame, AVS_PLANAR_U), m_sAvisynth->f_get_read_ptr_p(frame, AVS_PLANAR_V) };
-
-    m_convert->run((m_inputVideoInfo.picstruct & RGY_PICSTRUCT_INTERLACED) ? 1 : 0,
-        dst_array, src_array,
-        m_inputVideoInfo.srcWidth, m_sAvisynth->f_get_pitch_p(frame, AVS_PLANAR_Y), m_sAvisynth->f_get_pitch_p(frame, AVS_PLANAR_U),
-        pSurface->pitch(), m_inputVideoInfo.srcHeight, m_inputVideoInfo.srcHeight, m_inputVideoInfo.crop.c);
-
-    m_sAvisynth->f_release_video_frame(frame);
 
     m_encSatusInfo->m_sData.frameIn++;
     return m_encSatusInfo->UpdateDisplay();

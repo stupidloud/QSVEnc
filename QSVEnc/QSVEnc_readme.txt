@@ -302,7 +302,7 @@ API v1.16 … Intel Media SDK 2015 Update 2.1
 API v1.15 … Intel Media SDK 2015 Update 2
 API v1.13 … Intel Media SDK 2015 Update 1
 API v1.11 … Intel Media SDK 2015
-API v1.9  … Intel Media SDK 2014 R2 for Client
+API v1.9  … Intel Media SDK 2014 R2 for Client 44
 API v1.8  … Intel Media SDK 2014
 API v1.7  … Intel Media SDK 2013 R2
 API v1.6  … Intel Media SDK 2013
@@ -313,6 +313,166 @@ API v1.1  … Intel Media SDK v2.0
 
 
 【どうでもいいメモ】
+
+2025.04.03 (7.85)
+- 字幕やデータトラップがある際に、mux時に先頭付近での映像と音声の混ざり具合を改善。
+- "failed to run h264_mp4toannexb bitstream filter" というエラーが出るとフリーズしてしまう問題を修正。
+  きちんとエラー終了するように。
+- 入力色フォーマットとして、uyvyに対応。
+- 並列数が1以下ならparallelを自動で無効化するように。
+
+2025.03.22 (7.84)
+- ファイル分割並列エンコード機能を追加。 (--parallel)
+- 言語コード指定時に、ISO 639-2のTコードでの指定も可能なように拡張。
+- 入力ファイルによっては、まれに--seekを使用するとtimestampが不適切になってしまっていたのを修正。
+- --qp-min, --qp-max片方のみの指定だと適切に設定されない問題を修正。
+- 不必要なdovi rpuの変換をしないように。
+- vpp-deinterlace bob使用時にRFFなどで最初のフレームがプログレッシブだとpts=0のフレームが2枚生成されエラー終了してしまう問題を修正。
+- libmfx1をUbuntu 24.04 debの依存ライブラリとして追加。
+
+2025.03.04 (7.83)
+- AV1エンコードで--dolby-vision-rpu使用時の処理を改善。
+
+2025.03.01 (7.82)
+- 7.80からavswで一部のコーデックがデコードできなくなっていた問題を修正。
+- --dolby-vision-profileに10.0, 10.1, 10.2, 10.4の選択肢を追加。
+- --dolby-vision-profileがavhw/avsw以外で動作しなかった問題を修正。
+- Linux環境でIntel GPUが複数ある場合のhw検出を改善。
+
+2025.02.18 (7.81)
+- 7.80でavswが動作しなくなっていたのを修正。
+
+2025.02.17 (7.80)
+- mp4/mkv/ts出力等でchromaloc指定が意図した値にならないことがある問題を修正。
+- dolby vision profile 4への処理を改善。
+
+2025.01.23 (7.79)
+- AACを--audio-copyしてmkv出力すると、音声が再生できないファイルができることがある問題を修正。
+
+2025.01.08 (7.78)
+- SAR比が設定されていない(例えば0:0)と、mp4 muxerの出力する"tkhd: Track Header Box"(L-SMASH boxdumper)、"Visual Track layout"(mp4box -info)のwidthが0になってしまう問題を回避。
+
+2025.01.06 (7.77)
+- --vpp-libplacebo-tonemappingで一部のパラメータが正常に動作しない問題を修正。
+- tsファイルなどで途中からエンコードする場合に、OpenGOPが使用されているとtrim位置がずれてしまう問題を修正。
+  trim補正量の計算時にOpenGOPで最初のキーフレーム後にその前のフレームが来るケースを考慮できていなかった。
+- --trimでAviutlのtrimエクスポートプラグインの表記を受け取れるように。
+
+2025.01.03 (7.76)
+- 7.75の"--dolby-vision-rpuをファイルから読む場合に壊してしまっていたのを修正。"がまだ修正できていなかったのを再修正。
+- エンコーダのPCを起動してから2回目以降の起動速度を向上。
+- --device autoでのGPU自動選択を改善。
+  より積極的に他のGPUを使用するように。
+
+2024.11.24 (7.75)
+- --dolby-vision-rpuをファイルから読む場合に壊してしまっていたのを修正。
+- --vpp-libplacebo-debandのgrain_y, grain_cの読み取りが行われない問題を修正。
+- --vpp-libplacebo-debandのgrain_cのヘルプを修正。
+- --dolby-vision-rpuと--dhdr10-infoの併用に対応。
+
+2024.11.22 (7.74)
+- --dolby-vision-profileで対象外のプロファイルも読み込めていた問題を修正。
+- --dolby-vision-rpu使用時にレターボックス部分をcropをした場合にそれを反映させるオプションを追加。 ( --dolby-vision-rpu-prm crop )
+- --dolby-visionに関するモード制限を解除。
+- ログ表示の細かな変更等。
+
+2024.11.12 (7.73)
+- --dolby-vision-rpu copyを使用して長時間のエンコードを行うと、エンコード速度が著しく低下していくのを改善し、速度を維持し続けられるように。
+- AV1出力時に--dhdr10-infoを使用した時の出力を改善。
+- 入力ファイルの字幕のタイムスタンプが入れ違いになっている場合にエラーが発生していたのを、ソートしなおして解決するように変更。
+- --vpp-tweakをなにもしない設定で実行した時クラッシュするのを回避。
+
+2024.11.02 (7.72)
+[QSVEncC]
+- --dhdr10-infoの実装を変更し、Linuxでの動作に対応。
+  hdr10plus_gen.exeを使用する代わりにlibhdr10plusを使用するように変更。
+- 入力ファイルにdoviがない場合に、--dolby-vision-rpuを指定するとエラー終了する問題を修正。
+- --dhdr10-infoがraw出力時に動作しなくなっていたのを修正。
+- 7.71で入力ファイルのSAR比が反映されていなかった問題を修正。
+
+2024.10.27 (7.71)
+[QSVEncC]
+- libplaceboによるバンディング低減フィルタを追加。(--vpp-libplacebo-deband)
+- libplaceboによるtone mappingフィルタを追加。(--vpp-libplacebo-tonemapping)
+- libplaceboのcustom shaderを使用したフィルタを追加。 (--vpp-libplacebo-shader)
+- --dolby-vision-rpu copy使用時に、入力ファイルのdolby vision profile 7のとき、
+  libdoviを使用して自動的にdolby vision profile 8に変換するように。 
+- --dhdr10-infoが動作しなくなっていたのを修正。
+
+2024.09.24 (7.70)
+[QSVEncC]
+- libvplを更新し、2.13に対応。
+- libplaceboによるリサイズフィルタを追加。(Windows x64版)
+- 使用するffmpegのライブラリを更新。(Windows版)
+  - ffmpeg     7.0    -> 20240902
+  - dav1d      1.4.1  -> 1.4.3
+  - libvpl     2.11.0 -> 2.12.0
+  - libvpx     2.14.0
+  - MMT/TLV対応パッチを組み込み (mmtsを読み込み可能に)
+- --vpp-smoothの誤ったhelpを修正。
+
+[QSVEnc.auo]
+- 6時間を超える長さのwav出力に対応。
+- ffmpeg系の音声出力で6時間を超える音声の出力に対応。
+- ffmpegのlibopusを使用したopusエンコードを追加。
+- VC runtimeインストーラを更新。
+
+2024.08.20 (7.69)
+- RGB出力機能を追加。(--output-csp rgb)
+- Dolby Vision profileのコピー機能を追加。(--dolby-vision-profile copy)
+- Dolby Vision rpu metadataのコピー機能を追加。(--dolby-vision-rpu copy)
+- H.264/HEVCのヘッダがうまく取得できない場合、最初のパケットから取得するように。( #196 )
+- mkvに入っているAV1がそのままのヘッダだと、Decodeに失敗する場合があるのを修正。
+- 音声のmux用のバッファ不足になり、音声が同時刻の映像と違うfragmentにmuxされる問題を修正。
+- --vpp-transformでフレームサイズが64で割り切れない場合に、不正なメモリアクセスが生じる問題を修正。
+
+2024.07.04 (7.68)
+[QSVEncC]
+- oneVPLベースからlibvplベースに変更。
+- Ubuntu 24.04用のパッケージを追加。
+- API 2.11に対応。
+- API 2.11で追加されたAI Super Resolutionを追加。(--vpp-resize mfx-ai-superres)
+  が、まだドライバは未対応の模様。
+- --vpp-tweakにチャネルごとの制御を追加。
+
+[QSVEnc.auo]
+- Windowsの登録拡張子の状況によっては、意図せず出力拡張子が設定されず、muxされなくなってしまう問題を回避。
+
+2024.06.29 (7.67)
+[QSVEncC]
+- RGBなaviファイルからエンコードすると、フレームの上下が入れ替わってしまうことがある問題を修正。
+
+[QSVEnc.auo]
+- Nsyw様に提供いただき、中国語翻訳を更新。
+- 拡張編集使用時に映像と音声の長さが異なる場合には、警告を出して一時中断し、処理を継続するか判断してもらうよう変更。
+
+2024.06.08 (7.66)
+- 新たなノイズ除去フィルタを追加。(--vpp-fft3d)
+
+2024.05.24 (7.65)
+- 新たなインタレ解除フィルタを追加。(--vpp-decomb)
+
+2024.05.12 (7.64)
+- ffmpeg 7.0に更新。(Windows版)
+  - ffmpeg     6.1    -> 7.0
+  - libpng     1.4.0  -> 1.4.3
+  - expat      2.5.0  -> 2.6.2
+  - opus       1.4    -> 1.5.2
+  - libxml2    2.12.0 -> 2.12.6
+  - dav1d      1.3.0  -> 1.4.1
+  - libvpl     2.11.0 (new!)
+  - nv-codec-headers 12.2.72.0 (new!)
+- avswで使用するデコーダを指定可能に。
+- --audio-bitrateの指定がないとき、デフォルトのビットレートを設定するのではなく、コーデックに任せるように。
+- --audio-bitrateあるいは--audio-copyで指定のない音声/字幕/データトラックは処理しないように。
+- QSVEnc 7.62以降のside_dataの扱いが誤っており、--master-display  copy/--max-cll copyが正常に行われていなかった問題を修正。
+
+2024.04.28 (7.63)
+- 新たなノイズ除去フィルタを追加。(--vpp-nlmeans)
+- --audio-resamplerを拡張し、文字列でパラメータ設定できるように。
+- --output-resにSAR比を無視して計算するオプションを追加。
+- subgroupでの同期を使用してvpp-smooth/vpp-denoise-dctをわずかに高速化。
+
 2024.03.17 (7.62)
 - HEVCではFFを使用できる場合にはFFを優先して使用するように。
 - RGB3→RGB4変換のAVX2版の不具合を修正。

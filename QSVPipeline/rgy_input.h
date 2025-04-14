@@ -81,6 +81,7 @@ struct AVDemuxStream {
     void                     *subtitleHeader;         //stream = nullptrの場合 caption2assのヘッダー情報 (srt形式でもass用のヘッダーが入っている)
     int                       subtitleHeaderSize;     //stream = nullptrの場合 caption2assのヘッダー情報のサイズ
     char                      lang[4];                //trackの言語情報(3文字)
+    std::vector<AVPacket*>    subPacketTemporalBuffer; //字幕のタイムスタンプが入れ違いになっているのを解決する一時的なキュー
 
     AVDemuxStream() :
         index(0),
@@ -100,7 +101,8 @@ struct AVDemuxStream {
         timebase({ 0, 0 }),
         subtitleHeader(nullptr),
         subtitleHeaderSize(0),
-        lang() {
+        lang(),
+        subPacketTemporalBuffer() {
     };
 };
 
@@ -140,6 +142,7 @@ private:
     RGY_CSP m_csp_from;
     RGY_CSP m_csp_to;
     bool m_uv_only;
+    funcConvertCSP m_alpha;
     int m_threads;
     std::vector<std::thread> m_th;
     std::vector<std::unique_ptr<void, handle_deleter>> m_heStart;
@@ -151,6 +154,7 @@ public:
     RGYConvertCSP();
     RGYConvertCSP(int threads, RGYParamThread threadParam);
     ~RGYConvertCSP();
+    const ConvertCSP *getFunc(RGY_CSP csp_from, RGY_CSP csp_to, RGY_SIMD simd);
     const ConvertCSP *getFunc(RGY_CSP csp_from, RGY_CSP csp_to, bool uv_only, RGY_SIMD simd);
     const ConvertCSP *getFunc() const { return m_csp; };
 
@@ -227,12 +231,24 @@ public:
     void SetInputFrames(int frames) {
         m_inputVideoInfo.frames = frames;
     }
-    virtual rgy_rational<int> getInputTimebase() {
+    virtual rgy_rational<int> getInputTimebase() const {
     	if (m_timebase.is_valid()) return m_timebase;
         auto inputFps = rgy_rational<int>(m_inputVideoInfo.fpsN, m_inputVideoInfo.fpsD);
         return inputFps.inv() * rgy_rational<int>(1, 4);
     }
-    virtual bool rffAware() {
+    virtual int64_t GetVideoFirstKeyPts() const {
+        return -1;
+    }
+    virtual bool rffAware() const {
+        return false;
+    }
+    virtual bool seekable() const {
+        return false;
+    }
+    virtual bool timestampStable() const {
+        return false;
+    }
+    virtual bool isPipe() const {
         return false;
     }
 
@@ -298,6 +314,9 @@ public:
     RGY_CODEC getInputCodec() {
         return m_inputVideoInfo.codec;
     }
+    virtual RGYDOVIProfile getInputDOVIProfile() {
+        return RGY_DOVI_PROFILE_UNSET;
+    }
 protected:
     virtual RGY_ERR Init(const TCHAR *strFileName, VideoInfo *pInputInfo, const RGYInputPrm *prm) = 0;
     virtual void CreateInputInfo(const TCHAR *inputTypeName, const TCHAR *inputCSpName, const TCHAR *outputCSpName, const TCHAR *convSIMD, const VideoInfo *inputPrm);
@@ -334,6 +353,7 @@ RGY_ERR initReaders(
     shared_ptr<RGYInput> &pFileReader,
     vector<shared_ptr<RGYInput>> &otherReaders,
     VideoInfo *input,
+    const RGYParamInput *inprm,
     const RGY_CSP inputCspOfRawReader,
     const shared_ptr<EncodeStatus> pStatus,
     const RGYParamCommon *common,
@@ -342,6 +362,7 @@ RGY_ERR initReaders(
     const int subburnTrackId,
     const bool vpp_afs,
     const bool vpp_rff,
+    const bool vpp_require_hdr_metadata,
     RGYPoolAVPacket *poolPkt,
     RGYPoolAVFrame *poolFrame,
     RGYListRef<RGYFrameDataQP> *qpTableListRef,

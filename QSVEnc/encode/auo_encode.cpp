@@ -270,7 +270,6 @@ const MUXER_CMD_EX *get_muxer_mode(const CONF_GUIEX *conf, const SYSTEM_DATA *sy
     case MUXER_TC2MP4:
     case MUXER_MP4:      mode = conf->mux.mp4_mode; break;
     case MUXER_MKV:      mode = conf->mux.mkv_mode; break;
-    case MUXER_MPG:      mode = conf->mux.mpg_mode; break;
     case MUXER_INTERNAL: mode = conf->mux.internal_mode; break;
     default: break;
     }
@@ -347,7 +346,6 @@ static BOOL muxer_supports_audio_format(const int muxer_to_be_used, const AUDIO_
     case MUXER_MP4:
         return aud_stg->unsupported_mp4 == 0;
     case MUXER_MKV:
-    case MUXER_MPG:
     case MUXER_DISABLED:
     case MUXER_INTERNAL:
         return TRUE;
@@ -552,7 +550,9 @@ BOOL check_output(CONF_GUIEX *conf, OUTPUT_INFO *oip, const PRM_ENC *pe, guiEx_s
     //音声エンコーダ
     if (oip->flag & OUTPUT_INFO_FLAG_AUDIO) {
         //音声長さチェック
-        check_audio_length(oip);
+        if (check_audio_length(oip, exstg->s_local.av_length_threshold)) {
+            check = FALSE;
+        }
 
         if (conf->aud.use_internal) {
             CONF_AUDIO_BASE *cnf_aud = &conf->aud.in;
@@ -884,7 +884,7 @@ void free_enc_prm(PRM_ENC *pe) {
     }
 }
 
-void set_enc_prm(CONF_GUIEX *conf, PRM_ENC *pe, const OUTPUT_INFO *oip, const SYSTEM_DATA *sys_dat) {
+void init_enc_prm(const CONF_GUIEX *conf, PRM_ENC *pe, OUTPUT_INFO *oip, const SYSTEM_DATA *sys_dat) {
     //初期化
     ZeroMemory(pe, sizeof(PRM_ENC));
     //設定更新
@@ -892,6 +892,27 @@ void set_enc_prm(CONF_GUIEX *conf, PRM_ENC *pe, const OUTPUT_INFO *oip, const SY
     sys_dat->exstg->load_append();
     sys_dat->exstg->load_fn_replace();
 
+    strcpy_s(pe->save_file_name, oip->savefile);
+    pe->video_out_type = check_video_ouput(conf, oip);
+
+    // 不明な拡張子だった場合、デフォルトの出力拡張子を付与する
+    if (pe->video_out_type == VIDEO_OUTPUT_UNKNOWN) {
+        int out_ext_idx = sys_dat->exstg->s_local.default_output_ext;
+        if (out_ext_idx < 0 || out_ext_idx >= _countof(OUTPUT_FILE_EXT)) {
+            out_ext_idx = 0;
+        }
+        // 拡張子を付与
+        strcat_s(pe->save_file_name, OUTPUT_FILE_EXT[out_ext_idx]);
+        // オリジナルのsavefileのポインタを保存
+        pe->org_save_file_name = oip->savefile;
+        // 保存先のファイル名を変更
+        oip->savefile = pe->save_file_name;
+        // 再度チェック
+        pe->video_out_type = check_video_ouput(conf, oip);
+    }
+}
+
+void set_enc_prm(CONF_GUIEX *conf, PRM_ENC *pe, const OUTPUT_INFO *oip, const SYSTEM_DATA *sys_dat) {
     pe->video_out_type = check_video_ouput(conf, oip);
     pe->drop_count = 0;
     memcpy(&pe->append, &sys_dat->exstg->s_append, sizeof(FILE_APPENDIX));
@@ -989,7 +1010,6 @@ int get_mux_excmd_mode(const CONF_GUIEX *conf, const PRM_ENC *pe) {
     switch (pe->muxer_to_be_used) {
     case MUXER_INTERNAL: mode = conf->mux.internal_mode; break;
     case MUXER_MKV:      mode = conf->mux.mkv_mode; break;
-    case MUXER_MPG:      mode = conf->mux.mpg_mode; break;
     case MUXER_MP4:
     case MUXER_TC2MP4:
     case MUXER_MP4_RAW:  mode = conf->mux.mp4_mode; break;
@@ -1287,10 +1307,6 @@ DWORD GetExePriority(DWORD set, HANDLE h_aviutl) {
 int check_video_ouput(const char *filename) {
     if (check_ext(filename, ".mp4"))  return VIDEO_OUTPUT_MP4;
     if (check_ext(filename, ".mkv"))  return VIDEO_OUTPUT_MKV;
-#if ENCODER_QSV    
-    if (check_ext(filename, ".mpg"))  return VIDEO_OUTPUT_MPEG2;
-    if (check_ext(filename, ".mpeg")) return VIDEO_OUTPUT_MPEG2;
-#endif
     return VIDEO_OUTPUT_RAW;
 }
 
@@ -1314,8 +1330,6 @@ int check_muxer_to_be_used(const CONF_GUIEX *conf, const PRM_ENC *pe, const SYST
         muxer_to_be_used = MUXER_INTERNAL; // MUXER_MP4;
     else if (video_output_type == VIDEO_OUTPUT_MKV && !conf->mux.disable_mkvext)
         muxer_to_be_used = MUXER_INTERNAL; // MUXER_MKV;
-    else if (video_output_type == VIDEO_OUTPUT_MPEG2 && !conf->mux.disable_mpgext)
-        muxer_to_be_used = MUXER_INTERNAL; // MUXER_MPG;
 
     //muxerが必要ないかどうかチェック
     BOOL no_muxer = TRUE;

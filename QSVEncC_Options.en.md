@@ -43,8 +43,8 @@
   - [--avs](#--avs)
   - [--vpy](#--vpy)
   - [--vpy-mt](#--vpy-mt)
-  - [--avsw](#--avsw)
-  - [--avhw \[\<string\>\]](#--avhw-string)
+  - [--avsw \[\<string\>\]](#--avsw-string)
+  - [--avhw](#--avhw)
   - [--interlace \<string\>](#--interlace-string)
   - [--crop \<int\>,\<int\>,\<int\>,\<int\>](#--crop-intintintint)
   - [--frames \<int\>](#--frames-int)
@@ -127,8 +127,10 @@
   - [--atc-sei \<string\> or \<int\> \[HEVC only\]](#--atc-sei-string-or-int-hevc-only)
   - [--dhdr10-info \<string\> \[HEVC, AV1\]](#--dhdr10-info-string-hevc-av1)
   - [--dhdr10-info copy \[HEVC, AV1\]](#--dhdr10-info-copy-hevc-av1)
-  - [--dolby-vision-profile \<float\>](#--dolby-vision-profile-float)
-  - [--dolby-vision-rpu \<string\>](#--dolby-vision-rpu-string)
+  - [--dolby-vision-profile \<string\> \[HEVC, AV1\]](#--dolby-vision-profile-string-hevc-av1)
+  - [--dolby-vision-rpu \<string\> \[HEVC, AV1\]](#--dolby-vision-rpu-string-hevc-av1)
+  - [--dolby-vision-rpu copy \[HEVC, AV1\]](#--dolby-vision-rpu-copy-hevc-av1)
+  - [--dolby-vision-rpu-prm \<param1\>=\<value1\>\[,\<param2\>=\<value2\>\]...](#--dolby-vision-rpu-prm-param1value1param2value2)
   - [--aud](#--aud)
   - [--pic-struct](#--pic-struct)
   - [--buf-period](#--buf-period)
@@ -199,27 +201,35 @@
   - [--tcfile-in \<string\>](#--tcfile-in-string)
   - [--timebase \<int\>/\<int\>](#--timebase-intint)
   - [--input-hevc-bsf \<string\>](#--input-hevc-bsf-string)
+  - [--input-pixel-format \<string\>](#--input-pixel-format-string)
+  - [--offset-video-dts-advance](#--offset-video-dts-advance)
   - [--allow-other-negative-pts](#--allow-other-negative-pts)
 - [Vpp Options](#vpp-options)
   - [Vpp Filtering order](#vpp-filtering-order)
   - [--vpp-colorspace \[\<param1\>=\<value1\>\[,\<param2\>=\<value2\>\]...\]](#--vpp-colorspace-param1value1param2value2)
   - [--vpp-rff](#--vpp-rff)
+  - [--vpp-libplacebo-tonemapping \[\<param1\>=\<value1\>\]\[,\<param2\>=\<value2\>\],...](#--vpp-libplacebo-tonemapping-param1value1param2value2)
+  - [--vpp-libplacebo-tonemapping-lut \<string\>](#--vpp-libplacebo-tonemapping-lut-string)
   - [--vpp-delogo \<string\>\[,\<param1\>=\<value1\>\]\[,\<param2\>=\<value2\>\],...](#--vpp-delogo-stringparam1value1param2value2)
   - [--vpp-afs \[\<param1\>=\<value1\>\[,\<param2\>=\<value2\>\]...\]](#--vpp-afs-param1value1param2value2)
   - [--vpp-nnedi \[\<param1\>=\<value1\>\[,\<param2\>=\<value2\>\]...\]](#--vpp-nnedi-param1value1param2value2)
   - [--vpp-yadif \[\<param1\>=\<value1\>\]](#--vpp-yadif-param1value1)
   - [--vpp-deinterlace \<string\>](#--vpp-deinterlace-string)
+  - [--vpp-decomb \[\<param1\>=\<value1\>\[,\<param2\>=\<value2\>\]...\]](#--vpp-decomb-param1value1param2value2)
   - [--vpp-decimate \[\<param1\>=\<value1\>\[,\<param2\>=\<value2\>\]...\]](#--vpp-decimate-param1value1param2value2)
   - [--vpp-mpdecimate \[\<param1\>=\<value1\>\[,\<param2\>=\<value2\>\]...\]](#--vpp-mpdecimate-param1value1param2value2)
   - [--vpp-convolution3d \[\<param1\>=\<value1\>\[,\<param2\>=\<value2\>\]...\]](#--vpp-convolution3d-param1value1param2value2)
   - [--vpp-smooth \[\<param1\>=\<value1\>\[,\<param2\>=\<value2\>\]...\]](#--vpp-smooth-param1value1param2value2)
   - [--vpp-denoise-dct \[\<param1\>=\<value1\>\]\[,\<param2\>=\<value2\>\],...](#--vpp-denoise-dct-param1value1param2value2)
+  - [--vpp-fft3d \[\<param1\>=\<value1\>\]\[,\<param2\>=\<value2\>\],...](#--vpp-fft3d-param1value1param2value2)
   - [--vpp-knn \[\<param1\>=\<value1\>\[,\<param2\>=\<value2\>\]...\]](#--vpp-knn-param1value1param2value2)
+  - [--vpp-nlmeans \[\<param1\>=\<value1\>\[,\<param2\>=\<value2\>\]...\]](#--vpp-nlmeans-param1value1param2value2)
   - [--vpp-pmd \[\<param1\>=\<value1\>\[,\<param2\>=\<value2\>\]...\]](#--vpp-pmd-param1value1param2value2)
   - [--vpp-denoise \<int\> or \[\<param1\>=\<value1\>\[,\<param2\>=\<value2\>\]...\]](#--vpp-denoise-int-or-param1value1param2value2)
   - [--vpp-image-stab \<string\>](#--vpp-image-stab-string)
   - [--vpp-mctf \["auto" or \<int\>\]](#--vpp-mctf-auto-or-int)
   - [--vpp-subburn \[\<param1\>=\<value1\>\[,\<param2\>=\<value2\>\]...\]](#--vpp-subburn-param1value1param2value2)
+  - [--vpp-libplacebo-shader \[\<param1\>=\<value1\>\]\[,\<param2\>=\<value2\>\],...](#--vpp-libplacebo-shader-param1value1param2value2)
   - [--vpp-resize \<string\>](#--vpp-resize-string)
   - [--vpp-resize-mode \<string\>](#--vpp-resize-mode-string)
   - [--vpp-unsharp \[\<param1\>=\<value1\>\[,\<param2\>=\<value2\>\]...\]](#--vpp-unsharp-param1value1param2value2)
@@ -231,11 +241,13 @@
   - [--vpp-curves \[\<param1\>=\<value1\>\]\[,\<param2\>=\<value2\>\],...](#--vpp-curves-param1value1param2value2)
   - [--vpp-tweak \[\<param1\>=\<value1\>\[,\<param2\>=\<value2\>\]...\]](#--vpp-tweak-param1value1param2value2)
   - [--vpp-deband \[\<param1\>=\<value1\>\[,\<param2\>=\<value2\>\]...\]](#--vpp-deband-param1value1param2value2)
+  - [--vpp-libplacebo-deband \[\<param1\>=\<value1\>\]\[,\<param2\>=\<value2\>\],...](#--vpp-libplacebo-deband-param1value1param2value2)
   - [--vpp-pad \<int\>,\<int\>,\<int\>,\<int\>](#--vpp-pad-intintintint)
   - [--vpp-overlay \[\<param1\>=\<value1\>\]\[,\<param2\>=\<value2\>\],...](#--vpp-overlay-param1value1param2value2)
   - [--vpp-perc-pre-enc](#--vpp-perc-pre-enc)
   - [--vpp-perf-monitor](#--vpp-perf-monitor)
 - [Other Options](#other-options)
+  - [--parallel \[\<int\>\] or \[\<string\>\]](#--parallel-int-or-string)
   - [--async-depth \<int\>](#--async-depth-int)
   - [--input-buf \<int\>](#--input-buf-int)
   - [--output-buf \<int\>](#--output-buf-int)
@@ -260,6 +272,7 @@
   - [--avoid-idle-clock \<string\>\[=\<float\>\]](#--avoid-idle-clock-stringfloat)
   - [--lowlatency](#--lowlatency)
   - [--avsdll \<string\>](#--avsdll-string)
+  - [--vsdir \<string\>](#--vsdir-string)
   - [--process-codepage \<string\> \[Windows OS only\]](#--process-codepage-string-windows-os-only)
   - [--task-perf-monitor](#--task-perf-monitor)
   - [--perf-monitor \[\<string\>\[,\<string\>\]...\]](#--perf-monitor-stringstring)
@@ -453,10 +466,10 @@ you will need to add "[--process-codepage](#--process-codepage-string-windows-os
 ### --vpy-mt
 Read VapourSynth script file using vpy reader.
 
-### --avsw
-Read input file using avformat + ffmpeg's sw decoder.
+### --avsw [&lt;string&gt;]
+Read input file using avformat + libavcodec's sw decoder. The optional parameter will set decoder name to be used, otherwise decoder will be selected automatically.
 
-### --avhw [&lt;string&gt;]
+### --avhw
 Read input file using avformat + QSV hw decoder. Using this mode will provide maximum performance,
 since entire transcode process will be run on the GPU.
 
@@ -493,7 +506,9 @@ Number of pixels to be cropped from left, top, right, bottom.
 Number of frames to input. (Note: input base, not output base)
 
 ### --fps &lt;int&gt;/&lt;int&gt; or &lt;float&gt;
-Set the input frame rate. Required for raw format.
+Set the input frame rate when --raw is used. Not recommended to be used with readers other than --raw.
+
+Only valid for raw format (when --raw is used), otherwise it will be ignored or only treated as a hint.
 
 ### --input-res &lt;int&gt;x&lt;int&gt;
 Set input resolution. Required for raw format.
@@ -513,6 +528,8 @@ If not specified, it will be same as the input resolution. (no resize)
     Resize to specified width **or** height, while preserving input aspect ratio.
     - increase ... preserve aspect ratio by increasing resolution.
     - decrease ... preserve aspect ratio by decreasing resolution.
+  - ignore_sar=&lt;bool&gt;  
+    When auto resizing with negative value, ignore in/out SAR ratio in calculation. Default = off.
 
 - Example
   ```
@@ -534,9 +551,9 @@ Set input colorspace for --raw input. Default is yv12.
 ```
 
 ### --output-csp &lt;string&gt;
-Set output colorspace. Default is i420.
+Set output colorspace. Default is yuv420.
 ```
-i420, i422, i444
+yuv420, yuv422, yuv444, rgb
 ```
 
 ### --output-depth &lt;int&gt;
@@ -921,16 +938,38 @@ Copy HDR10+ dynamic metadata from input file.
 Limitations for avhw reader: this option uses timestamps to reorder frames to decoded order to presentation order.
 Therefore, input files without timestamps (such as raw ES), are not supported. Please try for avsw reader for that case.
 
-### --dolby-vision-profile &lt;float&gt;
-Output file which is specified in Dolby Vision profile.
+### --dolby-vision-profile &lt;string&gt; [HEVC, AV1]
+Output file which is specified in Dolby Vision profile. Recommended to be used with [--dolby-vision-rpu](#--dolby-vision-rpu-string).
+
+"copy" will use dolby vision profile from input file (available when using [avhw](#--avhw)/[avsw](#--avsw) reader).
+
 ```
-5.0, 8.1, 8.2, 8.4
+unset, copy, 5.0, 8.1, 8.2, 8.4, 10.0, 10.1, 10.2, 10.4
 ```
 
-### --dolby-vision-rpu &lt;string&gt;
-Interleave Dolby Vision RPU metadata from the specified file into the output file.
+### --dolby-vision-rpu &lt;string&gt; [HEVC, AV1]
+Interleave Dolby Vision RPU metadata from the specified file into the output file. Recommended to be used with [--dolby-vision-profile](#--dolby-vision-profile-string).
 
-Currently, the Dolby Vision info in the re-encoded file will not be detected by MediaInfo. In order to be able to detect the Dolby Vision info by MediaInfo, you will need to re-mux the output file by [tsMuxeR](https://github.com/justdan96/tsMuxer/releases) (nightly).
+### --dolby-vision-rpu copy [HEVC, AV1]
+Interleave Dolby Vision RPU metadata copied from HEVC input file. Recommended to be used with [--dolby-vision-profile](#--dolby-vision-profile-string).
+
+Limitations for avhw reader: this option uses timestamps to reorder frames to decoded order to presentation order.
+Therefore, input files without timestamps (such as raw ES), are not supported. Please try for avsw reader for that case.
+
+### --dolby-vision-rpu-prm &lt;param1&gt;=&lt;value1&gt;[,&lt;param2&gt;=&lt;value2&gt;]...  
+
+Set parameters for ```--dolby-vision-rpu```.
+
+- **parameters**
+  
+  - crop=&lt;bool&gt;
+
+    Set active area offsets to 0 (no letterbox bars).
+
+- Examples
+  ```
+  Example:  --dolby-vision-rpu-prm crop=true
+  ```
 
 ### --aud
 Insert Access Unit Delimiter NAL.
@@ -1629,6 +1668,12 @@ switch hevc bitstream filter used for hw decoder input. (for debug purpose)
   - libavcodec  
     use hevc_mp4toannexb bitstream filter.
 
+### --input-pixel-format &lt;string&gt;
+Set "pixel_format" for input avdevice. (not intended on other situations)
+
+### --offset-video-dts-advance  
+Offset timestamp to cancel bframe delay.
+
 ### --allow-other-negative-pts  
 Allow negative timestamps for audio, subtitles. Intended for debug purpose only.
 
@@ -1642,23 +1687,28 @@ Vpp filters will be applied in fixed order, regardless of the order in the comma
 
 - filter list
   - [--vpp-colorspace](#--vpp-colorspace-param1value1param2value2)
+  - [--vpp-libplacebo-tonemapping](#--vpp-libplacebo-tonemapping-param1value1param2value2)
   - [--vpp-rff](#--vpp-rff)
   - [--vpp-delogo](#--vpp-delogo-stringparam1value1param2value2)
   - [--vpp-afs](#--vpp-afs-param1value1param2value2)
   - [--vpp-nnedi](#--vpp-nnedi-param1value1param2value2)
   - [--vpp-yadif](#--vpp-yadif-param1value1)
+  - [--vpp-decomb](#--vpp-decomb-param1value1param2value2)
   - [--vpp-deinterlace](#--vpp-deinterlace-string)
   - [--vpp-decimate](#--vpp-decimate-param1value1param2value2)
   - [--vpp-mpdecimate](#--vpp-mpdecimate-param1value1param2value2)
   - [--vpp-convolution3d](#--vpp-convolution3d-param1value1param2value2)
   - [--vpp-smooth](#--vpp-smooth-param1value1param2value2)
   - [--vpp-denoise-dct](#--vpp-denoise-dct-param1value1param2value2)
+  - [--vpp-fft3d](#--vpp-fft3d-param1value1param2value2)
   - [--vpp-knn](#--vpp-knn-param1value1param2value2)
+  - [--vpp-nlmeans](#--vpp-nlmeans-param1value1param2value2)
   - [--vpp-pmd](#--vpp-pmd-param1value1param2value2)
   - [--vpp-denoise](#--vpp-denoise-int-or-param1value1param2value2)
   - [--vpp-image-stab](#--vpp-image-stab-string)
   - [--vpp-mctf](#--vpp-mctf-auto-or-int)
   - [--vpp-subburn](#--vpp-subburn-param1value1param2value2)
+  - [--vpp-libplacebo-shader](#--vpp-libplacebo-shader-param1value1param2value2)
   - [--vpp-resize](#--vpp-resize-string)
   - [--vpp-unsharp](#--vpp-unsharp-param1value1param2value2)
   - [--vpp-edgelevel](#--vpp-edgelevel-param1value1param2value2)
@@ -1668,6 +1718,7 @@ Vpp filters will be applied in fixed order, regardless of the order in the comma
   - [--vpp-curves](#--vpp-curves-param1value1param2value2)
   - [--vpp-tweak](#--vpp-tweak-param1value1param2value2)
   - [--vpp-deband](#--vpp-deband-param1value1param2value2)
+  - [--vpp-libplacebo-deband](#--vpp-libplacebo-deband-param1value1param2value2)
   - [--vpp-padding](#--vpp-pad-intintintint)
   - [--vpp-overlay](#--vpp-overlay-param1value1param2value2)
   - [--vpp-perc-pre-enc](#--vpp-perc-pre-enc)
@@ -1773,7 +1824,158 @@ Reflect the Repeat Field Flag. The avsync error caused by rff could be solved. A
 
 rff of 2 or more will not be supported (only  supports rff = 1). Also, it can not be used with [--trim](#--trim-intintintintintint).
 
+### --vpp-libplacebo-tonemapping [&lt;param1&gt;=&lt;value1&gt;][,&lt;param2&gt;=&lt;value2&gt;],...
+
+Performs tone mapping using [libplacebo](https://code.videolan.org/videolan/libplacebo). Available on Windows systems only.
+
+- **Parameters**
+  - src_csp=&lt;string&gt;  
+    Input color space.
+    ```
+    auto, sdr, hdr10, hlg, dovi, rgb
+    ```
+  
+  - dst_csp=&lt;string&gt;  
+    Output color space.
+    ```
+    auto, sdr, hdr10, hlg, dovi, rgb
+    ```
+
+  - src_max=&lt;float&gt;  
+    Input maximum luminance (nits). (Default: auto, tries to get info from input file if possible, otherwise 1000.0 (HDR) / 203.0 (SDR))
+
+  - src_min=&lt;float&gt;  
+    Input minimum luminance (nits). (Default: auto, tries to get info from input file if possible, otherwise 0.005 (HDR) / 0.2023 (SDR))
+
+  - dst_max=&lt;float&gt;  
+    Output maximum luminance (nits). (Default: auto, tries to get info from parameters if possible, otherwise 1000.0 (HDR) / 203.0 (SDR))
+
+  - dst_min=&lt;float&gt;  
+    Output minimum luminance (nits). (Default: auto, tries to get info from parameters if possible, otherwise 0.005 (HDR) / 0.2023 (SDR))
+
+  - dynamic_peak_detection=&lt;bool&gt;  
+    Enables computation of signal stats to optimize HDR tone mapping quality. Default: true
+
+  - smooth_period=&lt;float&gt;  
+    Smoothing coefficient for detected values. Default: 20.0
+
+  - scene_threshold_low=&lt;float&gt;  
+    Lower threshold for scene change detection (dB). Default: 1.0
+
+  - scene_threshold_high=&lt;float&gt;  
+    Upper threshold for scene change detection (dB). Default: 3.0
+
+  - percentile=&lt;float&gt;  
+    Percentile to consider for luminance histogram. Default: 99.995
+
+  - black_cutoff=&lt;float&gt;  
+    Black level cutoff intensity (PQ%). Default: 1.0
+
+  - gamut_mapping=&lt;string&gt;  
+    Gamut mapping mode. (Default: perceptual)
+    ```
+    clip, perceptual, softclip, relative, saturation, absolute, desaturate, darken, highlight, linear
+    ```
+
+  - tonemapping_function=&lt;string&gt;  
+    Tone mapping function. (Default: bt2390)
+    ```
+    clip, st2094-40, st2094-10, bt2390, bt2446a, spline, reinhard, mobius, hable, gamma, linear, linearlight
+    ```
+
+  - for tonemapping_function=st2094-40, st2094-10, spline  
+  
+    - knee_adaptation=&lt;float&gt;   (float, 0.0 - 1.0, default: 0.4)  
+      Configures the knee point as a ratio between the source and target average brightness in PQ space.
+      - 1.0: Always adapts source scene average to scaled target average
+      - 0.0: Never modifies scene brightness
+    
+    - knee_min=&lt;float&gt;   (0.0 - 0.5, default: 0.1)  
+      Minimum knee point in ratio of PQ luminance range.
+    
+    - knee_max=&lt;float&gt;   (0.5 - 1.0, default: 0.8)  
+      Maximum knee point in ratio of PQ luminance range.
+    
+    - knee_default=&lt;float&gt;   (knee_min - knee_max, default: 0.4)  
+      Default knee point used when source scene average metadata is unavailable.
+  
+  - for tonemapping_function=bt2390
+
+    - knee_offset=&lt;float&gt;   (0.5 - 2.0, default: 1.0)  
+      Knee point offset.
+  
+  - for tonemapping_function=spline
+
+    - slope_tuning=&lt;float&gt;   (0.0 - 10.0, default: 1.5)  
+      Coefficient for the slope of the spline curve.
+    
+    - slope_offset=&lt;float&gt;   (0.0 - 1.0, default: 0.2)  
+      Slope offset of the spline curve.
+    
+    - spline_contrast=&lt;float&gt;   (0.0 - 1.5, default: 0.5)  
+      Contrast for the spline function. Higher values preserve midtones but may lose shadow/highlight details.
+  
+  - for tonemapping_function=reinhard
+
+    - reinhard_contrast=&lt;float&gt;   (0.0 - 1.0, default: 0.5)  
+      contrast coefficient at display peak for the reinhard function.
+  
+  - for tonemapping_function=mobius, gamma
+
+    - linear_knee=&lt;float&gt;   (0.0 - 1.0, default: 0.3)  
+  
+  - for tonemapping_function=linear, linearlight
+
+    - exposure=&lt;float&gt;   (0.0 - 10.0, default: 1.0)  
+      Linear exposure/gain applied.
+
+  - metadata=&lt;int&gt;  
+    Data source to use for tone mapping.
+    ```
+    any, none, hdr10, hdr10plus, cie_y
+    ```
+
+  - contrast_recovery=&lt;float&gt;  
+    Contrast recovery strength. Default: 0.3
+
+  - contrast_smoothness=&lt;float&gt;  
+    Contrast recovery lowpass kernel size. Default: 3.5
+
+  - visualize_lut=&lt;bool&gt;  
+    Visualize tone mapping curve/LUT. Default: false
+
+  - show_clipping=&lt;bool&gt;  
+    Graphically highlight hard-clipped pixels. Default: false
+
+  - use_dovi=&lt;bool&gt;  
+    Whether to use Dolby Vision RPU as ST2086 metadata. Default: auto (enabled when tone mapping from Dolby Vision)
+
+  - dst_pl_transfer=&lt;string&gt;  
+    Output transfer function. Must be used with ```dst_pl_colorprim```.
+    ```
+    unknown, srgb, bt1886, linear, gamma18, gamma20, gamma22, gamma24, gamma26, gamma28,
+    prophoto, st428, pq, hlg, vlog, slog1, slog2
+    ```
+
+  - dst_pl_colorprim=&lt;string&gt;  
+    Output color primaries. Must be used with ```dst_pl_transfer```.
+    ```
+    unknown, bt601_525, bt601_625, bt709, bt470m, ebu_3213, bt2020, apple, adobe,
+    prophoto, cie_1931, dci_p3, display_p3, v_gamut, s_gamut, film_c, aces_ap0, aces_ap1
+    ```
+
+- **Examples**
+  ```
+  Example: Dolby Vision to SDR tone mapping
+  --vpp-libplacebo-tonemapping src_csp=dovi,dst_csp=sdr
+  ```
+
+### --vpp-libplacebo-tonemapping-lut &lt;string&gt;
+
+  lut file path used in --vpp-libplacebo-tonemapping.
+
 ### --vpp-delogo &lt;string&gt;[,&lt;param1&gt;=&lt;value1&gt;][,&lt;param2&gt;=&lt;value2&gt;],...
+Specify the logo file and settings for the logo to be eliminated. The logo file supports ". lgd", ". ldp", and ". ldp2" formats.
 
 - **Parameters**
   - select=&lt;string&gt;  
@@ -2015,6 +2217,23 @@ Activate GPU deinterlacer.
   - normal ... standard 60i → 30p interleave cancellation.
   - it    ... inverse telecine
   - bob ... 60i → 60p interleaved.
+  
+### --vpp-decomb [&lt;param1&gt;=&lt;value1&gt;[,&lt;param2&gt;=&lt;value2&gt;]...]  
+Decomb deinterlaer.
+
+- **parameters**
+  
+  - full=&lt;bool&gt;  
+    deinterlace all frames. default on.
+
+  - threshold=&lt;int&gt;  
+    threshold for combed frame detection. default 20 (0 - 255).
+
+  - dthreshold=&lt;int&gt;
+    threshold for deinterlacing frames detected as combed. default 7 (0 - 255).
+
+  - blend=&lt;bool&gt;   
+    blend rather than interpolate. default off.
 
 ### --vpp-decimate [&lt;param1&gt;=&lt;value1&gt;[,&lt;param2&gt;=&lt;value2&gt;]...]  
 Drop duplicated frame in cycles set.
@@ -2125,6 +2344,8 @@ Please note that [--avsync](./NVEncC_Options.en.md#--avsync-string) vfr is autom
 
 ### --vpp-denoise-dct [&lt;param1&gt;=&lt;value1&gt;][,&lt;param2&gt;=&lt;value2&gt;],...
 
+  DCT based denoise filter.
+
 - **parameters**
   - step=&lt;int&gt;  
     Quality of the filter. Smaller value should result in higher quality but with lower speed.  
@@ -2139,6 +2360,38 @@ Please note that [--avsync](./NVEncC_Options.en.md#--avsync-string) vfr is autom
   - block_size=&lt;int&gt;  (default=8)  
     - 8
     - 16 (slow)
+
+### --vpp-fft3d [&lt;param1&gt;=&lt;value1&gt;][,&lt;param2&gt;=&lt;value2&gt;],...
+
+  FFT based denoise filter.
+
+- **parameters**
+  - sigma=&lt;float&gt;  
+    Strength of filter. (default=1.0, 0.0 - 100.0)
+  
+  - amount=&lt;float&gt;  (default=1.0, 0.0 - 1.0)    
+    Amount of denoising.
+    
+  - block_size=&lt;int&gt;  (default=32)  
+    - 8
+    - 16
+    - 32
+    - 64
+
+  - overlap=&lt;float&gt;  (default=0.5, 0.2 - 0.8)    
+    Block overlap, value 0.5 or larger is recomended.
+  
+  - method=&lt;int&gt; (default = 0)
+    - 0 ... wiener method
+    - 1 ... hard thresholding
+
+  - temporal=&lt;int&gt; (default = 1)
+    - 0 ... spatial filtering only
+    - 1 ... enable temporal filtering
+
+  - prec=&lt;string&gt; (default = auto)
+    - auto ... use fp16 if possible (faster)
+    - fp32 ... always use fp32
 
 ### --vpp-knn [&lt;param1&gt;=&lt;value1&gt;[,&lt;param2&gt;=&lt;value2&gt;]...]
 Strong noise reduction filter.
@@ -2160,6 +2413,38 @@ Strong noise reduction filter.
   ```
   Example: slightly stronger than default
   --vpp-knn radius=3,strength=0.10,lerp=0.1
+  ```
+
+### --vpp-nlmeans [&lt;param1&gt;=&lt;value1&gt;[,&lt;param2&gt;=&lt;value2&gt;]...]
+Non local means noise reduction filter.
+
+- **Parameters**
+  - sigma=&lt;float&gt;  (default=0.005, 0.0 -)   
+    Noise variance. Larger value will result stronger denosing.
+  
+  - h=&lt;float&gt;  (default=0.05, 0.0 <)   
+    Parameter. Larger value will result the weight to be more flat.
+  
+  - patch=&lt;int&gt;  (default=5, 3 - )  
+    Set patch size. Must be odd number.
+  
+  - search=&lt;int&gt;  (default=11, 3 - )  
+    Set search size. Must be odd number.
+  
+  - fp16=&lt;string&gt;  (default=blockdiff)  
+    - none  
+      Do not use fp16 and use fp32. High precision but slow.
+
+    - blockdiff  
+      Use fp16 in block diff calculation. Balanced between performace and precision.
+
+    - all  
+      Additionally use fp16 in weight calculation. Fast but low precision.
+  
+- Examples
+  ```
+  Example: Use larger search area
+  --vpp-nlmeans patch=7,search=15
   ```
 
 ### --vpp-pmd [&lt;param1&gt;=&lt;value1&gt;[,&lt;param2&gt;=&lt;value2&gt;]...]
@@ -2274,23 +2559,163 @@ Enable Motion Compensate Temporal Filter (MCTF), if no param specified, then str
   --vpp-subburn filename="subtitle.sjis.ass",charcode=sjis,shaping=complex
   ```
 
+### --vpp-libplacebo-shader [&lt;param1&gt;=&lt;value1&gt;][,&lt;param2&gt;=&lt;value2&gt;],...
+
+Apply custom shaders in the specified path using [libplacebo](https://code.videolan.org/videolan/libplacebo). Available on Windows systems only.
+
+- **Parameters**
+    - shader=&lt;string&gt;  
+      Target shader file path. (glsl file)
+
+    - res=&lt;int&gt;x&lt;int&gt;  
+      Output resolution of the filter.
+
+    - colorsystem=&lt;string&gt;  
+      Color system to use. Default: auto detect.
+      ```
+      auto, unknown, bt601, bt709, smpte240m, bt2020nc, bt2020c, bt2100pq, bt2100hlg, dolbyvision, ycgco, rgb, xyz
+      ```
+
+    - transfer=&lt;string&gt;  
+      Output transfer function. Default: auto detect.
+      ```
+      auto, unknown, srgb, bt1886, linear,
+      gamma18, gamma20, gamma22, gamma24, gamma26, gamma28,
+      prophoto, st428, pq, hlg, vlog, slog1, slog2
+      ```
+
+    - resampler=&lt;string&gt;  
+      Filter function to use when resample is required. Default: libplacebo-ewa-lanczos.
+      ```
+      libplacebo-spline16, libplacebo-spline36, libplacebo-spline64, libplacebo-nearest,
+      libplacebo-bilinear, libplacebo-gaussian, libplacebo-sinc, libplacebo-lanczos, 
+      libplacebo-ginseng, libplacebo-ewa-jinc, libplacebo-ewa-lanczos, 
+      libplacebo-ewa-lanczossharp, libplacebo-ewa-lanczos4sharpest, 
+      libplacebo-ewa-ginseng, libplacebo-ewa-hann, libplacebo-ewa-hanning, 
+      libplacebo-bicubic, libplacebo-triangle, libplacebo-hermite, libplacebo-catmull-rom, 
+      libplacebo-mitchell, libplacebo-mitchell-clamp, libplacebo-robidoux, 
+      libplacebo-robidouxsharp, libplacebo-ewa-robidoux, libplacebo-ewa-robidouxsharp
+      ```
+
+    - radius=&lt;float&gt;  
+      Adjust the function's radius. Default: auto. Must be between 0.0 and 16.0.
+
+    - clamp=&lt;float&gt;  
+      Clamping coefficient for negative weights. Default: 0.0. Must be between 0.0 and 1.0.
+
+    - taper=&lt;float&gt;  
+      Additional taper coefficient. Default: 0.0. Must be between 0.0 and 1.0.
+
+    - blur=&lt;float&gt;  
+      Additional blur coefficient. Default: 0.0. Must be between 0.0 and 100.0.
+
+    - antiring=&lt;float&gt;  
+      Antiringing strength. Default: 0.0. Must be between 0.0 and 1.0.
+    
+    - linear=&lt;bool&gt;  
+      linearize image bdfore processing.
+
+- **Examples**
+    ``` 
+    Example: Apply a custom shader (1280x720 -> 2560x1440)
+    --vpp-libplacebo-shader shader=default-shader-pack-2.1.0\Anime4K_Upscale_CNN_x2_L.glsl,res=2560x1440
+    ```
+
 ### --vpp-resize &lt;string&gt;
 Specify the resizing algorithm.
 
-- **Parameters**
-  | option name | description |
-  |:---|:---|
-  | auto     | auto select |
-  | simple   | use simple scaling     |
-  | advanced | use high quality scaling |
-  | bilinear | linear interpolation |
-  | bicubic  | bicubic interpolation |
-  | spline16 | 4x4 spline curve interpolation |
-  | spline36 | 6x6 spline curve interpolation |
-  | spline64 | 8x8 spline curve interpolation |
-  | lanczos2 | 4x4 Lanczos resampling |
-  | lanczos3 | 6x6 Lanczos resampling |
-  | lanczos4 | 8x8 Lanczos resampling |
+- **options**
+  - algo=&lt;string&gt;  
+    When unspecified, it will be auto selected.
+    select which algorithm to use.
+
+    - VPL based hw resize filters.
+
+      | option name | description |
+      |:---|:---|
+      | auto     | auto select |
+      | simple   | use simple scaling     |
+      | advanced | use high quality scaling |
+
+    - OpenCL based resize filters.
+
+      | name | description |
+      |:---|:---|
+      | bilinear       | linear interpolation                                       |
+      | bicubic        | bicubic interpolation                                      |
+      | spline16       | 4x4 spline curve interpolation                             |
+      | spline36       | 6x6 spline curve interpolation                             |
+      | spline64       | 8x8 spline curve interpolation                             |
+      | lanczos2       | 4x4 Lanczos resampling                                     |
+      | lanczos3       | 6x6 Lanczos resampling                                     |
+      | lanczos4       | 8x8 Lanczos resampling                                     |
+      
+    - [libplacebo](https://code.videolan.org/videolan/libplacebo) library resize filters
+
+      | name | description | resizable |
+      |:---|:---|:---:|
+      | libplacebo-spline16       | 4x4 spline curve interpolation                      | |
+      | libplacebo-spline36       | 6x6 spline curve interpolation                      | |
+      | libplacebo-spline64       | 8x8 spline curve interpolation                      | |
+      | libplacebo-nearest        | nearest neighbor                                    | |
+      | libplacebo-bilinear       | linear interpolation                                | &check; |
+      | libplacebo-gaussian       | Gaussian filter                                     | &check; |
+      | libplacebo-sinc           | Sinc filter                                         | &check; |
+      | libplacebo-lanczos        | Lanczos resampling                                  | &check; |
+      | libplacebo-ginseng        | Ginseng filter                                      | &check; |
+      | libplacebo-ewa-jinc       | EWA Jinc resampling                                 | &check; |
+      | libplacebo-ewa-lanczos    | EWA Lanczos resampling                              | &check; |
+      | libplacebo-ewa-lanczossharp | EWA Lanczos sharp resampling                      | &check; |
+      | libplacebo-ewa-lanczos4sharpest | EWA Lanczos 4 sharpest resampling             | &check; |
+      | libplacebo-ewa-ginseng    | EWA Ginseng resampling                              | &check; |
+      | libplacebo-ewa-hann       | EWA Hann filter                                     | &check; |
+      | libplacebo-ewa-hanning    | EWA Hanning filter                                  | &check; |
+      | libplacebo-bicubic        | Bicubic interpolation                               | |
+      | libplacebo-triangle       | Triangle filter                                     | |
+      | libplacebo-hermite        | Hermite filter                                      | |
+      | libplacebo-catmull-rom    | Catmull-Rom spline interpolation                    | |
+      | libplacebo-mitchell       | Mitchell-Netravali filter                           | |
+      | libplacebo-mitchell-clamp | Mitchell-Netravali filter with clamping             | |
+      | libplacebo-robidoux       | Robidoux filter                                     | |
+      | libplacebo-robidouxsharp  | Robidoux sharp filter                               | |
+      | libplacebo-ewa-robidoux   | EWA Robidoux filter                                 | |
+      | libplacebo-ewa-robidouxsharp | EWA Robidoux sharp filter                        | |
+
+      These filters are supported on Windows x64 version only.
+
+      - Additional parameters
+      
+        - pl-radius=&lt;float&gt;
+
+          Radius used for resizable algorithm in libplacebo-resample. (0.0 - 16.0, default = auto)
+      
+        - pl-clamp=&lt;float&gt;
+
+          Clamp coefficient for negative weights used in libplacebo-resample, 1.0 will make weight 0 for negative weights. (0.0 - 1.0, default = 0.0)
+      
+        - pl-taper=&lt;float&gt;
+
+          Taper will flatten weight function in the center for libplacebo-resample. (0.0 - 1.0, default = 0.0)
+      
+        - pl-blur=&lt;float&gt;
+
+          Additional blur coefficient for libplacebo-resample. (0.0 - 100.0, default = 0.0)
+      
+        - pl-antiring=&lt;float&gt;
+
+          Antiringing strength for libplacebo-resample. (0.0 - 1.0, default = 0.0)
+
+- **Examples**
+  ```
+  Examples: Use spline64 (in short)
+  --vpp-resize spline64
+
+  Examples: Use spline64
+  --vpp-resize algo=spline64
+
+  Examples: Use libplacebo resize filters
+  --vpp-resize algo=libplacebo-sinc,pl-radius=3.0,pl-antiring=0.5
+  ```
 
 ### --vpp-resize-mode &lt;string&gt;
 Specify the resizer mode.
@@ -2442,6 +2867,27 @@ Apply color adjustments using curves.
   - hue=&lt;float&gt; (default=0.0, -180 - 180)  
   
   - swapuv=&lt;bool&gt;  (default=false)
+
+  - y_offset=&lt;float&gt; (default=0.0, -1.0 - 1.0)  
+  - y_gain=&lt;float&gt; (default=1.0, -2.0 - 2.0)  
+
+  - cb_offset=&lt;float&gt; (default=0.0, -1.0 - 1.0)  
+  - cb_gain=&lt;float&gt; (default=1.0, -2.0 - 2.0)  
+
+  - cr_offset=&lt;float&gt; (default=0.0, -1.0 - 1.0)  
+  - cr_gain=&lt;float&gt; (default=1.0, -2.0 - 2.0)  
+
+  - r_offset=&lt;float&gt; (default=0.0, -1.0 - 1.0)  
+  - r_gain=&lt;float&gt; (default=1.0, -2.0 - 2.0)  
+  - r_gamma=&lt;float&gt; (default=1.0, 0.1 - 10.0)  
+
+  - g_offset=&lt;float&gt; (default=0.0, -1.0 - 1.0)  
+  - g_gain=&lt;float&gt; (default=1.0, -2.0 - 2.0)  
+  - g_gamma=&lt;float&gt; (default=1.0, 0.1 - 10.0)  
+
+  - b_offset=&lt;float&gt; (default=0.0, -1.0 - 1.0)  
+  - b_gain=&lt;float&gt; (default=1.0, -2.0 - 2.0)  
+  - b_gamma=&lt;float&gt; (default=1.0, 0.1 - 10.0)  
   
 - examples
   ```
@@ -2490,6 +2936,44 @@ Apply color adjustments using curves.
   ```
   Example:
   --vpp-deband range=31,dither=12,rand_each_frame
+  ```
+
+### --vpp-libplacebo-deband [&lt;param1&gt;=&lt;value1&gt;][,&lt;param2&gt;=&lt;value2&gt;],...
+
+  Deband filter by [libplacebo](https://code.videolan.org/videolan/libplacebo). Available on Windows systems only.
+
+- **Parameters**
+  - iterations=&lt;int&gt;  
+    iterations (default=1, 0-)
+
+  - threshold=&lt;float&gt;  
+    cut-off threshold (default=4.0, 0-)
+
+  - radius=&lt;float&gt;  
+    initial radius (default=16.0, 0-)
+
+  - grain_y=&lt;float&gt;  
+    extra noise for luma (default=6.0, 0-)
+
+  - grain_c=&lt;float&gt;  
+    extra noise for chroma (default=grain_y, 0-)
+
+  - dither=&lt;string&gt;  
+    dither mode, only for 8bit.
+    - none
+    - blue_noise (default)
+    - ordered_lut
+    - ordered_fixed
+    - white_noise
+
+  - lut_size=&lt;int&gt;  
+    size of LUT. (default=64)
+    ```2, 4, 8, 16, 32, 64, 128, 256 ```
+  
+- Examples
+  ```
+  Example:
+  --vpp-libplacebo-deband iterations=1,radius=32
   ```
 
 ### --vpp-pad &lt;int&gt;,&lt;int&gt;,&lt;int&gt;,&lt;int&gt;
@@ -2541,6 +3025,34 @@ Print processing time for each filter enabled. This is meant for profiling purpo
 overall performance will decrease as the application waits each filter to finish when checking processing time of them. 
 
 ## Other Options
+
+### --parallel [&lt;int&gt;] or [&lt;string&gt;]
+Enables parallel encoding by file splitting. Divides the input file into multiple chunks and encodes them in parallel using separate threads to accelerate processing.
+
+- **Restrictions**
+  Parallel encoding will be automatically disabled in the following cases:
+  - Input is from pipe
+  - Input is not seekable
+  - Frame timestamps are unstable
+  - No encoding is performed (-c raw)
+  - --dynamic-rc is enabled
+  - --trim option is enabled
+  - --timecode option is specified
+  - --tcfile-in option is specified
+  - --keyfile option is specified
+  - --key-on-chapter option is enabled
+  - ssim/psnr/vmaf is enabled
+  - --vpp-subburn (subtitle burn-in) is specified
+  - --vpp-fruc (frame interpolation) is enabled
+
+- **Examples**
+  ```
+  Example: Auto-determine number of parallel processes
+  --parallel auto
+
+  Example: Run with 3 parallel threads
+  --parallel 3
+  ```
 
 ### --async-depth &lt;int&gt;
 set async depth for QSV pipeline. default: 0 (=auto, 3frames)
@@ -2795,6 +3307,9 @@ Tune for lower transcoding latency, but will hurt transcoding throughput. Not re
 
 ### --avsdll &lt;string&gt;
 Specifies AviSynth DLL location to use. When unspecified, the default AviSynth.dll will be used.
+
+### --vsdir &lt;string&gt;
+Specifies vapoursynth portable directory to use. Supported on Windows only.
 
 ### --process-codepage &lt;string&gt; [Windows OS only]  
 - **parameters**  

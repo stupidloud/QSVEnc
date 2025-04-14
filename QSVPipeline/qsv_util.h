@@ -59,13 +59,14 @@ class RGYFrameData;
 #define INIT_MFX_EXT_BUFFER(x, id) { RGY_MEMSET_ZERO(x); (x).Header.BufferId = (id); (x).Header.BufferSz = sizeof(x); }
 
 MAP_PAIR_0_1_PROTO(codec, rgy, RGY_CODEC, enc, mfxU32);
-MAP_PAIR_0_1_PROTO(chromafmt, rgy, RGY_CHROMAFMT, enc, mfxU16);
+//MAP_PAIR_0_1_PROTO(chromafmt, rgy, RGY_CHROMAFMT, enc, mfxU16);
 MAP_PAIR_0_1_PROTO(csp, rgy, RGY_CSP, enc, mfxU32);
 MAP_PAIR_0_1_PROTO(resize_algo, rgy, RGY_VPP_RESIZE_ALGO, enc, int);
 MAP_PAIR_0_1_PROTO(resize_mode, rgy, RGY_VPP_RESIZE_MODE, enc, int);
 
 mfxU16 picstruct_rgy_to_enc(RGY_PICSTRUCT picstruct);
 RGY_PICSTRUCT picstruct_enc_to_rgy(mfxU16 picstruct);
+mfxU16 mfx_fourcc_to_chromafmt(mfxU32 fourcc);
 mfxFrameInfo frameinfo_rgy_to_enc(VideoInfo info);
 mfxFrameInfo frameinfo_rgy_to_enc(const RGYFrameInfo& info, const rgy_rational<int> fps, const rgy_rational<int> sar, const int blockSize);
 VideoInfo videooutputinfo(const mfxInfoMFX& mfx, const mfxExtVideoSignalInfo& vui, const mfxExtChromaLocInfo& chromaloc);
@@ -124,19 +125,24 @@ static bool gopRefDistAsBframe(const RGY_CODEC codec) {
     return codec == RGY_CODEC_H264 || codec == RGY_CODEC_HEVC || codec == RGY_CODEC_MPEG2;
 }
 
+// QSVでRGBエンコードの際、RGY_CSP_VUYA扱いとする色空間
+static const RGY_CSP RGY_CSP_MFX_RGB = RGY_CSP_RBGA32;
+
 static RGY_CSP getMFXCsp(const RGY_CHROMAFMT chroma, const int bitdepth) {
     if (bitdepth > 8) {
         switch (chroma) {
         case RGY_CHROMAFMT_YUV420: return RGY_CSP_P010;
         case RGY_CHROMAFMT_YUV422: return RGY_CSP_Y210;
         case RGY_CHROMAFMT_YUV444: return (bitdepth > 10) ? RGY_CSP_Y416 : RGY_CSP_Y410;
+        case RGY_CHROMAFMT_RGB:    return (bitdepth > 10) ? RGY_CSP_RBGA64 : RGY_CSP_RBGA64_10;
         default: return RGY_CSP_NA;
         }
     }
     switch (chroma) {
     case RGY_CHROMAFMT_YUV420: return RGY_CSP_NV12;
     case RGY_CHROMAFMT_YUV422: return RGY_CSP_YUY2;
-    case RGY_CHROMAFMT_YUV444: return RGY_CSP_AYUV;
+    case RGY_CHROMAFMT_YUV444: return RGY_CSP_VUYA;
+    case RGY_CHROMAFMT_RGB:    return RGY_CSP_MFX_RGB;
     default: return RGY_CSP_NA;
     }
 }
@@ -182,6 +188,7 @@ private:
     mfxBitstream m_bitstream;
     RGYFrameData **frameDataList;
     int frameDataNum;
+    int64_t frameIndex;
 
 public:
     mfxBitstream *bsptr() {
@@ -237,12 +244,12 @@ public:
         UNREFERENCED_PARAMETER(duration);
     }
 
-    int frameIdx() {
-        return 0;
+    int64_t frameIdx() {
+        return frameIndex;
     }
 
-    void setFrameIdx(int frameIdx) {
-        UNREFERENCED_PARAMETER(frameIdx);
+    void setFrameIdx(int64_t frameIdx) {
+        frameIndex = frameIdx;
     }
 
     size_t size() const {
@@ -372,6 +379,37 @@ public:
         return RGY_ERR_NONE;
     }
 
+    RGY_ERR resize(size_t nNewSize) {
+        if (m_bitstream.MaxLength < nNewSize) {
+            uint8_t *pData = (uint8_t *)_aligned_malloc(nNewSize, 32);
+            if (pData == nullptr) {
+                return RGY_ERR_NULL_PTR;
+            }
+            if (m_bitstream.DataLength > 0) {
+                uint32_t copyLength = std::min<uint32_t>((uint32_t)m_bitstream.DataLength, (uint32_t)nNewSize);
+                memcpy(pData, m_bitstream.Data + m_bitstream.DataOffset, copyLength);
+            }
+            free_mem();
+            m_bitstream.Data = pData;
+            m_bitstream.DataOffset = 0;
+            m_bitstream.DataLength = (uint32_t)nNewSize;
+            m_bitstream.MaxLength = (uint32_t)nNewSize;
+            return RGY_ERR_NONE;
+        }
+        if (m_bitstream.DataLength > 0 && m_bitstream.MaxLength < nNewSize + m_bitstream.DataOffset) {
+            uint32_t copyLength = std::min<uint32_t>((uint32_t)m_bitstream.DataLength, (uint32_t)nNewSize);
+            memmove(m_bitstream.Data, m_bitstream.Data + m_bitstream.DataOffset, copyLength);
+            m_bitstream.DataOffset = 0;
+            m_bitstream.DataLength = (uint32_t)nNewSize;
+            return RGY_ERR_NONE;
+        }
+        if (m_bitstream.DataLength == 0) {
+            m_bitstream.DataOffset = 0;
+        }
+        m_bitstream.DataLength = (uint32_t)nNewSize;
+        return RGY_ERR_NONE;
+    }
+
     RGY_ERR changeSize(size_t nNewSize) {
         uint8_t *pData = (uint8_t *)_aligned_malloc(nNewSize, 32);
         if (pData == nullptr) {
@@ -429,7 +467,7 @@ static inline RGYBitstream RGYBitstreamInit() {
     return bitstream;
 }
 
-static_assert(std::is_pod<RGYBitstream>::value == true, "RGYBitstream should be POD type.");
+static_assert(std::is_trivially_copyable<RGYBitstream>::value == true, "RGYBitstream should be trivially copyable.");
 
 static inline RGYFrameInfo frameinfo_enc_to_rgy(const mfxFrameSurface1& mfx) {
     RGYFrameInfo info;

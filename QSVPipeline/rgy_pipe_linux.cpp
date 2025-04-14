@@ -163,9 +163,12 @@ int RGYPipeProcessLinux::stdInFpFlush() {
 }
 
 int RGYPipeProcessLinux::stdInFpClose() {
-    const int ret = fclose(m_pipe.stdIn.fp);
-    m_pipe.stdIn.fp = nullptr;
-    m_pipe.stdIn.h_write = 0;
+    int ret = 0;
+    if (m_pipe.stdIn.fp) {
+        ret = fclose(m_pipe.stdIn.fp);
+        m_pipe.stdIn.fp = nullptr;
+        m_pipe.stdIn.h_write = 0;
+    }
     return ret;
 }
 
@@ -211,9 +214,12 @@ size_t RGYPipeProcessLinux::stdOutFpRead(void *data, const size_t dataSize) {
 }
 
 int RGYPipeProcessLinux::stdOutFpClose() {
-    const int ret = fclose(m_pipe.stdOut.fp);
-    m_pipe.stdOut.fp = nullptr;
-    m_pipe.stdOut.h_read = 0;
+    int ret = 0;
+    if (m_pipe.stdOut.fp) {
+        ret = fclose(m_pipe.stdOut.fp);
+        m_pipe.stdOut.fp = nullptr;
+        m_pipe.stdOut.h_read = 0;
+    }
     return ret;
 }
 
@@ -222,31 +228,80 @@ size_t RGYPipeProcessLinux::stdErrFpRead(void *data, const size_t dataSize) {
 }
 
 int RGYPipeProcessLinux::stdErrFpClose() {
-    const int ret = fclose(m_pipe.stdErr.fp);
-    m_pipe.stdErr.fp = nullptr;
-    m_pipe.stdErr.h_read = 0;
+    int ret = 0;
+    if (m_pipe.stdErr.fp) {
+        ret = fclose(m_pipe.stdErr.fp);
+        m_pipe.stdErr.fp = nullptr;
+        m_pipe.stdErr.h_read = 0;
+    }
     return ret;
 }
 
 tstring RGYPipeProcessLinux::getOutput() {
     std::string outstr;
-    auto read_from_pipe = [&]() {
-        char read_buf[4096];
-        int ret = (int)read(m_pipe.stdOut.h_read, read_buf, _countof(read_buf));
-        if (ret == -1) return -1;
-        outstr += std::string(read_buf, read_buf+ret);
-        return (int)ret;
-    };
-    for (;;) {
-        if (read_from_pipe() < 0) {
-            break;
+    std::vector<uint8_t> bufferOut, bufferErr;
+    while (stdOutRead(bufferOut) >= 0
+        || ((m_pipe.stdErr.mode & (PIPE_MODE_ENABLE | PIPE_MODE_MUXED)) == (PIPE_MODE_ENABLE | PIPE_MODE_MUXED) && stdErrRead(bufferErr) >= 0)) {
+        if (bufferOut.size() > 0) {
+            outstr += (const char *)bufferOut.data();
+            bufferOut.clear();
+        }
+        if (bufferErr.size() > 0) {
+            outstr += (const char *)bufferErr.data();
+            bufferErr.clear();
         }
     }
-    return outstr;
+    stdOutRead(bufferOut);
+    if ((m_pipe.stdErr.mode & (PIPE_MODE_ENABLE | PIPE_MODE_MUXED)) == (PIPE_MODE_ENABLE | PIPE_MODE_MUXED)) {
+        stdErrRead(bufferErr);
+    }
+    if (bufferOut.size() > 0) {
+        outstr += (const char *)bufferOut.data();
+        bufferOut.clear();
+    }
+    if (bufferErr.size() > 0) {
+        outstr += (const char *)bufferErr.data();
+        bufferErr.clear();
+    }
+    return char_to_tstring(outstr);
 }
 
 bool RGYPipeProcessLinux::processAlive() {
     int status = 0;
     return 0 == waitpid(m_phandle, &status, WNOHANG);
 }
+
+int RGYPipeProcessLinux::waitAndGetExitCode() {
+    int status = 0;
+    if (waitpid(m_phandle, &status, 0) == -1) {
+        return 1; // waitpid() failed
+    }
+    int ret = 0;
+    if (WIFEXITED(status)) {
+        ret = WEXITSTATUS(status);
+    }
+    return ret;
+}
+
+int RGYPipeProcessLinux::wait(uint32_t timeout) {
+    int status = 0;
+    if (timeout == INFINITE) {
+        waitpid(m_phandle, &status, 0);
+    } else if (timeout == 0) {
+        waitpid(m_phandle, &status, WNOHANG);
+    } else {
+        struct timespec ts = { 0, 1000000 };
+        while (timeout > 0 && 0 == waitpid(m_phandle, &status, WNOHANG)) {
+            nanosleep(&ts, nullptr);
+            timeout--;
+        }
+    }
+    return status;
+    
+}
+
+int RGYPipeProcessLinux::pid() const {
+    return (int)m_phandle;
+}
+
 #endif //#if !(defined(_WIN32) || defined(_WIN64))

@@ -125,8 +125,12 @@ struct AVMuxFormat {
     AVDictionary         *headerOptions;        //ヘッダオプション
     bool                  disableMp4Opt;        //mp4出力時のmuxの最適化(faststart)を無効にする
     bool                  lowlatency;           //低遅延モード
+    bool                  offsetVideoDtsAdvance; //映像の負のdtsを避ける (ts_output_offsetを使う)
     bool                  allowOtherNegativePts; //音声・字幕の負のptsを許可するかどうか
     bool                  timestampPassThrough;  //タイムスタンプをそのまま出力するかどうか
+
+    std::mutex            fpTsLogMtx;              //mux timestampログファイル用のロック
+    std::unique_ptr<FILE, fp_deleter> fpTsLogFile; //mux timestampログファイル
 
     AVMuxFormat();
 };
@@ -144,10 +148,13 @@ struct AVMuxVideo {
     int                   fpsBaseNextDts;       //出力映像のfpsベースでのdts (API v1.6以下でdtsが計算されない場合に使用する)
     std::unique_ptr<FILE, fp_deleter> fpTsLogFile; //mux timestampログファイル
     RGYBitstream          hdrBitstream;         //追加のsei nal
+    RGYHDR10Plus         *hdr10plus;          //追加のhdr10plus
+    bool                  hdr10plusMetadataCopy; //hdr10plusをコピー
+    RGYDOVIProfile        doviProfileSrc;       //dovi profile input
+    RGYDOVIProfile        doviProfileDst;       //dovi profile output
     DOVIRpu              *doviRpu;              //dovi rpu 追加用
-    AVBSFContext         *bsfc;                 //必要なら使用するbitstreamfilter
-    uint8_t              *bsfcBuffer;           //bitstreamfilter用のバッファ
-    size_t                bsfcBufferLength;     //bitstreamfilter用のバッファの長さ
+    bool                  doviRpuMetadataCopy;  //dovi rpuをコピー
+    RGYDOVIRpuConvertParam doviRpuConvertParam; //dovi rpuの変換パラメータ
     RGYTimestamp         *timestamp;            //timestampの情報
     AVPacket             *pktOut;               //出力用のAVPacket
     AVPacket             *pktParse;             //parser用のAVPacket
@@ -196,6 +203,7 @@ struct AVMuxAudio {
 
     //resampler
     int                   audioResampler;      //resamplerの選択 (QSV_RESAMPLER_xxx)
+    std::string           audioResamplerPrm;
     AVFrame              *decodedFrameCache;   //デコードされたデータのキャッシュされたもの
     int                   channelMapping[MAX_SPLIT_CHANNELS];        //resamplerで使用するチャンネル割り当て(入力チャンネルの選択)
     std::array<std::string, MAX_SPLIT_CHANNELS> streamChannelSelect; //入力音声の使用するチャンネル
@@ -242,6 +250,7 @@ struct AVMuxOther {
     AVBSFContext         *bsfc;              //必要なら使用するbitstreamfilter
 
     std::vector<AVSubtitleData> decodedSub; //字幕データ
+    int64_t               lastPtsOut;           //出力音声の前パケットのpts
 
     AVMuxOther();
 };
@@ -344,6 +353,7 @@ struct AVOutputStreamPrm {
     tstring bsf;                //適用すべきbsfの名前
     tstring disposition;        //disposition
     std::vector<tstring> metadata; //metadata
+    std::string resamplerPrm;
 
     AVOutputStreamPrm() :
         src(),
@@ -358,7 +368,8 @@ struct AVOutputStreamPrm {
         asdata(false),
         bsf(),
         disposition(),
-        metadata() {
+        metadata(),
+        resamplerPrm() {
 
     }
 };
@@ -366,10 +377,12 @@ struct AVOutputStreamPrm {
 struct AvcodecWriterPrm {
     const AVDictionary          *inputFormatMetadata;     //入力ファイルのグローバルメタデータ
     tstring                      outputFormat;            //出力のフォーマット
+    bool                         offsetVideoDtsAdvance;   //映像のdtsを進める (ts_output_offsetを使う)
     bool                         allowOtherNegativePts;   //音声・字幕の負のptsを許可するかどうか
     bool                         timestampPassThrough;    //タイムスタンプをそのまま出力するかどうか
     bool                         bVideoDtsUnavailable;    //出力映像のdtsが無効 (API v1.6以下)
-    bool                         lowlatency;              //低遅延モード 
+    bool                         lowlatency;              //低遅延モード
+    bool                         parallelEncode;          //並列エンコードを使用する
     const AVStream              *videoInputStream;        //入力映像のストリーム
     AVRational                   bitstreamTimebase;       //エンコーダのtimebase
     int64_t                      videoInputFirstKeyPts;   //入力映像の最初のpts
@@ -388,8 +401,13 @@ struct AvcodecWriterPrm {
     RGYOptList                   muxOpt;                  //mux時に使用するオプション
     PerfQueueInfo               *queueInfo;               //キューの情報を格納する構造体
     tstring                      muxVidTsLogFile;         //mux timestampログファイル
-    const RGYHDRMetadata        *hdrMetadata;             //HDR関連のmetadata
+    const RGYHDRMetadata        *hdrMetadataIn;           //HDR関連のmetadata
+    RGYHDR10Plus                *hdr10plus;                //追加のhdr10plus
+    bool                         hdr10plusMetadataCopy;   //hdr10plusのmetadataをコピー
     DOVIRpu                     *doviRpu;                 //DOVIRpu
+    bool                         doviRpuMetadataCopy;     //doviのmetadataのコピー
+    RGYDOVIProfile               doviProfile;             //doviのprofile
+    RGYDOVIRpuConvertParam       doviRpuConvertParam;     //dovi rpuの変換パラメータ
     RGYTimestamp                *vidTimestamp;            //動画のtimestampの情報
     std::string                  videoCodecTag;           //動画タグ
     std::vector<tstring>         videoMetadata;           //動画のmetadata
@@ -397,16 +415,20 @@ struct AvcodecWriterPrm {
     bool                         afs;                     //入力が自動フィールドシフト
     bool                         disableMp4Opt;           //mp4出力時のmuxの最適化を無効にする
     bool                         debugDirectAV1Out;       //AV1出力のデバッグ用
+    bool                         HEVCAlphaChannel;        //HEVCのalphaチェンネルを使用するか
+    int                          HEVCAlphaChannelMode;    //HEVCのalphaチェンネルのモード
     RGYPoolAVPacket             *poolPkt;                 //読み込み側からわたってきたパケットの返却先
     RGYPoolAVFrame              *poolFrame;               //読み込み側からわたってきたパケットの返却先
 
     AvcodecWriterPrm() :
         inputFormatMetadata(nullptr),
         outputFormat(),
+        offsetVideoDtsAdvance(false),
         allowOtherNegativePts(false),
         timestampPassThrough(false),
         bVideoDtsUnavailable(),
         lowlatency(false),
+        parallelEncode(false),
         videoInputStream(nullptr),
         bitstreamTimebase(av_make_q(0, 1)),
         videoInputFirstKeyPts(0),
@@ -425,8 +447,13 @@ struct AvcodecWriterPrm {
         muxOpt(),
         queueInfo(nullptr),
         muxVidTsLogFile(),
-        hdrMetadata(nullptr),
+        hdrMetadataIn(nullptr),
+        hdr10plus(nullptr),
+        hdr10plusMetadataCopy(false),
         doviRpu(nullptr),
+        doviRpuMetadataCopy(false),
+        doviProfile(RGY_DOVI_PROFILE_UNSET),
+        doviRpuConvertParam(),
         vidTimestamp(nullptr),
         videoCodecTag(),
         videoMetadata(),
@@ -434,6 +461,8 @@ struct AvcodecWriterPrm {
         afs(false),
         disableMp4Opt(false),
         debugDirectAV1Out(false),
+        HEVCAlphaChannel(false),
+        HEVCAlphaChannelMode(0),
         poolPkt(nullptr),
         poolFrame(nullptr) {
     }
@@ -459,7 +488,7 @@ public:
 
 #if USE_CUSTOM_IO
     int readPacket(uint8_t *buf, int buf_size);
-    int writePacket(uint8_t *buf, int buf_size);
+    int writePacket(const uint8_t *buf, int buf_size);
     int64_t seek(int64_t offset, int whence);
 #endif //USE_CUSTOM_IO
     //出力スレッドのハンドルを取得する
@@ -544,7 +573,7 @@ protected:
     RGY_ERR InitVideo(const VideoInfo *videoOutputInfo, const AvcodecWriterPrm *prm);
 
     //音声フィルタの初期化
-    RGY_ERR InitAudioFilter(AVMuxAudio *muxAudio, int channels, const RGYChannelLayout *channel_layout, int sample_rate, AVSampleFormat sample_fmt);
+    RGY_ERR InitAudioFilter(AVMuxAudio *muxAudio, int channels, const RGYChannelLayout *channel_layout, int sample_rate, AVSampleFormat sample_fmt, const std::string resamplerPrm);
 
     //音声リサンプラの初期化
     RGY_ERR InitAudioResampler(AVMuxAudio *muxAudio, int channels, const RGYChannelLayout *channel_layout, int sample_rate, AVSampleFormat sample_fmt);
@@ -614,9 +643,6 @@ protected:
 
     //パケットを実際に書き出す
     void WriteNextPacketProcessed(AVMuxAudio *muxAudio, AVPacket *pkt, int samples, int64_t *writtenDts);
-
-    //ヘッダにbsfを適用する
-    RGY_ERR applyBsfToHeader(std::vector<uint8_t>& result, const uint8_t *target, const size_t target_size);
 
     //extradataにH264のヘッダーを追加する
     RGY_ERR AddHeaderToExtraDataH264(const RGYBitstream *pBitstream);

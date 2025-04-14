@@ -36,6 +36,7 @@ extern "C" {
 #include <libavutil/timestamp.h>
 }
 
+// v * from / to
 int64_t rational_rescale(int64_t v, rgy_rational<int> from, rgy_rational<int> to) {
     return av_rescale_q(v, av_make_q(from), av_make_q(to));
 }
@@ -208,7 +209,7 @@ tstring getHWDecSupportedCodecList() {
 }
 
 //利用可能な音声エンコーダ/デコーダを表示
-tstring getAVCodecs(RGYAVCodecType flag) {
+tstring getAVCodecs(RGYAVCodecType flag, const std::vector<AVMediaType> mediatype) {
     if (!check_avcodec_dll()) {
         return error_mes_avcodec_dll_not_found();
     }
@@ -224,7 +225,7 @@ tstring getAVCodecs(RGYAVCodecType flag) {
     void *icodec = nullptr;
     const AVCodec *codec = nullptr;
     while (nullptr != (codec = av_codec_iterate(&icodec))) {
-        if (codec->type == AVMEDIA_TYPE_AUDIO || codec->type == AVMEDIA_TYPE_SUBTITLE || codec->type == AVMEDIA_TYPE_DATA) {
+        if (std::find(mediatype.begin(), mediatype.end(), codec->type) != mediatype.end()) {
             bool alreadyExists = false;
             for (uint32_t i = 0; i < list.size(); i++) {
                 if (0 == strcmp(list[i].name, codec->name)) {
@@ -612,6 +613,27 @@ uniuqeRGYChannelLayout getChannelLayoutFromString(const std::string& channel_lay
     return ch_layout;
 }
 
+bool ChannelLayoutExists(const RGYChannelLayout *target, const AVCodec *codec) {
+#if AV_CHANNEL_LAYOUT_STRUCT_AVAIL
+    if (codec->ch_layouts == nullptr) return false;
+    RGYChannelLayout zero;
+    memset(&zero, 0, sizeof(RGYChannelLayout));
+    for (auto ptr = codec->ch_layouts; memcmp(ptr, &zero, sizeof(RGYChannelLayout)) != 0; ptr++) {
+        if (av_channel_layout_compare(target, ptr) == 0) {
+            return true;
+        }
+    }
+#else
+    if (codec->channel_layouts == nullptr) return false;
+    for (auto ptr = codec->channel_layouts; *ptr; ptr++) {
+        if (*ptr == *target) {
+            return true;
+        }
+    }
+#endif
+    return false;
+}
+
 uniuqeRGYChannelLayout getDefaultChannelLayout(const int nb_channels) {
     auto ch_layout = createChannelLayoutEmpty();
 #if AV_CHANNEL_LAYOUT_STRUCT_AVAIL
@@ -840,10 +862,11 @@ static const auto CSP_PIXFMT_RGY = make_array<std::pair<AVPixelFormat, RGY_CSP>>
     std::make_pair(AV_PIX_FMT_YUVJ420P,    RGY_CSP_YV12),
     std::make_pair(AV_PIX_FMT_NV12,        RGY_CSP_NV12),
     std::make_pair(AV_PIX_FMT_NV21,        RGY_CSP_NV12),
+    std::make_pair(AV_PIX_FMT_P010LE,      RGY_CSP_P010),
     std::make_pair(AV_PIX_FMT_YUV422P,     RGY_CSP_YUV422),
     std::make_pair(AV_PIX_FMT_YUVJ422P,    RGY_CSP_YUV422),
     std::make_pair(AV_PIX_FMT_YUYV422,     RGY_CSP_YUY2),
-    std::make_pair(AV_PIX_FMT_UYVY422,     RGY_CSP_NA),
+    std::make_pair(AV_PIX_FMT_UYVY422,     RGY_CSP_UYVY),
     std::make_pair(AV_PIX_FMT_NV16,        RGY_CSP_NV16),
     std::make_pair(AV_PIX_FMT_NV24,        RGY_CSP_NV24),
     std::make_pair(AV_PIX_FMT_YUV444P,     RGY_CSP_YUV444),
@@ -853,25 +876,46 @@ static const auto CSP_PIXFMT_RGY = make_array<std::pair<AVPixelFormat, RGY_CSP>>
     std::make_pair(AV_PIX_FMT_YUV420P12LE, RGY_CSP_YV12_12),
     std::make_pair(AV_PIX_FMT_YUV420P10LE, RGY_CSP_YV12_10),
     std::make_pair(AV_PIX_FMT_YUV420P9LE,  RGY_CSP_YV12_09),
+    std::make_pair(AV_PIX_FMT_YUVA420P16LE, RGY_CSP_YUVA420_16),
+    std::make_pair(AV_PIX_FMT_YUVA420P10LE, RGY_CSP_YUVA420_10),
+    std::make_pair(AV_PIX_FMT_YUVA420P,    RGY_CSP_YUVA420),
     std::make_pair(AV_PIX_FMT_NV20LE,      RGY_CSP_NA),
     std::make_pair(AV_PIX_FMT_YUV422P16LE, RGY_CSP_YUV422_16),
     std::make_pair(AV_PIX_FMT_YUV422P14LE, RGY_CSP_YUV422_14),
     std::make_pair(AV_PIX_FMT_YUV422P12LE, RGY_CSP_YUV422_12),
     std::make_pair(AV_PIX_FMT_YUV422P10LE, RGY_CSP_YUV422_10),
+    std::make_pair(AV_PIX_FMT_YUVA422P16LE, RGY_CSP_YUVA422_16),
+    std::make_pair(AV_PIX_FMT_YUVA422P12LE, RGY_CSP_YUVA422_12),
+    std::make_pair(AV_PIX_FMT_YUVA422P10LE, RGY_CSP_YUVA422_10),
+    std::make_pair(AV_PIX_FMT_YUVA422P,    RGY_CSP_YUVA422),
     std::make_pair(AV_PIX_FMT_YUV444P16LE, RGY_CSP_YUV444_16),
     std::make_pair(AV_PIX_FMT_YUV444P14LE, RGY_CSP_YUV444_14),
     std::make_pair(AV_PIX_FMT_YUV444P12LE, RGY_CSP_YUV444_12),
     std::make_pair(AV_PIX_FMT_YUV444P10LE, RGY_CSP_YUV444_10),
     std::make_pair(AV_PIX_FMT_YUV444P9LE,  RGY_CSP_YUV444_09),
+    std::make_pair(AV_PIX_FMT_YUVA444P16LE, RGY_CSP_YUVA444_16),
+    std::make_pair(AV_PIX_FMT_YUVA444P12LE, RGY_CSP_YUVA444_12),
+    std::make_pair(AV_PIX_FMT_YUVA444P10LE, RGY_CSP_YUVA444_10),
+    std::make_pair(AV_PIX_FMT_YUVA444P,    RGY_CSP_YUVA444),
     std::make_pair(AV_PIX_FMT_RGB24,       RGY_CSP_RGB24),
     std::make_pair(AV_PIX_FMT_RGBA,        RGY_CSP_RGB32),
     std::make_pair(AV_PIX_FMT_BGR24,       RGY_CSP_BGR24),
     std::make_pair(AV_PIX_FMT_BGRA,        RGY_CSP_BGR32),
+    std::make_pair(AV_PIX_FMT_ARGB,        RGY_CSP_ARGB32),
+    std::make_pair(AV_PIX_FMT_ABGR,        RGY_CSP_ABGR32),
     std::make_pair(AV_PIX_FMT_GBRP,        RGY_CSP_GBR),
     std::make_pair(AV_PIX_FMT_GBRAP,       RGY_CSP_GBRA)
 );
 
 MAP_PAIR_0_1(csp, avpixfmt, AVPixelFormat, rgy, RGY_CSP, CSP_PIXFMT_RGY, AV_PIX_FMT_NONE, RGY_CSP_NA);
+
+tstring getAVPixFmtIndex() {
+    tstring mes;
+    for (size_t i = 0; i < CSP_PIXFMT_RGY.size(); i++) {
+        mes += strsprintf(_T("%03d: %s\n"), (int)CSP_PIXFMT_RGY[i].first, av_get_pix_fmt_name(CSP_PIXFMT_RGY[i].first));
+    }
+    return mes;
+}
 
 static const auto RGY_DISPOSITION_TO_AV = make_array<std::pair<tstring, uint32_t>>(
     std::make_pair(_T("default"),          AV_DISPOSITION_DEFAULT),
@@ -918,6 +962,38 @@ tstring getDispositionStr(uint32_t disposition) {
         }
     }
     return str;
+}
+
+RGYDOVIProfile getStreamDOVIProfile(const AVStream *stream) {
+#if LIBAVUTIL_DOVI_META_AVAIL
+    size_t side_data_size = 0;
+    auto doviconf = AVStreamGetSideData<AVDOVIDecoderConfigurationRecord>(stream, AV_PKT_DATA_DOVI_CONF, side_data_size);
+    if (!doviconf) {
+        return RGY_DOVI_PROFILE_UNSET;
+    }
+    switch (doviconf->dv_profile) {
+    case 5:
+        return RGY_DOVI_PROFILE_50;
+    case 8:
+        switch (doviconf->dv_bl_signal_compatibility_id) {
+        case 1:  return RGY_DOVI_PROFILE_81;
+        case 2:  return RGY_DOVI_PROFILE_82;
+        case 4:  return RGY_DOVI_PROFILE_84;
+        default: return RGY_DOVI_PROFILE_UNSET;
+        }
+    case 10:
+        switch (doviconf->dv_bl_signal_compatibility_id) {
+        case 1:  return RGY_DOVI_PROFILE_101;
+        case 2:  return RGY_DOVI_PROFILE_102;
+        case 4:  return RGY_DOVI_PROFILE_104;
+        default: return RGY_DOVI_PROFILE_100;
+        }
+    default:
+        return RGY_DOVI_PROFILE_UNSET;
+    }
+#else
+    return RGY_DOVI_PROFILE_UNSET;
+#endif
 }
 
 #endif //ENABLE_AVSW_READER

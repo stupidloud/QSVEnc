@@ -32,14 +32,33 @@
 #include "qsv_util.h"
 #include "qsv_session.h"
 #include "qsv_query.h"
+#include "rgy_device_vulkan.h"
+#include "rgy_device_info_cache.h"
+
+class QSVDeviceInfoCache : public RGYDeviceInfoCache {
+public:
+    QSVDeviceInfoCache();
+    virtual ~QSVDeviceInfoCache();
+    RGY_ERR addEncFeature(const QSVEncFeatureData& encFeatures);
+    RGY_ERR addEncFeature(const std::vector<QSVEncFeatureData>& encFeatures);
+    std::pair<RGY_ERR, QSVEncFeatures> getEncodeFeature(const QSVDeviceNum dev, const int ratecontrol, const RGY_CODEC codec, const bool lowpower);
+    std::vector<QSVEncFeatureData> getEncodeFeatures(const QSVDeviceNum dev);
+protected:
+    virtual RGY_ERR parseEncFeatures(std::ifstream& cacheFile) override;
+    virtual void writeEncFeatures(std::ofstream& cacheFile) override;
+
+    virtual void clearFeatureCache() override;
+
+    std::vector<QSVEncFeatureData> m_featureData;
+};
 
 class QSVDevice {
 public:
     QSVDevice();
     virtual ~QSVDevice();
 
-    RGY_ERR init(const QSVDeviceNum dev, const bool enableOpenCL, const bool suppressErrorMessage);
-    RGY_ERR init(const QSVDeviceNum dev, const bool enableOpenCL, MemType memType, const MFXVideoSession2Params& params, std::shared_ptr<RGYLog> m_log, const bool suppressErrorMessage);
+    RGY_ERR init(const QSVDeviceNum dev, const bool enableOpenCL, const RGYParamInitVulkan enableVulkan, const bool suppressErrorMessage);
+    RGY_ERR init(const QSVDeviceNum dev, const bool enableOpenCL, const RGYParamInitVulkan enableVulkan, MemType memType, const MFXVideoSession2Params& params, std::shared_ptr<QSVDeviceInfoCache> devInfoCache, std::shared_ptr<RGYLog> m_log, const bool suppressErrorMessage);
 
     CodecCsp getDecodeCodecCsp(const bool skipHWDecodeCheck);
     QSVEncFeatures getEncodeFeature(const int ratecontrol, const RGY_CODEC codec, const bool lowpower);
@@ -55,6 +74,11 @@ public:
     MemType memType() const { return m_memType; };
     CQSVHWDevice *hwdev() { return m_hwdev.get(); }
     QSVAllocator *allocator() { return m_allocator.get(); }
+#if ENABLE_VULKAN
+    DeviceVulkan *vulkan() { return m_vulkan.get(); }
+#else
+    DeviceVulkan *vulkan() { return nullptr; }
+#endif
     const IntelDeviceInfo *intelDeviceInfo() const { return (m_hwdev) ? m_hwdev->GetIntelDeviceInfo() : nullptr; }
     bool externalAlloc() const { return m_externalAlloc; }
     const RGYOpenCLDeviceInfo *devInfo() const { return m_devInfo.get(); }
@@ -87,15 +111,19 @@ protected:
     QSVDeviceNum m_devNum;
     std::unique_ptr<CQSVHWDevice> m_hwdev;
     std::unique_ptr<RGYOpenCLDeviceInfo> m_devInfo;
+#if ENABLE_VULKAN
+    std::unique_ptr<DeviceVulkan> m_vulkan;
+#endif
     MFXVideoSession2 m_session;
     MFXVideoSession2Params m_sessionParams;
     std::unique_ptr<QSVAllocator> m_allocator;
     bool m_externalAlloc;
     MemType m_memType;
     std::vector<QSVEncFeatureData> m_featureData;
+    std::shared_ptr<QSVDeviceInfoCache> m_devInfoCache;
     std::shared_ptr<RGYLog> m_log;
 };
 
-std::vector<std::unique_ptr<QSVDevice>> getDeviceList(const QSVDeviceNum dev, const bool enableOpenCL, const MemType memType, const MFXVideoSession2Params& params, std::shared_ptr<RGYLog> log);
+std::vector<std::unique_ptr<QSVDevice>> getDeviceList(const QSVDeviceNum dev, const bool enableOpenCL, const RGYParamInitVulkan enableVulkan, const MemType memType, const MFXVideoSession2Params& params, std::shared_ptr<QSVDeviceInfoCache> devInfoCache, std::shared_ptr<RGYLog> log);
 
 #endif //_QSV_DEVICE_H_

@@ -55,6 +55,8 @@
 #include "rgy_output.h"
 #include "rgy_opencl.h"
 #include "rgy_dummy_load.h"
+#include "rgy_device_usage.h"
+#include "rgy_parallel_enc.h"
 #include "qsv_vpp_mfx.h"
 #include "qsv_mfx_dec.h"
 #include "qsv_pipeline_ctrl.h"
@@ -112,8 +114,11 @@ public:
 protected:
     mfxVersion m_mfxVer;
     std::unique_ptr<QSVDevice> m_device;
+    std::vector<tstring> m_devNames;
     shared_ptr<EncodeStatus> m_pStatus;
     shared_ptr<CPerfMonitor> m_pPerfMonitor;
+    std::unique_ptr<RGYDeviceUsage> m_deviceUsage;
+    std::unique_ptr<RGYParallelEnc> m_parallelEnc;
 
     int m_encWidth;
     int m_encHeight;
@@ -151,10 +156,13 @@ protected:
     vector<unique_ptr<AVChapter>> m_Chapters;
 #endif
     std::unique_ptr<RGYTimecode> m_timecode;
-    std::unique_ptr<RGYHDRMetadata> m_hdrsei;
+    std::unique_ptr<RGYHDRMetadata> m_hdrseiIn;
+    std::unique_ptr<RGYHDRMetadata> m_hdrseiOut;
     std::unique_ptr<RGYHDR10Plus> m_hdr10plus;
-    bool m_hdr10plusMetadataCopy;
+    bool                          m_hdr10plusMetadataCopy;
     std::unique_ptr<DOVIRpu>      m_dovirpu;
+    bool                          m_dovirpuMetadataCopy;
+    RGYDOVIProfile                m_doviProfile;
     std::unique_ptr<RGYTimestamp> m_encTimestamp;
 
     MFXVideoSession2Params m_sessionParams;
@@ -176,7 +184,8 @@ protected:
 
     virtual RGY_ERR InitLog(sInputParams *pParams);
     virtual RGY_ERR InitPerfMonitor(const sInputParams *pParams);
-    virtual RGY_ERR InitInput(sInputParams *pParams, std::vector<std::unique_ptr<QSVDevice>>& devList);
+    virtual RGY_ERR InitParallelEncode(sInputParams *inputParam, const int maxEncoders);
+    virtual RGY_ERR InitInput(sInputParams *pParams, DeviceCodecCsp& HWDecCodecCsp);
     virtual RGY_ERR InitChapters(const sInputParams *inputParam);
     virtual RGY_ERR InitFilters(sInputParams *inputParam);
     virtual std::vector<VppType> InitFiltersCreateVppList(const sInputParams *inputParam, const bool cspConvRequired, const bool cropRequired, const RGY_VPP_RESIZE_TYPE resizeRequired);
@@ -196,13 +205,14 @@ protected:
     virtual RGY_ERR InitMfxVpp();
     virtual RGY_ERR InitMfxEncode();
     RGY_ERR checkGPUListByEncoder(const sInputParams *inputParam, std::vector<std::unique_ptr<QSVDevice>>& deviceList);
-    RGY_ERR deviceAutoSelect(const sInputParams *inputParam, std::vector<std::unique_ptr<QSVDevice>>& deviceList);
+    RGY_ERR deviceAutoSelect(const sInputParams *inputParam, std::vector<std::unique_ptr<QSVDevice>>& deviceList, const RGYDeviceUsageLockManager *lock);
     virtual RGY_ERR InitSession(const sInputParams *inputParam, std::vector<std::unique_ptr<QSVDevice>>& deviceList);
     virtual RGY_ERR InitVideoQualityMetric(sInputParams *pParams);
     void applyInputVUIToColorspaceParams(sInputParams *inputParam);
     bool preferD3D11Mode(const sInputParams *pParams);
     RGY_CSP getEncoderCsp(const sInputParams *pParams, int *pShift = nullptr) const;
     bool VppAfsRffAware() const;
+    DeviceCodecCsp getHWDecCodecCsp(const bool skipHWDecodeCheck, std::vector<std::unique_ptr<QSVDevice>>& devList);
 
     virtual RGY_ERR readChapterFile(tstring chapfile);
 
@@ -214,7 +224,7 @@ protected:
     virtual RGY_ERR AllocateSufficientBuffer(mfxBitstream* pBS);
 
     RGY_ERR SetPerfMonitorThreadHandles();
-    RGY_ERR CreatePipeline();
+    RGY_ERR CreatePipeline(const sInputParams* prm);
     std::pair<RGY_ERR, std::unique_ptr<QSVVideoParam>> GetOutputVideoInfo();
 
     RGY_ERR CheckParamList(int value, const CX_DESC *list, const char *param_name);
