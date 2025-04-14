@@ -13,14 +13,17 @@ RUN cd /tmp && curl https://www.ffmpeg.org/releases/ffmpeg-4.4.5.tar.xz | tar xJ
     ./configure --prefix=/bin --enable-shared --enable-nonfree --enable-libfdk-aac --enable-libass && \
     make -s -j$(nproc) && \
     make install && \
+    echo "/bin/lib" > /etc/ld.so.conf.d/ffmpeg.conf && \
     ldconfig && \
     ls -la /bin/lib/libavcodec* && \
+    export LD_LIBRARY_PATH=/bin/lib:$LD_LIBRARY_PATH && \
     /bin/bin/ffmpeg -version
 
 # Final stage
 FROM ubuntu:jammy
 ENV TZ=UTC \
-    DEBIAN_FRONTEND=noninteractive
+    DEBIAN_FRONTEND=noninteractive \
+    LD_LIBRARY_PATH=/usr/lib
 
 # Install Intel Media SDK and runtime dependencies
 RUN apt update && apt install -y --no-install-recommends \
@@ -45,8 +48,10 @@ COPY --from=builder /bin/include /usr/include
 COPY --from=builder /bin/share /usr/share
 
 # Update library cache
-RUN ldconfig && \
+RUN echo "/usr/lib" > /etc/ld.so.conf.d/ffmpeg.conf && \
+    ldconfig && \
     ls -la /usr/lib/libavcodec* && \
+    export LD_LIBRARY_PATH=/usr/lib:$LD_LIBRARY_PATH && \
     ffmpeg -version
 
 # Install the latest QSVEnc release for Ubuntu
