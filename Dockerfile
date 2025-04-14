@@ -4,11 +4,11 @@ ENV TZ=UTC \
     DEBIAN_FRONTEND=noninteractive
 
 RUN apt update && apt install -qq -y \
-    build-essential libtool pkg-config git cmake \
-    curl libfdk-aac-dev libass-dev g++ make nasm yasm
+    build-essential libtool pkg-config git cmake wget \
+    libfdk-aac-dev libass-dev g++ make nasm yasm
 
 # Build FFmpeg
-RUN cd /tmp && curl https://www.ffmpeg.org/releases/ffmpeg-4.4.5.tar.xz | tar xJf - && \
+RUN cd /tmp && wget -qO- https://www.ffmpeg.org/releases/ffmpeg-4.4.5.tar.xz | tar xJf - && \
     cd ffmpeg-4.4.* && \
     ./configure --prefix=/usr --enable-shared --enable-nonfree --enable-libfdk-aac --enable-libass && \
     make -s -j$(nproc) && \
@@ -24,7 +24,7 @@ ENV TZ=UTC \
 
 # Install Intel Media SDK and runtime dependencies
 RUN apt update && apt install -y --no-install-recommends \
-    gpg-agent wget software-properties-common curl jq ca-certificates && \
+    gpg-agent wget ca-certificates && \
     wget -qO - https://repositories.intel.com/graphics/intel-graphics.key | \
     gpg --dearmor --output /usr/share/keyrings/intel-graphics.gpg && \
     echo 'deb [arch=amd64,i386 signed-by=/usr/share/keyrings/intel-graphics.gpg] https://repositories.intel.com/graphics/ubuntu jammy arc' | \
@@ -50,9 +50,9 @@ RUN ldconfig && \
     ffmpeg -version
 
 # Install the latest QSVEnc release for Ubuntu
-RUN LATEST_URL=$(curl -s https://api.github.com/repos/rigaya/QSVEnc/releases/latest | jq -r '.assets[] | select(.name | contains("Ubuntu20.04_amd64.deb")) | .browser_download_url') && \
+RUN LATEST_URL=$(wget -qO- https://api.github.com/repos/rigaya/QSVEnc/releases/latest | grep -o 'https://github.com/rigaya/QSVEnc/releases/download/[^"]*Ubuntu20.04_amd64.deb') && \
     echo "Downloading latest QSVEnc from: $LATEST_URL" && \
-    curl -L -o /tmp/qsvencc.deb "$LATEST_URL" && \
+    wget -O /tmp/qsvencc.deb "$LATEST_URL" && \
     apt-get update && \
     dpkg -i --force-depends /tmp/qsvencc.deb && \
     rm /tmp/qsvencc.deb && \
