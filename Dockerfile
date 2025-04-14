@@ -35,7 +35,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     intel-media-va-driver-non-free intel-opencl-icd \
     libmfx1 libmfxgen1 \
     libva-drm2 libva-x11-2 libigfxcmrt7 \
-    libass9 \
+    libass9 libfdk-aac2 \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
