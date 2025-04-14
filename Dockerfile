@@ -39,11 +39,20 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy FFmpeg from builder stage
-COPY --from=builder /usr/lib /usr/lib
-COPY --from=builder /usr/bin /usr/bin
-COPY --from=builder /usr/include /usr/include
-COPY --from=builder /usr/share /usr/share
+# Copy FFmpeg from builder stage - only necessary files
+# Copy FFmpeg and FFprobe binaries
+COPY --from=builder /usr/bin/ffmpeg /usr/bin/
+COPY --from=builder /usr/bin/ffprobe /usr/bin/
+
+# Copy FFmpeg libraries
+COPY --from=builder /usr/lib/libavcodec*.so* /usr/lib/
+COPY --from=builder /usr/lib/libavdevice*.so* /usr/lib/
+COPY --from=builder /usr/lib/libavfilter*.so* /usr/lib/
+COPY --from=builder /usr/lib/libavformat*.so* /usr/lib/
+COPY --from=builder /usr/lib/libavutil*.so* /usr/lib/
+COPY --from=builder /usr/lib/libpostproc*.so* /usr/lib/
+COPY --from=builder /usr/lib/libswresample*.so* /usr/lib/
+COPY --from=builder /usr/lib/libswscale*.so* /usr/lib/
 
 # Update library cache
 RUN ldconfig && \
