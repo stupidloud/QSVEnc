@@ -3343,13 +3343,14 @@ RGY_ERR CQSVPipeline::checkGPUListByEncoder(const sInputParams *prm, std::vector
         return RGY_ERR_NONE;
     }
 
+    const tstring PEPrefix = (prm->ctrl.parallelEnc.isChild()) ? strsprintf(_T("Parallel Enc %d: "), prm->ctrl.parallelEnc.parallelId) : _T("");
     //const auto enc_csp = getEncoderCsp(prm);
     const auto enc_bitdepth = getEncoderBitdepth(prm);
     const auto rate_control = prm->rcParam.encMode;
     tstring message;
     for (auto gpu = gpuList.begin(); gpu != gpuList.end(); ) {
-        PrintMes(RGY_LOG_DEBUG, _T("Checking GPU #%d (%s) for codec %s.\n"),
-            (*gpu)->deviceNum(), (*gpu)->name().c_str(), CodecToStr(prm->codec).c_str());
+        m_pQSVLog->write(RGY_LOG_DEBUG, RGY_LOGT_CORE_GPU_SELECT, _T("%sChecking GPU #%d (%s) for codec %s.\n"),
+            PEPrefix.c_str(), (*gpu)->deviceNum(), (*gpu)->name().c_str(), CodecToStr(prm->codec).c_str());
         const bool lowPower = prm->codec != RGY_CODEC_H264;
         QSVEncFeatures deviceFeature;
         //コーデックのチェック
@@ -3383,10 +3384,12 @@ RGY_ERR CQSVPipeline::checkGPUListByEncoder(const sInputParams *prm, std::vector
             gpu = gpuList.erase(gpu);
             continue;
         }
-        PrintMes(RGY_LOG_DEBUG, _T("GPU #%d (%s) available for %s encode.\n"), (*gpu)->deviceNum(), (*gpu)->name().c_str(), CodecToStr(prm->codec).c_str());
+        m_pQSVLog->write(RGY_LOG_DEBUG, RGY_LOGT_CORE_GPU_SELECT, _T("%sGPU #%d (%s) available for %s encode.\n"), PEPrefix.c_str(), (*gpu)->deviceNum(), (*gpu)->name().c_str(), CodecToStr(prm->codec).c_str());
         gpu++;
     }
-    PrintMes((gpuList.size() == 0) ? RGY_LOG_ERROR : RGY_LOG_DEBUG, _T("%s\n"), message.c_str());
+    if (message.length() > 0) {
+        m_pQSVLog->write((gpuList.size() == 0) ? RGY_LOG_ERROR : RGY_LOG_DEBUG, RGY_LOGT_CORE_GPU_SELECT, _T("%s%s\n"), PEPrefix.c_str(), message.c_str());
+    }
     if (gpuList.size() == 0) {
         return RGY_ERR_UNSUPPORTED;
     }
@@ -3419,13 +3422,13 @@ RGY_ERR CQSVPipeline::deviceAutoSelect(const sInputParams *prm, std::vector<std:
         std::this_thread::sleep_for(std::chrono::milliseconds(50));
         counterIsIntialized = m_pPerfMonitor->isPerfCounterInitialized();
     }
-    if (!counterIsIntialized) {
-        return RGY_ERR_NONE;
+    std::vector<CounterEntry> entries;
+    if (counterIsIntialized) {
+        while (!m_pPerfMonitor->isPerfCounterRefreshed()) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(50));
+        }
+        entries = m_pPerfMonitor->GetPerfCountersSystem();
     }
-    while (!m_pPerfMonitor->isPerfCounterRefreshed()) {
-        std::this_thread::sleep_for(std::chrono::milliseconds(50));
-    }
-    auto entries = m_pPerfMonitor->GetPerfCountersSystem();
 #endif //#if ENABLE_PERF_COUNTER
 
     std::map<QSVDeviceNum, double> gpuscore;
@@ -3878,6 +3881,8 @@ RGY_ERR CQSVPipeline::Init(sInputParams *pParams) {
         HWDecCodecCsp = deviceInfoCache->getDeviceDecCodecCsp();
         PrintMes(RGY_LOG_DEBUG, _T("HW dec codec csp support read from cache file.\n"));
     }
+    m_pQSVLog->write(RGY_LOG_DEBUG, RGY_LOGT_DEV, _T("Device Info Cache size: %d\n"), (int)deviceInfoCache->getDeviceIds().size());
+
     std::vector<std::unique_ptr<QSVDevice>> deviceList;
     auto getDevIdName = [&deviceList]() {
         std::map<int, std::string> devIdName;
@@ -4441,6 +4446,13 @@ RGY_ERR CQSVPipeline::RunEncode2() {
             task->setStopWatch();
         }
     }
+    std::unique_ptr<PipelineTaskStopWatch> stopwatchOutput;
+    if (m_taskPerfMonitor) {
+        stopwatchOutput = std::make_unique<PipelineTaskStopWatch>(
+            std::vector<tstring>{ _T("") },
+            std::vector<tstring>{_T("")}
+        );
+    }
 
     auto requireSync = [this](const size_t itask) {
         if (itask + 1 >= m_pipelineTasks.size()) return true; // 次が最後のタスクの時
@@ -4506,10 +4518,12 @@ RGY_ERR CQSVPipeline::RunEncode2() {
                             });
                     }
                 } else { // pipelineの最終的なデータを出力
+                    if (stopwatchOutput) stopwatchOutput->set(0);
                     if ((err = d.data->write(m_pFileWriter.get(), m_device->allocator(), (m_cl) ? &m_cl->queue() : nullptr, m_videoQualityMetric.get())) != RGY_ERR_NONE) {
                         PrintMes(RGY_LOG_ERROR, _T("failed to write output: %s.\n"), get_err_mes(err));
                         break;
                     }
+                    if (stopwatchOutput) stopwatchOutput->add(0, 0);
                 }
             }
             if (dataqueue.empty()) {
@@ -4563,10 +4577,12 @@ RGY_ERR CQSVPipeline::RunEncode2() {
                         });
                     RGY_IGNORE_STS(err, RGY_ERR_MORE_DATA); //VPPなどでsendFrameがRGY_ERR_MORE_DATAだったが、フレームが出てくる場合がある
                 } else { // pipelineの最終的なデータを出力
+                    if (stopwatchOutput) stopwatchOutput->set(0);
                     if ((err = d.data->write(m_pFileWriter.get(), m_device->allocator(), (m_cl) ? &m_cl->queue() : nullptr, m_videoQualityMetric.get())) != RGY_ERR_NONE) {
                         PrintMes(RGY_LOG_ERROR, _T("failed to write output: %s.\n"), get_err_mes(err));
                         break;
                     }
+                    if (stopwatchOutput) stopwatchOutput->add(0, 0);
                 }
             }
             if (dataqueue.empty()) {
@@ -4618,18 +4634,25 @@ RGY_ERR CQSVPipeline::RunEncode2() {
     // taskの集計結果を表示
     if (m_taskPerfMonitor) {
         PrintMes(RGY_LOG_INFO, _T("\nTask Performance\n"));
+        static const TCHAR *TASK_OUTPUT = _T("OUTPUT");
         const int64_t totalTicks = std::accumulate(m_pipelineTasks.begin(), m_pipelineTasks.end(), 0LL, [](int64_t total, const std::unique_ptr<PipelineTask>& task) {
             return total + task->getStopWatchTotal();
-        });
+        }) + stopwatchOutput->totalTicks();
         if (totalTicks > 0) {
-            const size_t maxWorkStrLenLen = std::accumulate(m_pipelineTasks.begin(), m_pipelineTasks.end(), (size_t)0, [](size_t maxStrLength, const std::unique_ptr<PipelineTask>& task) {
+            const size_t maxWorkStrLenLen = std::max(std::accumulate(m_pipelineTasks.begin(), m_pipelineTasks.end(), (size_t)0, [](size_t maxStrLength, const std::unique_ptr<PipelineTask>& task) {
                 return std::max(maxStrLength, task->getStopWatchMaxWorkStrLen());
-            });
-            const size_t maxTaskStrLen = std::accumulate(m_pipelineTasks.begin(), m_pipelineTasks.end(), (size_t)0, [](size_t maxStrLength, const std::unique_ptr<PipelineTask>& task) {
+            }), stopwatchOutput->maxWorkStrLen());
+            const size_t maxTaskStrLen = std::max(std::accumulate(m_pipelineTasks.begin(), m_pipelineTasks.end(), (size_t)0, [](size_t maxStrLength, const std::unique_ptr<PipelineTask>& task) {
                 return std::max(maxStrLength, _tcslen(getPipelineTaskTypeName(task->taskType())));
-            });
+            }), _tcslen(TASK_OUTPUT));
             for (auto& task : m_pipelineTasks) {
                 task->printStopWatch(totalTicks, maxWorkStrLenLen + maxTaskStrLen - _tcslen(getPipelineTaskTypeName(task->taskType())));
+            }
+            const auto strlines = split(stopwatchOutput->print(totalTicks, maxWorkStrLenLen + maxTaskStrLen - _tcslen(TASK_OUTPUT)), _T("\n"));
+            for (auto& str : strlines) {
+                if (str.length() > 0) {
+                    PrintMes(RGY_LOG_INFO, _T("%s: %s\n"), TASK_OUTPUT, str.c_str());
+                }
             }
         }
     }
