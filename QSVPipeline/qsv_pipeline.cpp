@@ -2234,6 +2234,7 @@ std::vector<VppType> CQSVPipeline::InitFiltersCreateVppList(const sInputParams *
     if (inputParam->vpp.pad.enable)        filterPipeline.push_back(VppType::CL_PAD);
     if (inputParam->vppmfx.percPreEnc)     filterPipeline.push_back(VppType::MFX_PERC_ENC_PREFILTER);
     if (inputParam->vpp.overlay.size() > 0)  filterPipeline.push_back(VppType::CL_OVERLAY);
+    if (inputParam->vppmfx.aiFrameInterpolation.enable) filterPipeline.push_back(VppType::MFX_AI_FRAMEINTERP);
 
     if (filterPipeline.size() == 0) {
         return filterPipeline;
@@ -2317,6 +2318,7 @@ std::pair<RGY_ERR, std::unique_ptr<QSVVppMfx>> CQSVPipeline::AddFilterMFX(
                                            break;
     case VppType::MFX_CROP:                frameInfo.width  -= (crop) ? (crop->e.left + crop->e.right) : 0;
                                            frameInfo.height -= (crop) ? (crop->e.up + crop->e.bottom)  : 0; break;
+    case VppType::MFX_AI_FRAMEINTERP:      vppParams.aiFrameInterpolation = params->aiFrameInterpolation; break;
     case VppType::MFX_FPS_CONV:
     default:
         return { RGY_ERR_UNSUPPORTED, std::unique_ptr<QSVVppMfx>() };
@@ -3754,7 +3756,9 @@ RGY_ERR CQSVPipeline::InitParallelEncode(sInputParams *inputParam, const int max
         }
     }
     m_parallelEnc = std::make_unique<RGYParallelEnc>(m_pQSVLog);
-    if ((sts = m_parallelEnc->parallelRun(inputParam, m_pFileReader.get(), m_outputTimebase, inputParam->ctrl.parallelEnc.parallelCount > maxEncoders, m_pStatus.get())) != RGY_ERR_NONE) {
+    if ((sts = m_parallelEnc->parallelRun(inputParam, m_pFileReader.get(), m_outputTimebase, inputParam->ctrl.parallelEnc.parallelCount > maxEncoders, m_pStatus.get(),
+        // 子スレッドの場合はパフォーマンスカウンタは親と共有する
+        inputParam->ctrl.parallelEnc.isParent() ? m_pPerfMonitor.get() : nullptr)) != RGY_ERR_NONE) {
         if (inputParam->ctrl.parallelEnc.isChild()) {
             return sts; // 子スレッド側でエラーが起こった場合はエラー
         }
@@ -3843,7 +3847,12 @@ RGY_ERR CQSVPipeline::Init(sInputParams *pParams) {
 
     m_pPerfMonitor = std::make_unique<CPerfMonitor>();
 #if ENABLE_PERF_COUNTER
-    m_pPerfMonitor->runCounterThread();
+    if (pParams->ctrl.parallelEnc.isChild()) {
+        // 子スレッドの場合はパフォーマンスカウンタは親と共有するので初期化不要
+        m_pPerfMonitor->setCounter(pParams->ctrl.parallelEnc.sendData->perfCounter);
+    } else {
+        m_pPerfMonitor->runCounterThread();
+    }
 #endif
 
     if (const auto affinity = pParams->ctrl.threadParams.get(RGYThreadType::PROCESS).affinity; affinity.mode != RGYThreadAffinityMode::ALL) {
@@ -4854,9 +4863,11 @@ RGY_ERR CQSVPipeline::CheckCurrentVideoParam(TCHAR *str, mfxU32 bufSize) {
     PRINT_INFO(    _T("CPU Info       %s\n"), cpuInfo);
     if (Check_HWUsed(impl)) {
         PRINT_INFO(_T("GPU Info       %s\n"), gpu_info);
-        for (const auto& devName : m_devNames) {
-            if (devName != m_device->name()) {
-                PRINT_INFO(_T("               %s\n"), devName.c_str());
+        if (m_parallelEnc && m_parallelEnc->id() < 0) { // 並列エンコードの親スレッドの場合のみ
+            for (const auto& devName : m_devNames) {
+                if (devName != m_device->name()) {
+                    PRINT_INFO(_T("               %s\n"), devName.c_str());
+                }
             }
         }
 
@@ -4970,6 +4981,9 @@ RGY_ERR CQSVPipeline::CheckCurrentVideoParam(TCHAR *str, mfxU32 bufSize) {
     }
 
     if (m_pmfxENC) {
+        if (m_parallelEnc && m_parallelEnc->id() < 0) { // 並列エンコードの親スレッドの場合のみ
+            PRINT_INFO(_T("Parallel       %d\n"), m_parallelEnc->parallelCount());
+        }
         const auto enc_codec = codec_enc_to_rgy(outFrameInfo->videoPrm.mfx.CodecId);
         PRINT_INFO(_T("Target usage   %s\n"), TargetUsageToStr(outFrameInfo->videoPrm.mfx.TargetUsage));
         PRINT_INFO(_T("Encode Mode    %s\n"), EncmodeToStr(outFrameInfo->videoPrm.mfx.RateControlMethod));
