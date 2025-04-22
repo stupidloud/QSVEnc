@@ -59,7 +59,7 @@ RUN ldconfig && \
     ffmpeg -version
 
 # Install the latest QSVEnc release for Ubuntu
-RUN LATEST_URL=$(wget -qO- https://api.github.com/repos/rigaya/QSVEnc/releases/latest | grep -o 'https://github.com/rigaya/QSVEnc/releases/download/[^"]*Ubuntu20.04_amd64.deb') \
+RUN LATEST_URL=$(wget -qO- https://api.github.com/repos/rigaya/QSVEnc/releases/latest | grep -o 'https://github.com/rigaya/QSVEnc/releases/download/[^"]*Ubuntu22.04_amd64.deb') \
     && echo "Downloading latest QSVEnc from: $LATEST_URL" \
     && wget -O /tmp/qsvencc.deb "$LATEST_URL" \
     && apt-get update \
