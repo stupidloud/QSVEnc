@@ -1,5 +1,36 @@
 # QSVEnc Release Notes
 
+## 7.94
+
+- Fix framerate not set properly with --avhw/--avsw when reading mpeg2 ts files. 
+
+## 7.93
+
+- Updates for QSVEnc.auo (AviUtl/AviUtl2 plugin).
+
+## 7.92
+
+- Adjust default maximum GOP length for AV1 to be a multiple of gop-ref-dist.
+- Change several options to let the driver handle by default.
+
+## 7.91
+
+- Fix 10-bit processing in [--vpp-afs](./QSVEncC_Options.en.md#--vpp-afs-param1value1param2value2).
+- Improve precision of [--vpp-afs](./QSVEncC_Options.en.md#--vpp-afs-param1value1param2value2).
+- Add option to explicitly specify field pattern in [--vpp-deinterlace](./QSVEncC_Options.en.md#--vpp-deinterlace-string).
+- Fix incorrect frame rate when outputting in y4m format with raw output.
+- Fix processing sometimes stopping during raw output.
+- Add support for [--option-file](./QSVEncC_Options.en.md#--option-file-string) on Linux.
+- Fix handling when end is omitted in [--dynamic-rc](./QSVEncC_Options.en.md#--dynamic-rc-intintintintparam1value1param2value2).
+
+## 7.90
+
+- Add support for combining [--output-format](./QSVEncC_Options.en.md#--output-format-string) with ```-c raw```. ( #257 )
+  Now supports cases like ```-c raw --output-format nut```.
+- Fix black/white processing in 10-bit depth for [--vpp-edgelevel](./QSVEncC_Options.en.md#--vpp-edgelevel-param1value1param2value2).
+- Improve interlace detection when using [--avsw](./QSVEncC_Options.en.md#--avsw-string).
+
+
 ## 7.89
 
 - Fixed an issue with [--vpp-decimate](./QSVEncC_Options.en.md#--vpp-decimate-param1value1param2value2) where timestamp and duration of frames became incorrect due to improper handling of the final frame's timing.

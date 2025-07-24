@@ -61,6 +61,35 @@ enum {
     MFX_DEINTERLACE_AUTO_DOUBLE = 6,
 };
 
+enum class RGYMFX_DEINTERLACE_MODE : uint32_t {
+    AUTO = 0,
+    TFF = 0x01 << 16,
+    BFF = 0x02 << 16,
+    MASK = 0xffff0000
+};
+
+static RGYMFX_DEINTERLACE_MODE operator~(RGYMFX_DEINTERLACE_MODE a) {
+    return (RGYMFX_DEINTERLACE_MODE)(~(uint32_t)a);
+}
+
+static RGYMFX_DEINTERLACE_MODE operator|(RGYMFX_DEINTERLACE_MODE a, RGYMFX_DEINTERLACE_MODE b) {
+    return (RGYMFX_DEINTERLACE_MODE)((uint32_t)a | (uint32_t)b);
+}
+
+static RGYMFX_DEINTERLACE_MODE operator|=(RGYMFX_DEINTERLACE_MODE& a, RGYMFX_DEINTERLACE_MODE b) {
+    a = a | b;
+    return a;
+}
+
+static RGYMFX_DEINTERLACE_MODE operator&(RGYMFX_DEINTERLACE_MODE a, RGYMFX_DEINTERLACE_MODE b) {
+    return (RGYMFX_DEINTERLACE_MODE)((uint32_t)a & (uint32_t)b);
+}
+
+static RGYMFX_DEINTERLACE_MODE operator&=(RGYMFX_DEINTERLACE_MODE& a, RGYMFX_DEINTERLACE_MODE b) {
+    a = (RGYMFX_DEINTERLACE_MODE)((uint32_t)a & (uint32_t)b);
+    return a;
+}
+
 enum {
     MVC_DISABLED          = 0x0,
     MVC_ENABLED           = 0x1,
@@ -190,6 +219,7 @@ struct sVppParams {
     MFXVppColorspace colorspace;
 
     int deinterlace;      //set deinterlace mode
+    RGYMFX_DEINTERLACE_MODE deinterlaceMode;
     int telecinePattern;
 
     int imageStabilizer;  //MFX_IMAGESTAB_MODE_UPSCALE, MFX_IMAGESTAB_MODE_BOXED
@@ -266,7 +296,7 @@ struct sInputParams {
     RGY_CHROMAFMT outputCsp;
     int nIdrInterval;  // Idr frame interval to I frame, not supported
     int nGOPLength;    // (Max) GOP Length
-    bool bopenGOP;      // if false, GOP_CLOSED is set
+    bool openGOP;      // if false, GOP_CLOSED is set
     bool bforceGOPSettings; // if true, GOP_STRICT is set
     int GopRefDist;    // set sequential Bframes num + 1, 0 is auto
     int nRef;          // set ref frames num.
@@ -288,7 +318,7 @@ struct sInputParams {
     bool       bCAVLC;  //CAVLC
     int        nInterPred;
     int        nIntraPred;
-    bool       bRDO;
+    std::optional<bool> bRDO;
     int        nMVPrecision;
     std::pair<int,int> MVSearchWindow;
 
@@ -350,8 +380,8 @@ struct sInputParams {
 
     int        hevc_ctu;
     int        hevc_sao;
-    int        hevc_tskip;
     int        hevc_tier;
+    std::optional<bool> hevc_tskip;
     std::optional<bool> hevc_gpb;
 
     QSVAV1Params av1;
@@ -518,8 +548,14 @@ const CX_DESC list_interlaced_mfx[] = {
 const CX_DESC list_deinterlace[] = {
     { _T("none"),      MFX_DEINTERLACE_NONE        },
     { _T("normal"),    MFX_DEINTERLACE_NORMAL      },
+    { _T("normal_tff"), MFX_DEINTERLACE_NORMAL | (int)RGYMFX_DEINTERLACE_MODE::TFF },
+    { _T("normal_bff"), MFX_DEINTERLACE_NORMAL | (int)RGYMFX_DEINTERLACE_MODE::BFF },
     { _T("it"),        MFX_DEINTERLACE_IT          },
+    { _T("it_tff"),    MFX_DEINTERLACE_IT | (int)RGYMFX_DEINTERLACE_MODE::TFF },
+    { _T("it_bff"),    MFX_DEINTERLACE_IT | (int)RGYMFX_DEINTERLACE_MODE::BFF },
     { _T("bob"),       MFX_DEINTERLACE_BOB         },
+    { _T("bob_tff"),   MFX_DEINTERLACE_BOB | (int)RGYMFX_DEINTERLACE_MODE::TFF },
+    { _T("bob_bff"),   MFX_DEINTERLACE_BOB | (int)RGYMFX_DEINTERLACE_MODE::BFF },
 #if ENABLE_ADVANCED_DEINTERLACE
     { _T("it-manual"), MFX_DEINTERLACE_IT_MANUAL   },
     { _T("auto"),      MFX_DEINTERLACE_AUTO_SINGLE },
@@ -893,8 +929,8 @@ const int QSV_DEFAULT_QPB = 27;
 const int QSV_DEFAULT_BITRATE = 6000;
 const int QSV_DEFAULT_MAX_BITRATE = 15000;
 const int QSV_GOP_REF_DIST_AUTO = 0;
-const int QSV_DEFAULT_H264_GOP_REF_DIST = 4;
-const int QSV_DEFAULT_HEVC_GOP_REF_DIST = 4;
+const int QSV_DEFAULT_H264_GOP_REF_DIST = 4; // 3+1
+const int QSV_DEFAULT_HEVC_GOP_REF_DIST = 4; // 3+1
 const int QSV_DEFAULT_AV1_GOP_REF_DIST = 8;
 const int QSV_DEFAULT_QUALITY = MFX_TARGETUSAGE_BALANCED;
 const int QSV_DEFAULT_INPUT_BUF_SW = 1;

@@ -12,6 +12,8 @@
     - [example of pipe usage](#example-of-pipe-usage)
     - [pipe usage from ffmpeg](#pipe-usage-from-ffmpeg)
     - [Passing video \& audio from ffmpeg](#passing-video--audio-from-ffmpeg)
+    - [Passing filtered results \& audio to ffmpeg](#passing-filtered-results--audio-to-ffmpeg)
+    - [Copy all tracks and metadata during video encode](#copy-all-tracks-and-metadata-during-video-encode)
 - [Option format](#option-format)
 - [Display options](#display-options)
   - [-h, -? --help](#-h-----help)
@@ -315,9 +317,21 @@ ffmpeg -y -i "<inputfile>" -an -pix_fmt yuv420p -f yuv4mpegpipe - | QSVEncC --y4
 ```
 
 #### Passing video & audio from ffmpeg
---> use "nut" to pass both video & audio thorough pipe.
+--> use "nut" to pass both video & audio through pipe.
 ```Batchfile
-ffmpeg -y -i "<input>" <options for ffmpeg> -codec:a copy -codec:v rawvideo -pix_fmt yuv420p -f nut - | QSVEncC --avsw -i - --audio-codec aac -o "<outfilename.mp4>"
+ffmpeg -y -i "<input>" <options for ffmpeg> -codec:a copy -codec:v rawvideo -pix_fmt yuv420p -f nut - | NVEncC --avsw -i - --audio-codec aac -o "<outfilename.mp4>"
+```
+
+#### Passing filtered results & audio to ffmpeg
+--> use "nut" to pass both video & audio through pipe.
+```Batchfile
+NVEncC -i "<input>" <filter options> --audio-copy -c raw --output-format nut -o - | ffmpeg -y -f nut -i - <encode options for ffmpeg> -o output.mp4
+```
+
+#### Copy all tracks and metadata during video encode
+
+```Batchfile
+NVEncC -i "<input>" <encode options> --colormatrix auto --transfer auto --colorprim auto --chromaloc auto --max-cll copy --master-display copy --dhdr10-info copy --dolby-vision-rpu copy --video-metadata copy --audio-copy --audio-metadata copy  --sub-copy --sub-metadata copy --data-copy --attachment-copy --chapter-copy -o output.mkv
 ```
 
 ## Option format
@@ -703,7 +717,7 @@ best, higher, high, balanced(default), fast, faster, fastest
 ```
 
 ### --dynamic-rc &lt;int&gt;:&lt;int&gt;:&lt;int&gt;&lt;int&gt;,&lt;param1&gt;=&lt;value1&gt;[,&lt;param2&gt;=&lt;value2&gt;],...  
-Change the rate control mode and rate control params within the specified range of output frames.
+Change the rate control mode and rate control params within the specified range of input frames.
 
 - **required parameters**
   It is required to specify one of the params below.  
@@ -2222,6 +2236,12 @@ Activate GPU deinterlacer.
   - normal ... standard 60i → 30p interleave cancellation.
   - it    ... inverse telecine
   - bob ... 60i → 60p interleaved.
+
+  It is possible to set field pattern explicitly by following settings.
+
+  - normal_tff, normal_bff
+  - bob_tff, bob_bff
+  - it_tff, it_bff
   
 ### --vpp-decomb [&lt;param1&gt;=&lt;value1&gt;[,&lt;param2&gt;=&lt;value2&gt;]...]  
 Decomb deinterlaer.

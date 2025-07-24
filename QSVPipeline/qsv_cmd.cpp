@@ -651,7 +651,8 @@ int parse_one_vppmfx_option(const TCHAR *option_name, const TCHAR *strInput[], i
             return 1;
         }
         vppmfx->bEnable = true;
-        vppmfx->deinterlace = value;
+        vppmfx->deinterlace = (uint32_t)value & (~(uint32_t)RGYMFX_DEINTERLACE_MODE::MASK); // 下位16bitはMFXのモード
+        vppmfx->deinterlaceMode = (RGYMFX_DEINTERLACE_MODE)((uint32_t)value & (uint32_t)RGYMFX_DEINTERLACE_MODE::MASK); // 上位16bitはRGYのモード
         if (vppmfx->deinterlace == MFX_DEINTERLACE_IT_MANUAL) {
             i++;
             if (PARSE_ERROR_FLAG == (value = get_value_from_chr(list_telecine_patterns, strInput[i]))) {
@@ -888,11 +889,15 @@ int ParseOneOption(const TCHAR *option_name, const TCHAR* strInput[], int& i, in
         return 0;
     }
     if (0 == _tcscmp(option_name, _T("open-gop"))) {
-        pParams->bopenGOP = true;
+        pParams->openGOP = true;
         return 0;
     }
     if (0 == _tcscmp(option_name, _T("no-open-gop"))) {
-        pParams->bopenGOP = false;
+        pParams->openGOP = false;
+        return 0;
+    }
+    if (0 == _tcscmp(option_name, _T("closed-gop"))) {
+        pParams->openGOP = false;
         return 0;
     }
     if (0 == _tcscmp(option_name, _T("strict-gop"))) {
@@ -1390,6 +1395,10 @@ int ParseOneOption(const TCHAR *option_name, const TCHAR* strInput[], int& i, in
         pParams->bRDO = true;
         return 0;
     }
+    if (0 == _tcscmp(option_name, _T("no-rdo"))) {
+        pParams->bRDO = false;
+        return 0;
+    }
     if (0 == _tcscmp(option_name, _T("tune"))) {
         i++;
         auto values = split(strInput[i], _T(","), true);
@@ -1524,11 +1533,11 @@ int ParseOneOption(const TCHAR *option_name, const TCHAR* strInput[], int& i, in
         return 0;
     }
     if (0 == _tcscmp(option_name, _T("no-tskip"))) {
-        pParams->hevc_tskip = MFX_CODINGOPTION_OFF;
+        pParams->hevc_tskip = false;
         return 0;
     }
     if (0 == _tcscmp(option_name, _T("tskip"))) {
-        pParams->hevc_tskip = MFX_CODINGOPTION_ON;
+        pParams->hevc_tskip = true;
         return 0;
     }
     if (0 == _tcscmp(option_name, _T("hevc-gpb"))) {
@@ -2116,7 +2125,10 @@ tstring gen_cmd(const sVppParams *param, const sVppParams *defaultPrm, bool save
     std::basic_stringstream<TCHAR> tmp;
     std::basic_stringstream<TCHAR> cmd;
 
-    OPT_LST(_T("--vpp-deinterlace"), deinterlace, list_deinterlace);
+    if (param->deinterlace != defaultPrm->deinterlace || param->deinterlaceMode != defaultPrm->deinterlaceMode) {
+        auto deinterlace = param->deinterlace | (uint32_t)param->deinterlaceMode;
+        cmd << _T(" --vpp-deinterlace ") << get_chr_from_value(list_deinterlace, deinterlace);
+    }
     OPT_BOOL_VAL(_T("--vpp-detail-enhance"), _T("--no-vpp-detail-enhance"), detail.enable, detail.strength);
 
     if (param->denoise != defaultPrm->denoise) {
@@ -2413,7 +2425,7 @@ tstring gen_cmd(const sInputParams *pParams, bool save_disabled_prm) {
         OPT_NUM(_T("--gop-ref-dist"), GopRefDist);
     }
     OPT_BOOL_OPT(_T("--b-pyramid"), _T("--no-b-pyramid"), bBPyramid);
-    OPT_BOOL(_T("--open-gop"), _T("--no-open-gop"), bopenGOP);
+    OPT_BOOL(_T("--open-gop"), _T("--no-open-gop"), openGOP);
     OPT_BOOL(_T("--strict-gop"), _T(""), bforceGOPSettings);
     OPT_BOOL_OPT(_T("--i-adapt"), _T("--no-i-adapt"), bAdaptiveI);
     OPT_BOOL_OPT(_T("--b-adapt"), _T("--no-b-adapt"), bAdaptiveB);
@@ -2462,7 +2474,7 @@ tstring gen_cmd(const sInputParams *pParams, bool save_disabled_prm) {
     if (save_disabled_prm || pParams->codec == RGY_CODEC_HEVC) {
         OPT_LST(_T("--ctu"), hevc_ctu, list_hevc_ctu);
         OPT_LST(_T("--sao"), hevc_sao, list_hevc_sao);
-        OPT_BOOL(_T("--tskip"), _T("--no-tskip"), hevc_tskip);
+        OPT_BOOL_OPT(_T("--tskip"), _T("--no-tskip"), hevc_tskip);
         OPT_BOOL_OPT(_T("--hevc-gpb"), _T("--no-hevc-gpb"), hevc_gpb);
     }
     if (save_disabled_prm || pParams->codec == RGY_CODEC_AV1) {
@@ -2477,7 +2489,7 @@ tstring gen_cmd(const sInputParams *pParams, bool save_disabled_prm) {
         case 0:
         default: break;
         }
-        OPT_BOOL(_T("--rdo"), _T(""), bRDO);
+        OPT_BOOL_OPT(_T("--rdo"), _T("--no-rdo"), bRDO);
         OPT_BOOL(_T("--cavlc"), _T(""), bCAVLC);
         OPT_BOOL(_T("--no-deblock"), _T(""), bNoDeblock);
     }

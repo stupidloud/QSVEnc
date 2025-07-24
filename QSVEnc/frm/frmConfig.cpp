@@ -1783,7 +1783,7 @@ System::Void frmConfig::ConfToFrm(CONF_GUIEX *cnf) {
     SetCXIndex(fcgCXAspectRatio, (prm_qsv.nPAR[0] < 0));
     SetNUValue(fcgNUAspectRatioX, abs(prm_qsv.nPAR[0]));
     SetNUValue(fcgNUAspectRatioY, abs(prm_qsv.nPAR[1]));
-    fcgCBOpenGOP->Checked        = prm_qsv.bopenGOP;
+    fcgCBOpenGOP->Checked        = prm_qsv.openGOP;
     SetCXIndex(fcgCXOutputCsp,    get_cx_index(list_output_csp, prm_qsv.outputCsp));
     SetCXIndex(fcgCXBitDepth,     get_bit_depth_idx(prm_qsv.outputDepth));
 
@@ -1796,7 +1796,7 @@ System::Void frmConfig::ConfToFrm(CONF_GUIEX *cnf) {
     SetNUValue(fcgNUQPMax,         prm_qsv.qpMax.qpI);
 
     fcgCBCABAC->Checked          = !prm_qsv.bCAVLC;
-    fcgCBRDO->Checked            = prm_qsv.bRDO;
+    fcgCBRDO->Checked            = prm_qsv.bRDO.value_or(false);
     SetNUValue(fcgNUMVSearchWindow, prm_qsv.MVSearchWindow.first);
     SetCXIndex(fcgCXMVPred,      get_cx_index(list_mv_presicion,    prm_qsv.nMVPrecision));
     SetCXIndex(fcgCXInterPred,   get_cx_index(list_pred_block_size, prm_qsv.nInterPred));
@@ -1944,7 +1944,7 @@ System::Void frmConfig::ConfToFrm(CONF_GUIEX *cnf) {
         fcgCBVppAfsDrop->Checked = prm_qsv.vpp.afs.drop != 0;
         fcgCBVppAfsSmooth->Checked = prm_qsv.vpp.afs.smooth != 0;
         fcgCBVppAfs24fps->Checked = prm_qsv.vpp.afs.force24 != 0;
-        fcgCBVppAfsTune->Checked = prm_qsv.vpp.afs.tune != 0;
+        fcgCBVppAfsTune->Checked = prm_qsv.vpp.afs.tune != AFS_TUNE_MODE_NONE;
         SetCXIndex(fcgCXVppNnediNsize, get_cx_index(list_vpp_nnedi_nsize, prm_qsv.vpp.nnedi.nsize));
         SetCXIndex(fcgCXVppNnediNns, get_cx_index(list_vpp_nnedi_nns, prm_qsv.vpp.nnedi.nns));
         SetCXIndex(fcgCXVppNnediPrec, get_cx_index(list_vpp_fp_prec, prm_qsv.vpp.nnedi.precision));
@@ -2045,7 +2045,7 @@ System::String^ frmConfig::FrmToConf(CONF_GUIEX *cnf) {
     prm_qsv.rcParam.maxBitrate     = (int)fcgNUMaxkbps->Value;
     prm_qsv.nLookaheadDepth        = (int)fcgNULookaheadDepth->Value;
     prm_qsv.nRef                   = (int)fcgNURef->Value;
-    prm_qsv.bopenGOP               = fcgCBOpenGOP->Checked;
+    prm_qsv.openGOP                = fcgCBOpenGOP->Checked;
     prm_qsv.nGOPLength             = (int)fcgNUGopLength->Value;
     prm_qsv.rcParam.qp.qpI         = (int)fcgNUQPI->Value;
     prm_qsv.rcParam.qp.qpP         = (int)fcgNUQPP->Value;
@@ -2214,7 +2214,7 @@ System::String^ frmConfig::FrmToConf(CONF_GUIEX *cnf) {
     prm_qsv.vpp.afs.drop               = fcgCBVppAfsDrop->Checked;
     prm_qsv.vpp.afs.smooth             = fcgCBVppAfsSmooth->Checked;
     prm_qsv.vpp.afs.force24            = fcgCBVppAfs24fps->Checked;
-    prm_qsv.vpp.afs.tune               = fcgCBVppAfsTune->Checked;
+    prm_qsv.vpp.afs.tune               = fcgCBVppAfsTune->Checked ? AFS_TUNE_MODE_FINAL : AFS_TUNE_MODE_NONE;
 
     prm_qsv.vpp.nnedi.enable           = (fcgCXVppDeinterlace->SelectedIndex == get_cx_index(list_deinterlace_gui, L"nnedi"));
     prm_qsv.vpp.nnedi.nsize            = (VppNnediNSize)list_vpp_nnedi_nsize[fcgCXVppNnediNsize->SelectedIndex].value;

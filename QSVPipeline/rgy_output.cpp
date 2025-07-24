@@ -36,8 +36,6 @@
 #include <smmintrin.h>
 #endif
 
-#if ENCODER_QSV || ENCODER_NVENC
-
 static RGY_ERR WriteY4MHeader(FILE *fp, const VideoInfo *info, const RGY_CSP csp) {
     char buffer[256] = { 0 };
     char *ptr = buffer;
@@ -61,8 +59,6 @@ static RGY_ERR WriteY4MHeader(FILE *fp, const VideoInfo *info, const RGY_CSP csp
     len += sprintf_s(ptr+len, sizeof(buffer)-len, "C%s\n", cspHeader);
     return (len == fwrite(buffer, 1, len, fp)) ? RGY_ERR_NONE : RGY_ERR_UNDEFINED_BEHAVIOR;
 }
-
-#endif //#if ENCODER_QSV || ENCODER_NVENC
 
 #define WRITE_CHECK(writtenBytes, expected) { \
     if (writtenBytes != expected) { \
@@ -942,8 +938,6 @@ RGY_ERR RGYOutputRaw::WriteNextFrame(RGYFrame *pSurface) {
     return RGY_ERR_UNSUPPORTED;
 }
 
-#if ENCODER_QSV || ENCODER_NVENC
-
 RGYOutFrame::RGYOutFrame() : m_bY4m(true) {
     m_strWriterName = _T("yuv writer");
     m_OutType = OUT_TYPE_SURFACE;
@@ -1137,8 +1131,6 @@ RGY_ERR RGYOutFrame::WriteNextFrame(RGYFrame *pSurface) {
     return RGY_ERR_NONE;
 }
 
-#endif //#if ENCODER_QSV || ENCODER_NVENC
-
 #include "rgy_input_sm.h"
 #include "rgy_input_avcodec.h"
 #include "rgy_output_avcodec.h"
@@ -1256,11 +1248,11 @@ RGY_ERR initWriters(
     bool stdoutUsed = false;
 #if ENABLE_AVSW_READER
     vector<int> streamTrackUsed; //使用した音声/字幕のトラックIDを保存する
-    bool useH264ESOutput =
-        ((common->muxOutputFormat.length() > 0 && 0 == _tcscmp(common->muxOutputFormat.c_str(), _T("raw")))) //--formatにrawが指定されている
+    bool useESOutput = !(common->muxOutputFormat.length() > 0 && 0 != _tcscmp(common->muxOutputFormat.c_str(), _T("raw")))
+        && (((common->muxOutputFormat.length() > 0 && 0 == _tcscmp(common->muxOutputFormat.c_str(), _T("raw")))) //--formatにrawが指定されている
         || std::filesystem::path(common->outputFilename).extension().empty() //拡張子がない
-        || check_ext(common->outputFilename.c_str(), { ".m2v", ".264", ".h264", ".avc", ".avc1", ".x264", ".265", ".h265", ".hevc", ".vp9", ".av1", ".raw" }); //特定の拡張子
-    if (!useH264ESOutput && outputVideoInfo.codec != RGY_CODEC_RAW) {
+        || check_ext(common->outputFilename.c_str(), { ".m2v", ".264", ".h264", ".avc", ".avc1", ".x264", ".265", ".h265", ".hevc", ".vp9", ".av1", ".raw" })); //特定の拡張子
+    if (!useESOutput) {
         common->AVMuxTarget |= RGY_MUX_VIDEO;
     }
 
@@ -1304,6 +1296,7 @@ RGY_ERR initWriters(
         writerPrm.threadAudio             = ctrl->threadAudio;
         writerPrm.threadParamOutput       = ctrl->threadParams.get(RGYThreadType::OUTPUT);
         writerPrm.threadParamAudio        = ctrl->threadParams.get(RGYThreadType::AUDIO);
+        writerPrm.threadParamCsp          = ctrl->threadParams.get(RGYThreadType::CSP);
         writerPrm.bufSizeMB               = ctrl->outputBufSizeMB;
         writerPrm.audioResampler          = common->audioResampler;
         writerPrm.audioIgnoreDecodeError  = common->audioIgnoreDecodeError;
@@ -1330,6 +1323,8 @@ RGY_ERR initWriters(
         writerPrm.debugDirectAV1Out       = common->debugDirectAV1Out;
         writerPrm.HEVCAlphaChannel        = HEVCAlphaChannel;
         writerPrm.HEVCAlphaChannelMode    = HEVCAlphaChannelMode;
+        writerPrm.threadCsp               = ctrl->threadCsp;
+        writerPrm.simdCsp                 = ctrl->simdCsp;
         writerPrm.muxOpt                  = common->muxOpt;
         writerPrm.poolPkt                 = poolPkt;
         writerPrm.poolFrame               = poolFrame;
@@ -1609,7 +1604,6 @@ RGY_ERR initWriters(
         return RGY_ERR_UNKNOWN;
     } else {
 #endif //ENABLE_AVSW_READER
-#if ENCODER_QSV || ENCODER_NVENC
         if (outputVideoInfo.codec == RGY_CODEC_RAW) {
             pFileWriter = std::make_shared<RGYOutFrame>();
             YUVWriterParam param;
@@ -1621,9 +1615,7 @@ RGY_ERR initWriters(
             }
             stdoutUsed = pFileWriter->outputStdout();
             log->write(RGY_LOG_DEBUG, RGY_LOGT_OUT, _T("Output: Initialized yuv frame writer%s.\n"), (stdoutUsed) ? _T("using stdout") : _T(""));
-        } else
-#endif
-        {
+        } else {
             pFileWriter = std::make_shared<RGYOutputRaw>();
             RGYOutputRawPrm rawPrm;
             rawPrm.bufSizeMB = ctrl->outputBufSizeMB;
