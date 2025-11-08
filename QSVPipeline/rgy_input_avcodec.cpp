@@ -42,6 +42,7 @@
 #include "rgy_avlog.h"
 #include "rgy_filesystem.h"
 #include "rgy_language.h"
+#include "rgy_bitstream_aac.h"
 
 
 #if ENABLE_AVSW_READER
@@ -898,7 +899,7 @@ RGY_ERR RGYInputAvcodec::getFirstFramePosAndFrameRate(const sTrim *pTrimList, in
         } else if (nFramesToCheck > 0) {
             frameDurationList.reserve(nFramesToCheck);
             int rff_frames = 0;
-
+            bool corrupt_block = false;
             for (int i = 0; i < nFramesToCheck; i++) {
 #if _DEBUG && 0
                 fprintf(stderr, "%3d: pts:%lld, poc:%3d, duration:%5d, duration2:%5d, repeat:%d\n",
@@ -914,7 +915,15 @@ RGY_ERR RGYInputAvcodec::getFirstFramePosAndFrameRate(const sTrim *pTrimList, in
                         duration = (int)(duration * 2 / (double)(repeat_pict + 1) + 0.5);
                         rff_frames++;
                     }
-                    frameDurationList.push_back(duration);
+                    const auto flags = m_Demux.frames.list(i).flags;
+                    const bool corrupt = (flags & AV_PKT_FLAG_CORRUPT) != 0;
+                    const bool key     = (flags & AV_PKT_FLAG_KEY) != 0;
+                    if (corrupt || key) { // 壊れている場合やキーフレーム時はフラグを更新
+                        corrupt_block = corrupt;
+                    }
+                    if (!corrupt_block) {
+                        frameDurationList.push_back(duration);
+                    }
                 }
             }
             bPulldown = (bDetectpulldown && ((rff_frames + 1/*たまたま切り捨てられることのないように*/) / (double)nFramesToCheck > 0.45));
@@ -1630,7 +1639,7 @@ RGY_ERR RGYInputAvcodec::Init(const TCHAR *strFileName, VideoInfo *inputInfo, co
     } else {
         m_readerName = _T("avsw");
     }
-    m_seek = std::make_pair(0.0f, 0.0f);
+    m_seek = std::pair<float, float>(0.0f, 0.0f);
     m_Demux.video.readVideo = input_prm->readVideo;
     m_Demux.video.hevcbsf = input_prm->hevcbsf;
     m_Demux.thread.queueInfo = input_prm->queueInfo;
@@ -2237,33 +2246,7 @@ RGY_ERR RGYInputAvcodec::Init(const TCHAR *strFileName, VideoInfo *inputInfo, co
         } else {
             m_inputVideoInfo.picstruct = RGY_PICSTRUCT_AUTO; // インタレ指定だが、インタレが検出されていないときはauto
         }
-
-        if (m_Demux.video.HWDecodeDeviceId.size() > 0) {
-            tstring mes = strsprintf(_T("av" DECODER_NAME ": %s, %dx%d, %d/%d fps"),
-                CodecToStr(m_inputVideoInfo.codec).c_str(),
-                m_inputVideoInfo.srcWidth, m_inputVideoInfo.srcHeight, m_inputVideoInfo.fpsN, m_inputVideoInfo.fpsD);
-            if (m_seek.first > 0.0f || m_seek.second > 0.0f) {
-                mes += _T("\n         ");
-                if (m_seek.first > 0.0f) {
-                    mes += strsprintf(_T("seek: %s"), print_time(m_seek.first).c_str());
-                }
-                if (m_seek.second > 0.0f) {
-                    if (m_seek.first > 0.0f) {
-                        mes += _T(", ");
-                    }
-                    mes += strsprintf(_T("seekto: %s"), print_time(m_seek.second).c_str());
-                }
-            }
-            AddMessage(RGY_LOG_DEBUG, mes);
-            m_inputInfo += mes;
-        } else {
-            CreateInputInfo((tstring(_T("avsw: ")) + char_to_tstring(m_Demux.video.codecCtxDecode->codec->name)).c_str(),
-                RGY_CSP_NAMES[m_convert->getFunc()->csp_from], RGY_CSP_NAMES[m_convert->getFunc()->csp_to], get_simd_str(m_convert->getFunc()->simd), &m_inputVideoInfo);
-            if (input_prm->seekSec > 0.0f) {
-                m_inputInfo += strsprintf(_T("\n         seek: %s"), print_time(input_prm->seekSec).c_str());
-            }
-            AddMessage(RGY_LOG_DEBUG, m_inputInfo);
-        }
+        setInputInfo();
         if (m_Demux.video.stream) {
             AddMessage(RGY_LOG_DEBUG, _T("streamFirstKeyPts: %lld\n"), (long long int)m_Demux.video.streamFirstKeyPts);
             AddMessage(RGY_LOG_DEBUG, m_inputVideoInfo.vui.print_all());
@@ -2319,6 +2302,33 @@ RGY_ERR RGYInputAvcodec::Init(const TCHAR *strFileName, VideoInfo *inputInfo, co
     return RGY_ERR_NONE;
 }
 #pragma warning(pop)
+
+void RGYInputAvcodec::setInputInfo() {
+    if (m_Demux.video.HWDecodeDeviceId.size() > 0) {
+        tstring mes = strsprintf(_T("av" DECODER_NAME ": %s, %dx%d, %d/%d fps"),
+            CodecToStr(m_inputVideoInfo.codec).c_str(),
+            m_inputVideoInfo.srcWidth, m_inputVideoInfo.srcHeight, m_inputVideoInfo.fpsN, m_inputVideoInfo.fpsD);
+        m_inputInfo = mes;
+    } else {
+        CreateInputInfo((tstring(_T("avsw: ")) + char_to_tstring(m_Demux.video.codecCtxDecode->codec->name)).c_str(),
+            RGY_CSP_NAMES[m_convert->getFunc()->csp_from], RGY_CSP_NAMES[m_convert->getFunc()->csp_to], get_simd_str(m_convert->getFunc()->simd), &m_inputVideoInfo);
+    }
+    tstring mes;
+    if (m_seek.first > 0.0f || m_seek.second > 0.0f) {
+        mes += _T("\n         ");
+        if (m_seek.first > 0.0f) {
+            mes += strsprintf(_T("seek: %s"), print_time(m_seek.first).c_str());
+        }
+        if (m_seek.second > 0.0f) {
+            if (m_seek.first > 0.0f) {
+                mes += _T(", ");
+            }
+            mes += strsprintf(_T("seekto: %s"), print_time(m_seek.second).c_str());
+        }
+    }
+    m_inputInfo += mes;
+    AddMessage(RGY_LOG_DEBUG, m_inputInfo);
+}
 
 const pixfmtInfo *RGYInputAvcodec::getPixfmtInfo(const AVPixelFormat pix_fmt) {
     static const pixfmtInfo pixfmtDataList[] = {
@@ -2396,8 +2406,8 @@ const pixfmtInfo *RGYInputAvcodec::getPixfmtInfo(const AVPixelFormat pix_fmt) {
 
 RGY_ERR RGYInputAvcodec::initSWVideoDecoder(const tstring& avswDecoder) {
     m_inputVideoInfo.codec = RGY_CODEC_UNKNOWN; //hwデコードをオフにする
+    const bool disableHWDecode = !m_Demux.video.HWDecodeDeviceId.empty();
     m_Demux.video.HWDecodeDeviceId.clear();
-    m_readerName = _T("avsw");
 
     //close bitstreamfilter
     //if (m_Demux.video.bsfcCtx) {
@@ -2523,7 +2533,10 @@ RGY_ERR RGYInputAvcodec::initSWVideoDecoder(const tstring& avswDecoder) {
         AddMessage(RGY_LOG_ERROR, _T("Failed to allocate frame for decoder.\n"));
         return RGY_ERR_NULL_PTR;
     }
-
+    m_readerName = _T("avsw");
+    if (disableHWDecode) {
+        setInputInfo(); // 表示を切り替え
+    }
     return RGY_ERR_NONE;
 }
 
@@ -3058,7 +3071,7 @@ RGY_ERR RGYInputAvcodec::GetNextBitstream(RGYBitstream *pBitstream) {
 RGY_ERR RGYInputAvcodec::GetNextBitstreamNoDelete(RGYBitstream *pBitstream, int idx) {
     if (!m_Demux.thread.thInput.joinable() //入力スレッドがなければ、自分で読み込む
         && m_Demux.qVideoPkt.get_keep_length() > 0) { //keep_length == 0なら読み込みは終了していて、これ以上読み込む必要はない
-        while (m_Demux.qVideoPkt.size() < idx) {
+        while ((int)m_Demux.qVideoPkt.size() < idx) {
             auto [ret, pkt] = getSample();
             if (ret == 0) {
                 m_Demux.qVideoPkt.push(pkt.release());

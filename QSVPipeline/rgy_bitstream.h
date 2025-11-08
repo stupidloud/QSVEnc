@@ -74,6 +74,12 @@ enum : uint8_t {
     NALU_H264_SUBSPS   = 15,
 
     NALU_HEVC_UNDEF    = 0,
+    NALU_HEVC_SLICE_IDR_W_RADL = 19,
+    NALU_HEVC_SLICE_IDR_N_LP = 20,
+    NALU_HEVC_SLICE_BLA_W_LP = 16,
+    NALU_HEVC_SLICE_BLA_W_RADL = 17,
+    NALU_HEVC_SLICE_BLA_N_LP = 18,
+    NALU_HEVC_SLICE_CRA = 21,
     NALU_HEVC_VPS      = 32,
     NALU_HEVC_SPS      = 33,
     NALU_HEVC_PPS      = 34,
@@ -350,28 +356,6 @@ protected:
     int64_t m_count;
 
     std::unordered_map<int64_t, std::vector<uint8_t>> m_rpus;
-};
-
-struct RGYAACHeader {
-    static const int HEADER_BYTE_SIZE = 7;
-    bool id;
-    bool protection;
-    int profile;     // 00 ... main, 01 ... lc, 10 ... ssr
-    int samplerate;
-    bool private_bit;
-    uint32_t channel;
-    bool original;
-    bool home;
-    bool copyright;
-    bool copyright_start;
-    uint32_t aac_frame_length; // AACヘッダを含む
-    int adts_buffer_fullness;
-    int no_raw_data_blocks_in_frame;
-
-    static bool is_adts_sync(const uint16_t *ptr);
-    static bool is_valid(const uint8_t *buf, const size_t size);
-    int parse(const uint8_t *buf, const size_t size);
-    int sampleRateIdxToRate(const uint32_t idx);
 };
 
 class RGYBitWriter {

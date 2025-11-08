@@ -483,7 +483,12 @@ int parse_one_vpp_option(const TCHAR *option_name, const TCHAR *strInput[], int 
             for (size_t ielem = 0; ielem < _countof(paramsResizeNVEnc); ielem++) {
                 paramListResizeNVEnc.push_back(paramsResizeNVEnc[ielem]);
             }
+            std::vector<std::string> paramListResizeQSVEnc;
+            for (size_t ielem = 0; ielem < _countof(paramsResizeQSVEnc); ielem++) {
+                paramListResizeQSVEnc.push_back(paramsResizeQSVEnc[ielem]);
+            }
             std::vector<std::string> paramList = paramListResizeNVEnc;
+            vector_cat(paramList, paramListResizeQSVEnc);
             for (size_t ielem = 0; ielem < _countof(paramsResizeLibPlacebo); ielem++) {
                 paramList.push_back(paramsResizeLibPlacebo[ielem]);
             }
@@ -560,6 +565,11 @@ int parse_one_vpp_option(const TCHAR *option_name, const TCHAR *strInput[], int 
                     if (ENCODER_NVENC && std::find_if(paramListResizeNVEnc.begin(), paramListResizeNVEnc.end(), [param_arg](const std::string& str) {
                         return param_arg == char_to_tstring(str);
                         }) != paramListResizeNVEnc.end()) {
+                        continue;
+                    }
+                    if (ENCODER_QSV && std::find_if(paramListResizeQSVEnc.begin(), paramListResizeQSVEnc.end(), [param_arg](const std::string& str) {
+                        return param_arg == char_to_tstring(str);
+                        }) != paramListResizeQSVEnc.end()) {
                         continue;
                     }
                     print_cmd_error_unknown_opt_param(option_name, param_arg, paramList);
@@ -4959,6 +4969,11 @@ int parse_one_common_option(const TCHAR *option_name, const TCHAR *strInput[], i
         common->videoCodecTag = tchar_to_string(strInput[i]);
         return 0;
     }
+    if (IS_OPTION("avcodec-prms")) {
+        i++;
+        common->avcodec_videnc_prms = strInput[i];
+        return 0;
+    }
     if (IS_OPTION("video-metadata")) {
         i++;
         common->videoMetadata.push_back(strInput[i]);
@@ -6677,6 +6692,10 @@ int parse_one_ctrl_option(const TCHAR *option_name, const TCHAR *strInput[], int
         ctrl->lowLatency = true;
         return 0;
     }
+    if (IS_OPTION("fallback-bitdepth")) {
+        ctrl->fallbackBitdepth = true;
+        return 0;
+    }
     if (IS_OPTION("input-thread") || IS_OPTION("thread-input")) {
         i++;
         int value = 0;
@@ -7174,6 +7193,23 @@ int parse_one_ctrl_option(const TCHAR *option_name, const TCHAR *strInput[], int
                     }
                     continue;
                 }
+                if (param_arg == _T("chunk-handles")) {
+                    auto handles = split(param_val, _T(":"));
+                    for (const auto& handle : handles) {
+                        try {
+                            auto handle_frame_id = split(handle, _T("#"));
+                            if (handle_frame_id.size() != 2) {
+                                print_cmd_error_invalid_value(tstring(option_name) + _T(" ") + param_arg + _T("="), param_val);
+                                return 1;
+                            }
+                            ctrl->parallelEnc.chunkPipeHandles.push_back(RGYParamParallelEncPipeHandle(std::stoull(handle_frame_id[0]), std::stoi(handle_frame_id[1])));
+                        } catch (...) {
+                            print_cmd_error_invalid_value(tstring(option_name) + _T(" ") + param_arg + _T("="), param_val);
+                            return 1;
+                        }
+                    }
+                    continue;
+                }
                 if (param_arg == _T("cache")) {
                     int value = 0;
                     if (get_list_value(list_parallel_enc_cache, param_val.c_str(), &value)) {
@@ -7307,7 +7343,7 @@ tstring gen_cmd(const RGYParamVpp *param, const RGYParamVpp *defaultPrm, bool sa
         cmd << _T(" --vpp-order ") << tmp.str().substr(1);
     }
 
-    if (!isNvvfxResizeFiter(param->resize_algo) && !isNgxResizeFiter(param->resize_algo)) {
+    if (!isNvvfxResizeFiter(param->resize_algo) && !isNgxResizeFiter(param->resize_algo) && !isQSVMFXResizeFiter(param->resize_algo)) {
         if (isLibplaceboResizeFiter(param->resize_algo)) {
             OPT_LST(_T("--vpp-resize"), resize_algo, list_vpp_resize);
             if (param->resize_libplacebo.radius != defaultPrm->resize_libplacebo.radius) {
@@ -8099,6 +8135,7 @@ tstring gen_cmd(const RGYParamCommon *param, const RGYParamCommon *defaultPrm, b
     OPT_TCHAR(_T("--input-format"), AVInputFormat);
     OPT_TSTR(_T("--output-format"), muxOutputFormat);
     OPT_STR(_T("--video-tag"), videoCodecTag);
+    OPT_TSTR(_T("--avcodec-prms"), avcodec_videnc_prms);
     for (auto &m : param->videoMetadata) {
         cmd << _T(" --video-metadata ") << m;
     }
@@ -8528,6 +8565,7 @@ tstring gen_cmd(const RGYParamControl *param, const RGYParamControl *defaultPrm,
     }
     OPT_BOOL(_T("--task-perf-monitor"), _T(""), taskPerfMonitor);
     OPT_BOOL(_T("--lowlatency"), _T(""), lowLatency);
+    OPT_BOOL(_T("--fallback-bitdepth"), _T(""), fallbackBitdepth);
     OPT_STR_PATH(_T("--log"), logfile);
     if (param->loglevel != defaultPrm->loglevel) {
         cmd << _T(" --log-level ") << param->loglevel.to_string();
@@ -8618,6 +8656,16 @@ tstring gen_cmd(const RGYParamControl *param, const RGYParamControl *defaultPrm,
         tmp.str(tstring());
         ADD_NUM(_T("mp"), parallelEnc.parallelCount);
         ADD_NUM(_T("id"), parallelEnc.parallelId);
+        ADD_NUM(_T("chunks"), parallelEnc.chunks);
+        if (param->parallelEnc.chunkPipeHandles.size() > 0) {
+            tmp << _T(",chunk-handles=");
+            for (size_t i = 0; i < param->parallelEnc.chunkPipeHandles.size(); i++) {
+                if (i > 0) {
+                    tmp << _T(":");
+                }
+                tmp << param->parallelEnc.chunkPipeHandles[i].handle << _T("#") << param->parallelEnc.chunkPipeHandles[i].startFrameId;
+            }
+        }
         ADD_LST(_T("cache"), parallelEnc.cacheMode, list_parallel_enc_cache);
         if (!tmp.str().empty()) {
             cmd << _T(" --parallel ") << tmp.str().substr(1);
@@ -8770,6 +8818,8 @@ tstring gen_cmd_help_common() {
         _T("   --video-metadata <string>    set metadata for video track.\n")
         _T("                                 - copy ... copy metadata from input\n")
         _T("                                 - clear ... do not set metadata (default)\n")
+        _T("   --avcodec-prms <string>      set parameters for avcodec video encoder.\n")
+        _T("                                 available when avcodec encoder is enabled by -c av_xxx.\n")
         _T("   --audio-source <string>      input extra audio file.\n")
         _T("   --audio-file [<int>?][<string>:]<string>\n")
         _T("                                extract audio into file.\n")
@@ -9262,7 +9312,7 @@ tstring gen_cmd_help_vpp() {
         FILTER_DEFAULT_MPDECIMATE_FRAC, FILTER_DEFAULT_MPDECIMATE_MAX,
         FILTER_DEFAULT_DECIMATE_LOG ? _T("on") : _T("off"));
 #endif
-#if ENABLE_NVVFX || ENABLE_NVSDKNGX
+#if ENABLE_NVVFX || ENABLE_NVSDKNGX || ENCODER_QSV
     {
         str += strsprintf(_T("\n")
             _T("--vpp-resize <string> or [<param1>=<value>][,<param2>=<value>][...]\n")
@@ -9282,19 +9332,28 @@ tstring gen_cmd_help_vpp() {
             str += list_vpp_resize[ia].desc;
         }
         str += _T("\n        default: auto\n");
-        if (ENABLE_NVVFX) {
+#if ENABLE_NVVFX
             str += strsprintf(_T("\n")
                 _T("      superres-mode=<int>\n")
                 _T("        mode for nvvfx-superres     0 ... conservative\n")
                 _T("                                    1 ... aggressive (default)\n")
                 _T("      superres-strength=<float>\n")
                 _T("        strength for nvvfx-superres (0.0 - 1.0, default = 0.4)\n"));
-        }
-        if (ENABLE_NVSDKNGX) {
+#endif
+#if ENABLE_NVSDKNGX
             str += strsprintf(_T("\n")
                 _T("      vsr-quality=<int>\n")
                 _T("        quality for ngx-vsr\n"));
-        }
+#endif
+#if ENCODER_QSV
+            str += strsprintf(_T("\n")
+                _T("      superres-mode=<string>\n")
+                _T("        disabled, default, sharpen, artifactremoval\n")
+                _T("      superres-algo=<string>\n")
+                _T("        algorithm for qsv-superres default\n")
+                _T("                                    1 ... normal quality\n")
+                _T("                                    2 ... high quality\n"));
+#endif
         if (ENABLE_LIBPLACEBO) {
             str += strsprintf(_T("\n")
                 _T("      pl-radius=<float>\n")
@@ -9683,7 +9742,8 @@ tstring gen_cmd_help_ctrl() {
         DEFAULT_DUMMY_LOAD_PERCENT);
     str += strsprintf(_T("")
         _T("   --task-perf-monitor          enable task performance monitoring.\n")
-        _T("   --lowlatency                 minimize latency (might have lower throughput).\n"));
+        _T("   --lowlatency                 minimize latency (might have lower throughput).\n")
+        _T("   --fallback-bitdepth          fallback to 8-bit when 10-bit encode unsupported by all GPUs.\n"));
     str += strsprintf(_T("")
         _T("   --output-buf <int>           buffer size for output in MByte\n")
         _T("                                 default %d MB (0-%d)\n"),

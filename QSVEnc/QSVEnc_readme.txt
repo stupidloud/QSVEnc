@@ -313,6 +313,65 @@ API v1.1  … Intel Media SDK v2.0
 
 
 【どうでもいいメモ】
+2025.10.24 (8.02)
+[QSVEncC]
+- 10bit深度でエンコードできないGPUで、8bitにfallbackするオプションを追加。(--fallback-bitdepth)
+
+[QSVEnc.auo]
+- 音声外部エンコーダを使用するとき、音声の32bit float出力で処理がフリーズする可能性があったのを修正。
+
+2025.09.29 (8.01)
+[QSVEncC]
+- 動画先頭付近が壊れていたときにfpsが意図しない値になってしまう問題を回避。
+- 入力ファイルが負のptsとなっていた場合の対策。
+- --vpp-subburnの焼き込み処理で、libassの初期化方法を変更し、動きのある字幕がガタガタしてしまうのを修正。
+- rpmのビルド環境をfedora41に更新。
+- --parallelでの進捗表示を改善。
+- --parallelで複数パイプを使った並列エンコード対応。(パイプ提供側の対応が必要)
+
+[QSVEnc.auo]
+- AviUtl2のインストーラ版を使用し、ダークモード化プラグイン(al2_jd)の所定の手順を踏まなかった場合に例外が発生するのを回避。
+- AviUtl2からのfp32での音声出力に対応。
+- faw2aac使用時にフリーズしてしまう場合があったのを修正。
+
+2025.08.27 (8.00)
+- libvplを更新し、2.15に対応。
+  - vpp-resizeのmfx_ai_superresに関するオプションを追加。(superres-mode,superres-algo)
+    superres-modeは現時点では動作しない模様
+- フィルタのみ使用し、swデコードをする機能を追加。
+  - -c av_xxx 等で実行可能
+    例: -c av_libsvtav1 --avcodec-prms "preset=6,crf=30,svtav1-params=enable-variance-boost=1:variance-boost-strength=2"
+    そのほか使えるのは av_libvvenc, av_libvpx-vp9 など。
+- AviUtl2に正式対応。
+  - 大半の処理についてUnicode対応を実施。
+  - プロファイルのフォーマットを変更。
+  - yuv444出力時にはYC48から変換するように。
+- AviUtl2向け簡易インストーラを更新。
+  - 簡易インストーラも64bit化。
+  - VC runtimeの64bit版をインストールするように。
+  - ウィンドウの高dpi対応を実施。
+  - インストール先を変更できるように。
+- 使用するffmpegのライブラリを更新。(Windows版)
+  - ffmpeg 7.1+ (20240822) -> 8.0
+  - libpng 1.6.44 -> 1.6.50
+  - expat  2.6.2  -> 2.7.1
+  - fribidi 1.0.11 -> 1.0.16
+  - libogg 1.3.5 -> 1.3.6
+  - libxml2 2.12.6 -> 2.14.5
+  - libvpl 2.13.0 -> 2.15.0
+  - libvpx 1.14.1 -> 1.15.2
+  - dav1d  1.4.3  -> 1.5.1
+  - libxxhash 0.8.2 -> 0.8.3
+  - glslang  15.0.0 -> 15.4.0
+  - dovi_tool 2.1.2 -> 2.3.1
+  - libjpeg-turbo 2.1.0 -> 3.1.1
+  - lcms2 2.16 -> 2.17
+  - zimg 3.0.5 -> 3.0.6
+  - libplacebo 7.349.0 -> 7.351.0
+  - libsvtav1 3.1.0 (new!) x64 only
+  - libvvenc 1.13.1 (new!) x64 only
+  - mmt/tlv patchを削除
+
 2025.07.19 (7.94)
 - 一部のtsファイルで、--avhw/--avsw使用時にフレームレートが適切に判定されない問題を修正。
 

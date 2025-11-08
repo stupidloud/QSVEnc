@@ -588,8 +588,8 @@ std::pair<RGY_ERR, QSVEncFeatures> CQSVPipeline::CheckMFXRCMode(QSVRCParam& rcPa
 }
 
 RGY_ERR CQSVPipeline::InitMfxEncodeParams(sInputParams *pInParams, std::vector<std::unique_ptr<QSVDevice>>& devList) {
-    if (pInParams->codec == RGY_CODEC_RAW) {
-        PrintMes(RGY_LOG_DEBUG, _T("Raw codec is selected, disable encode.\n"));
+    if (pInParams->codec == RGY_CODEC_RAW || pInParams->codec == RGY_CODEC_AVCODEC) {
+        PrintMes(RGY_LOG_DEBUG, _T("%s output is selected, disable hw encode.\n"), CodecToStr(pInParams->codec).c_str());
         return RGY_ERR_NONE;
     }
     const mfxU32 blocksz = (pInParams->codec == RGY_CODEC_HEVC) ? 32 : 16;
@@ -1841,7 +1841,7 @@ RGY_ERR CQSVPipeline::InitOutput(sInputParams *inputParams) {
 #endif //#if ENABLE_AVSW_READER
         m_hdrseiOut.get(), m_hdr10plus.get(), m_dovirpu.get(), m_encTimestamp.get(),
         !check_lib_version(m_mfxVer, MFX_LIB_VERSION_1_6),
-        inputParams->bBenchmark, false, 0,
+        inputParams->bBenchmark, false, 0, false,
         m_poolPkt.get(), m_poolFrame.get(),
         m_pStatus, m_pPerfMonitor, m_pQSVLog);
     if (err != RGY_ERR_NONE) {
@@ -2051,7 +2051,7 @@ RGY_ERR CQSVPipeline::CheckParam(sInputParams *inputParam) {
             inputParam->memType = D3D11_MEMORY;
             PrintMes(RGY_LOG_DEBUG, _T("d3d11 mode prefered, switched to d3d11 mode.\n"));
         //出力コーデックがrawなら、systemメモリを自動的に使用する
-        } else if (inputParam->codec == RGY_CODEC_RAW) {
+        } else if (inputParam->codec == RGY_CODEC_RAW || inputParam->codec == RGY_CODEC_AVCODEC) {
             inputParam->memType = SYSTEM_MEMORY;
             PrintMes(RGY_LOG_DEBUG, _T("Automatically selecting system memory for output raw frames.\n"));
         }
@@ -2311,7 +2311,7 @@ std::pair<RGY_ERR, std::unique_ptr<QSVVppMfx>> CQSVPipeline::AddFilterMFX(
     case VppType::MFX_RESIZE:              vppParams.bUseResize = true;
                                            vppParams.resizeInterp = params->resizeInterp;
                                            vppParams.resizeMode = params->resizeMode;
-                                           vppParams.aiSuperRes.enable = params->aiSuperRes.enable;
+                                           vppParams.aiSuperRes = params->aiSuperRes;
                                            frameInfo.width = resize.first;
                                            frameInfo.height = resize.second;
                                            if (resize.first == 0 || resize.second == 0
@@ -3343,9 +3343,9 @@ bool CQSVPipeline::preferD3D11Mode(const sInputParams *inputParam) {
 #endif
 }
 
-RGY_ERR CQSVPipeline::checkGPUListByEncoder(const sInputParams *prm, std::vector<std::unique_ptr<QSVDevice>>& gpuList) {
+RGY_ERR CQSVPipeline::checkGPUListByEncoder(sInputParams *prm, std::vector<std::unique_ptr<QSVDevice>>& gpuList) {
     PrintMes(RGY_LOG_DEBUG, _T("Check GPU List by Encoder from %d devices.\n"), (int)gpuList.size());
-    if (prm->codec == RGY_CODEC_RAW) {
+    if (prm->codec == RGY_CODEC_RAW || prm->codec == RGY_CODEC_AVCODEC) {
         return RGY_ERR_NONE;
     }
 
@@ -3353,6 +3353,7 @@ RGY_ERR CQSVPipeline::checkGPUListByEncoder(const sInputParams *prm, std::vector
     //const auto enc_csp = getEncoderCsp(prm);
     const auto enc_bitdepth = getEncoderBitdepth(prm);
     const auto rate_control = prm->rcParam.encMode;
+    int highBitDepthSupportCount = 0;
     tstring message;
     for (auto gpu = gpuList.begin(); gpu != gpuList.end(); ) {
         m_pQSVLog->write(RGY_LOG_DEBUG, RGY_LOGT_CORE_GPU_SELECT, _T("%sChecking GPU #%d (%s) for codec %s.\n"),
@@ -3370,11 +3371,17 @@ RGY_ERR CQSVPipeline::checkGPUListByEncoder(const sInputParams *prm, std::vector
             continue;
         }
         //10bit深度のチェック
-        if (enc_bitdepth > 8 && (deviceFeature & ENC_FEATURE_10BIT_DEPTH) != ENC_FEATURE_10BIT_DEPTH) {
-            message += strsprintf(_T("GPU #%d (%s) does not support %s %d bit encoding.\n"),
-                (*gpu)->deviceNum(), (*gpu)->name().c_str(), CodecToStr(prm->codec).c_str(), enc_bitdepth);
-            gpu = gpuList.erase(gpu);
-            continue;
+        if (enc_bitdepth > 8) {
+            if ((deviceFeature & ENC_FEATURE_10BIT_DEPTH) == ENC_FEATURE_10BIT_DEPTH) {
+                highBitDepthSupportCount++;
+            } else if (prm->ctrl.fallbackBitdepth) {
+                // fallbackが有効のときはここではなにもしない
+            } else {
+                message += strsprintf(_T("GPU #%d (%s) does not support %s %d bit encoding.\n"),
+                    (*gpu)->deviceNum(), (*gpu)->name().c_str(), CodecToStr(prm->codec).c_str(), enc_bitdepth);
+                gpu = gpuList.erase(gpu);
+                continue;
+            }
         }
         //インタレ保持のチェック
         const bool interlacedEncoding =
@@ -3392,6 +3399,41 @@ RGY_ERR CQSVPipeline::checkGPUListByEncoder(const sInputParams *prm, std::vector
         }
         m_pQSVLog->write(RGY_LOG_DEBUG, RGY_LOGT_CORE_GPU_SELECT, _T("%sGPU #%d (%s) available for %s encode.\n"), PEPrefix.c_str(), (*gpu)->deviceNum(), (*gpu)->name().c_str(), CodecToStr(prm->codec).c_str());
         gpu++;
+    }
+
+    // 10bit深度のフォールバックが有効なとき
+    if (enc_bitdepth > 8 && prm->ctrl.fallbackBitdepth) {
+        if (highBitDepthSupportCount > 0) {
+            // 10bit深度のサポートがあるGPUがあるときは、10bit深度をサポートしないGPUは外す
+            for (auto gpu = gpuList.begin(); gpu != gpuList.end(); ) {
+                const bool lowPower = prm->codec != RGY_CODEC_H264;
+                QSVEncFeatures deviceFeature;
+                //コーデックのチェック
+                if (   !(deviceFeature = (*gpu)->getEncodeFeature(rate_control, prm->codec, lowPower))
+                    && !(deviceFeature = (*gpu)->getEncodeFeature(rate_control, prm->codec, !lowPower))
+                    && !(deviceFeature = (*gpu)->getEncodeFeature(MFX_RATECONTROL_CQP, prm->codec, lowPower))
+                    && !(deviceFeature = (*gpu)->getEncodeFeature(MFX_RATECONTROL_CQP, prm->codec, !lowPower))) {
+                    message += strsprintf(_T("GPU #%d (%s) does not support %s encoding.\n"),
+                        (*gpu)->deviceNum(), (*gpu)->name().c_str(), CodecToStr(prm->codec).c_str());
+                    gpu = gpuList.erase(gpu);
+                    continue;
+                }
+                if ((deviceFeature & ENC_FEATURE_10BIT_DEPTH) != ENC_FEATURE_10BIT_DEPTH) {
+                    gpu = gpuList.erase(gpu);
+                    continue;
+                }
+                gpu++;
+            }
+        } else {
+            // 10bit深度のサポートがあるGPUがないときは、8bit深度に変更する
+            PrintMes(RGY_LOG_WARN, _T("GPU(s) does not support %d bit %s depth encoding, fallback to 8bit.\n"), prm->outputDepth, CodecToStr(prm->codec).c_str());
+            prm->outputDepth = 8;
+            if (prm->codec == RGY_CODEC_H264) {
+                prm->CodecProfile = MFX_PROFILE_AVC_HIGH;
+            } else if (prm->codec == RGY_CODEC_HEVC) {
+                prm->CodecProfile = MFX_PROFILE_HEVC_MAIN;
+            }
+        }
     }
     if (message.length() > 0) {
         m_pQSVLog->write((gpuList.size() == 0) ? RGY_LOG_ERROR : RGY_LOG_DEBUG, RGY_LOGT_CORE_GPU_SELECT, _T("%s%s\n"), PEPrefix.c_str(), message.c_str());
@@ -3483,7 +3525,7 @@ RGY_ERR CQSVPipeline::deviceAutoSelect(const sInputParams *prm, std::vector<std:
     return RGY_ERR_NONE;
 }
 
-RGY_ERR CQSVPipeline::InitSession(const sInputParams *inputParam, std::vector<std::unique_ptr<QSVDevice>>& deviceList) {
+RGY_ERR CQSVPipeline::InitSession(sInputParams *inputParam, std::vector<std::unique_ptr<QSVDevice>>& deviceList) {
     auto err = RGY_ERR_NONE;
     std::unique_ptr<RGYDeviceUsageLockManager> devUsageLock;
     if (deviceList.size() > 1) {
@@ -3493,8 +3535,6 @@ RGY_ERR CQSVPipeline::InitSession(const sInputParams *inputParam, std::vector<st
     if (deviceList.size() == 0) {
         PrintMes(RGY_LOG_DEBUG, _T("No device found for QSV encoding!\n"));
         return RGY_ERR_DEVICE_NOT_FOUND;
-    } else if (deviceList.size() == 1) {
-        m_device = std::move(deviceList.front());
     } else {
         if ((err = checkGPUListByEncoder(inputParam, deviceList)) != RGY_ERR_NONE) {
             return err;
@@ -3527,6 +3567,10 @@ RGY_ERR CQSVPipeline::InitVideoQualityMetric(sInputParams *prm) {
     if (prm->common.metric.enabled()) {
         if (!m_pmfxENC) {
             PrintMes(RGY_LOG_WARN, _T("Encoder not enabled, %s calculation will be disabled.\n"), prm->common.metric.enabled_metric().c_str());
+            return RGY_ERR_NONE;
+        }
+        if (!m_cl) {
+            PrintMes(RGY_LOG_WARN, _T("OpenCL is disabled, %s calculation will be disabled.\n"), prm->common.metric.enabled_metric().c_str());
             return RGY_ERR_NONE;
         }
         auto [err, outFrameInfo] = GetOutputVideoInfo();
@@ -3684,7 +3728,7 @@ RGY_ERR CQSVPipeline::InitAvoidIdleClock(const sInputParams *pParams) {
             return RGY_ERR_NONE;
         }
 
-        if (pParams->codec != RGY_CODEC_RAW) { // エンコードする場合
+        if (pParams->codec != RGY_CODEC_RAW && pParams->codec != RGY_CODEC_AVCODEC) { // エンコードする場合
             // PGモードが使用されている場合
             if (m_encParams.videoPrm.mfx.LowPower != MFX_CODINGOPTION_ON) {
                 PrintMes(RGY_LOG_DEBUG, _T("PG mode is used, avoid Idle clock is disabled.\n"));
@@ -3746,6 +3790,11 @@ RGY_ERR CQSVPipeline::InitParallelEncode(sInputParams *inputParam, const int max
     const bool isChild = inputParam->ctrl.parallelEnc.isChild();
     auto [sts, errmes] = RGYParallelEnc::isParallelEncPossible(inputParam, m_pFileReader.get());
     if (sts != RGY_ERR_NONE) {
+        // chunkPipeHandlesの場合は、無効にして続行はできないので、エラー終了
+        if (inputParam->ctrl.parallelEnc.chunkPipeHandles.size() > 0) {
+            PrintMes(RGY_LOG_ERROR, _T("Failed to start parallel threads: %s.\n"), errmes);
+            return RGY_ERR_UNKNOWN;
+        }
         PrintMes(RGY_LOG_WARN, _T("%s"), errmes);
         inputParam->ctrl.parallelEnc.parallelCount = 0;
         inputParam->ctrl.parallelEnc.parallelId = -1;
@@ -4433,7 +4482,7 @@ RGY_ERR CQSVPipeline::CreatePipeline(const sInputParams* prm) {
     if (m_pmfxENC) {
         m_pipelineTasks.push_back(std::make_unique<PipelineTaskMFXEncode>(&m_device->mfxSession(), 1, m_pmfxENC.get(), m_mfxVer, m_encParams, m_timecode.get(), m_encTimestamp.get(), m_outputTimebase, m_dynamicRC, m_hdr10plus.get(), m_dovirpu.get(), m_pQSVLog));
     } else {
-        m_pipelineTasks.push_back(std::make_unique<PipelineTaskOutputRaw>(&m_device->mfxSession(), 1, m_mfxVer, m_pQSVLog));
+        m_pipelineTasks.push_back(std::make_unique<PipelineTaskOutputRaw>(&m_device->mfxSession(), m_pFileWriter.get(), 1, m_mfxVer, m_pQSVLog));
     }
 
     if (m_pipelineTasks.size() == 0) {

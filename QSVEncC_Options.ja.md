@@ -167,6 +167,7 @@
   - [--video-streamid \<int\>](#--video-streamid-int)
   - [--video-tag \<string\>](#--video-tag-string)
   - [--video-metadata \[\<int\>?\]\<string\> or \[\<int\>?\]\<string\>=\<string\>](#--video-metadata-intstring-or-intstringstring)
+  - [--avcodec-prms \<string\>](#--avcodec-prms-string)
   - [--audio-copy \[\<int/string\>;\[,\<int/string\>\]...\]](#--audio-copy-intstringintstring)
   - [--audio-codec \[\[\<int/string\>?\]\<string\>\[:\<string\>=\<string\>\[,\<string\>=\<string\>\]...\]...\]](#--audio-codec-intstringstringstringstringstringstring)
   - [--audio-bitrate \[\<int/string\>?\]\<int\>](#--audio-bitrate-intstringint)
@@ -274,6 +275,7 @@
   - [--max-procfps \<int\>](#--max-procfps-int)
   - [--avoid-idle-clock \<string\>\[=\<float\>\]](#--avoid-idle-clock-stringfloat)
   - [--lowlatency](#--lowlatency)
+  - [--fallback-bitdepth](#--fallback-bitdepth)
   - [--avsdll \<string\>](#--avsdll-string)
   - [--vsdir \<string\> \[Windows専用\]](#--vsdir-string-windows専用)
   - [--process-codepage \<string\>](#--process-codepage-string)
@@ -444,6 +446,11 @@ dllのバージョンを表示
  - vp9
  - av1
  - raw
+ - av_xxx (avcodecエンコーダを使用)
+
+avcodecエンコーダ（av_xxx形式）を使用する場合、```--check-encoders```オプションで利用可能なエンコーダを確認できます。またエンコーダのパラメータは [--avcodec-prms](#--avcodec-prms-string)でのみ指定できます。(通常のパラメータは無視されます)
+
+   ```-c raw```の場合は、エンコードをせず、rawフレームを出力します。
 
 ### -o, --output &lt;string&gt;
 出力ファイル名の表示、"-"でパイプ出力
@@ -1173,6 +1180,22 @@ muxerに出力フォーマットを指定して出力する。
   
   例3: 指定のmetadataを設定する
   --video-metadata 1?title="音声の タイトル" --video-metadata 1?language=jpn
+  ```
+
+### --avcodec-prms &lt;string&gt;
+avcodec映像エンコーダのパラメータをkey=value形式でカンマ区切りで指定する。
+このオプションは `-c av_xxx` でavcodecエンコーダを有効にした場合のみ利用可能（例：`-c av_libsvtav1`, `-c av_libvvenc`, `-c av_libvpx-vp9`）。
+
+- 使用例
+  ```
+  例1: libsvtav1でプリセットとCRFを設定
+  -c av_libsvtav1 --avcodec-prms "preset=6,crf=30,svtav1-params=enable-variance-boost=1:variance-boost-strength=2"
+  
+  例2: libvvencで品質とスレッド数を設定
+  -c av_libvvenc --avcodec-prms qp=28,preset=medium,threads=4
+  
+  例3: libvpx-vp9で複数のパラメータを設定
+  -c av_libvpx-vp9 --avcodec-prms crf=30,b=0,cpu-used=2
   ```
 
 ### --audio-copy [&lt;int/string&gt;;[,&lt;int/string&gt;]...]
@@ -2725,6 +2748,22 @@ image stabilizerのモードの指定。
       |:---|:---|
       | simple   | Nearest Neighbor法による高速なリサイズ |
       | advanced | 高品質なリサイズ |
+      | mfx_ai_superres | AIベースのスーパーレゾリューション |
+
+      - 追加パラメータ
+
+        - superres-mode=&lt;string&gt;  
+          - disabled
+          - default
+          - sharpen
+          - artifactremoval
+
+        - superres-algo=&lt;string&gt;  
+          superresのアルゴリズム
+          
+          - default
+          - 1 ... 標準品質
+          - 2 ... 高品質
 
     - OpenCLで実装したリサイズフィルタ
   
@@ -2804,6 +2843,9 @@ image stabilizerのモードの指定。
 
   例: libplaceboのリサイズフィルタを使用する
   --vpp-resize algo=libplacebo-sinc,pl-radius=3.0,pl-antiring=0.5
+  
+  例: mfx_ai_superresを使用する
+  --vpp-resize algo=mfx_ai_superres,superres-mode=sharpen,superres-algo=2
   ```
 
 ### --vpp-resize-mode &lt;string&gt;
@@ -3421,6 +3463,9 @@ avsw/avhw読み込み時のデバッグ情報出力。
 
 ### --lowlatency
 エンコード遅延を低減するモード。最大エンコード速度(スループット)は低下するので、通常は不要。
+
+### --fallback-bitdepth
+有効にすると、利用可能なGPUがすべて10bitエンコードに非対応の場合、自動的に8bitエンコードにフォールバックします。複数GPUがあり、10bitエンコードに対応するGPUが存在する場合は、そのGPUが優先して選択されます。
 
 ### --avsdll &lt;string&gt;
 使用するAvsiynth.dllを指定するオプション。特に指定しない場合、システムのAvisynth.dllが使用される。

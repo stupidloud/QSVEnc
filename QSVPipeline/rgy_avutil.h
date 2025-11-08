@@ -98,6 +98,10 @@ using RGYChannelLayout = uint64_t;
 using uniuqeRGYChannelLayout = std::unique_ptr<RGYChannelLayout>;
 #endif
 
+#ifndef FF_PROFILE_UNKNOWN
+#define FF_PROFILE_UNKNOWN (AV_PROFILE_UNKNOWN)
+#endif
+
 template<typename T>
 struct RGYAVDeleter {
     RGYAVDeleter() : deleter(nullptr) {};
@@ -272,9 +276,9 @@ static tstring errorMesForCodec(const TCHAR *mes, AVCodecID targetCodec) {
 
 static const AVRational HW_NATIVE_TIMEBASE = { 1, (int)HW_TIMEBASE };
 static const TCHAR *AVCODEC_DLL_NAME[] = {
-    _T("avcodec-61.dll"), _T("avformat-61.dll"), _T("avutil-59.dll"), _T("avfilter-10.dll"), _T("swresample-5.dll")
+    _T("avcodec-62.dll"), _T("avformat-62.dll"), _T("avutil-60.dll"), _T("avfilter-11.dll"), _T("swresample-6.dll")
 #if ENABLE_LIBAVDEVICE
-    , _T("avdevice-61.dll")
+    , _T("avdevice-62.dll")
 #endif
 };
 
@@ -394,7 +398,7 @@ uniuqeRGYChannelLayout createChannelLayoutEmpty();
 uniuqeRGYChannelLayout createChannelLayoutCopy(const RGYChannelLayout *ch_layout);
 
 //コーデックのサポートするチャンネルレイアウトを取得
-const RGYChannelLayout *getChannelLayoutSupportedCodec(const AVCodec *codec);
+std::vector<RGYChannelLayout> getChannelLayoutSupportedCodec(const AVCodec *codec);
 
 //チェンネル数をマスクから取得
 int getChannelCount(const uint64_t channel_layout);

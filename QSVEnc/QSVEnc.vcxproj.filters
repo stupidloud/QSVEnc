@@ -42,9 +42,6 @@
     <ClCompile Include="encode\auo_audio.cpp">
       <Filter>ソース ファイル\encode</Filter>
     </ClCompile>
-    <ClCompile Include="encode\auo_chapter.cpp">
-      <Filter>ソース ファイル\encode</Filter>
-    </ClCompile>
     <ClCompile Include="encode\auo_encode.cpp">
       <Filter>ソース ファイル\encode</Filter>
     </ClCompile>
@@ -133,9 +130,6 @@
     <ClInclude Include="encode\auo_audio.h">
       <Filter>ヘッダー ファイル\encode</Filter>
     </ClInclude>
-    <ClInclude Include="encode\auo_chapter.h">
-      <Filter>ヘッダー ファイル\encode</Filter>
-    </ClInclude>
     <ClInclude Include="encode\auo_encode.h">
       <Filter>ヘッダー ファイル\encode</Filter>
     </ClInclude>
@@ -222,6 +216,9 @@
     </ClInclude>
     <ClInclude Include="frm\auo_mes.h">
       <Filter>ヘッダー ファイル\frm</Filter>
+    </ClInclude>
+    <ClInclude Include="prm\auo_options.h">
+      <Filter>ヘッダー ファイル\prm</Filter>
     </ClInclude>
   </ItemGroup>
   <ItemGroup>

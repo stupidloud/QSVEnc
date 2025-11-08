@@ -1131,10 +1131,12 @@ protected:
     int64_t m_tsOutFirst;     //(m_outputTimebase基準)
     int64_t m_tsOutEstimated; //(m_outputTimebase基準)
     int64_t m_tsPrev;         //(m_outputTimebase基準)
+    static const int64_t INVALID_PTS = AV_NOPTS_VALUE;
 public:
     PipelineTaskCheckPTS(MFXVideoSession *mfxSession, rgy_rational<int> srcTimebase, rgy_rational<int> outputTimebase, int64_t outFrameDuration, RGYAVSync avsync, bool timestampPassThrough, bool vpp_afs_rff_aware, mfxVersion mfxVer, std::shared_ptr<RGYLog> log) :
         PipelineTask(PipelineTaskType::CHECKPTS, /*outMaxQueueSize = */ 0 /*常に0である必要がある*/, mfxSession, mfxVer, log),
-        m_srcTimebase(srcTimebase), m_outputTimebase(outputTimebase), m_vpp_rff(false), m_vpp_afs_rff_aware(vpp_afs_rff_aware), m_avsync(avsync), m_timestampPassThrough(timestampPassThrough), m_outFrameDuration(outFrameDuration), m_tsOutFirst(-1), m_tsOutEstimated(0), m_tsPrev(-1) {
+        m_srcTimebase(srcTimebase), m_outputTimebase(outputTimebase), m_vpp_rff(false), m_vpp_afs_rff_aware(vpp_afs_rff_aware), m_avsync(avsync),
+        m_timestampPassThrough(timestampPassThrough), m_outFrameDuration(outFrameDuration), m_tsOutFirst(INVALID_PTS), m_tsOutEstimated(0), m_tsPrev(-1) {
     };
     virtual ~PipelineTaskCheckPTS() {};
 
@@ -1183,7 +1185,7 @@ public:
             }
         }
         PrintMes(RGY_LOG_TRACE, _T("check_pts(%d/%d): nOutEstimatedPts %lld, outPtsSource %lld, outDuration %d\n"), taskSurf->surf().frame()->inputFrameId(), m_inFrames, m_tsOutEstimated, outPtsSource, outDuration);
-        if (m_tsOutFirst < 0) {
+        if (m_tsOutFirst == INVALID_PTS) {
             m_tsOutFirst = outPtsSource; //最初のpts
             PrintMes(RGY_LOG_TRACE, _T("check_pts: m_tsOutFirst %lld\n"), outPtsSource);
         }
@@ -1535,6 +1537,7 @@ protected:
                 PrintMes(RGY_LOG_ERROR, _T("Error in parallel enc %d: %s\n"), m_currentChunk, get_err_mes(procsts));
                 return procsts;
             }
+            PrintMes(RGY_LOG_DEBUG, _T("parallel enc chunk %d finished.\n"), m_currentChunk);
         }
 
         m_currentChunk++;
@@ -1688,8 +1691,10 @@ protected:
         auto err = getBitstreamOneFrame(bsOut, header);
         if (err == RGY_ERR_MORE_BITSTREAM) {
             if ((err = openNextFile()) != RGY_ERR_NONE) {
+                //PrintMes(RGY_LOG_ERROR, _T("Failed to open next chunk: %s.\n"), get_err_mes(err));
                 return err;
             }
+            PrintMes(RGY_LOG_DEBUG, _T("opened next chunk.\n"));
             err = getBitstreamOneFrame(bsOut, header);
         }
         return err;
@@ -2656,11 +2661,16 @@ public:
 };
 
 class PipelineTaskOutputRaw : public PipelineTask {
+    RGYOutput *m_writer;
 public:
-    PipelineTaskOutputRaw(MFXVideoSession *mfxSession, int outMaxQueueSize, mfxVersion mfxVer, std::shared_ptr<RGYLog> log) :
-        PipelineTask(PipelineTaskType::OUTPUTRAW, outMaxQueueSize, mfxSession, mfxVer, log) {
+    PipelineTaskOutputRaw(MFXVideoSession *mfxSession, RGYOutput *writer, int outMaxQueueSize, mfxVersion mfxVer, std::shared_ptr<RGYLog> log) :
+        PipelineTask(PipelineTaskType::OUTPUTRAW, outMaxQueueSize, mfxSession, mfxVer, log), m_writer(writer) {
     };
-    virtual ~PipelineTaskOutputRaw() {};
+    virtual ~PipelineTaskOutputRaw() {
+        if (m_writer) {
+            m_writer->WriteNextFrame((RGYFrame *)nullptr);
+        }
+    };
 
     virtual std::optional<mfxFrameAllocRequest> requiredSurfIn() override { return std::nullopt; };
     virtual std::optional<mfxFrameAllocRequest> requiredSurfOut() override { return std::nullopt; };

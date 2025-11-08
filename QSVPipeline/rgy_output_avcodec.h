@@ -420,7 +420,9 @@ struct AvcodecWriterPrm {
     RGYDOVIProfile               doviProfile;             //doviのprofile
     RGYDOVIRpuConvertParam       doviRpuConvertParam;     //dovi rpuの変換パラメータ
     RGYTimestamp                *vidTimestamp;            //動画のtimestampの情報
+    std::string                  avVideoCodec;            //avcodecの映像コーデック
     std::string                  videoCodecTag;           //動画タグ
+    tstring                      avcodec_videnc_prms;    //avcodec映像エンコーダパラメータ
     std::vector<tstring>         videoMetadata;           //動画のmetadata
     std::vector<tstring>         formatMetadata;          //formatのmetadata
     bool                         afs;                     //入力が自動フィールドシフト
@@ -430,6 +432,7 @@ struct AvcodecWriterPrm {
     int                          HEVCAlphaChannelMode;    //HEVCのalphaチェンネルのモード
     int                          threadCsp;               //色空間変換用のスレッド数
     RGY_SIMD                     simdCsp;                 //色空間変換用のSIMD
+    uint32_t                     insertHeader;            //VCEEncでヘッダー挿入フラグ（ビットフラグ）
     RGYPoolAVPacket             *poolPkt;                 //読み込み側からわたってきたパケットの返却先
     RGYPoolAVFrame              *poolFrame;               //読み込み側からわたってきたパケットの返却先
 
@@ -469,7 +472,9 @@ struct AvcodecWriterPrm {
         doviProfile(RGY_DOVI_PROFILE_UNSET),
         doviRpuConvertParam(),
         vidTimestamp(nullptr),
+        avVideoCodec(),
         videoCodecTag(),
+        avcodec_videnc_prms(),
         videoMetadata(),
         formatMetadata(),
         afs(false),
@@ -479,6 +484,7 @@ struct AvcodecWriterPrm {
         HEVCAlphaChannelMode(0),
         threadCsp(0),
         simdCsp(RGY_SIMD::SIMD_ALL),
+        insertHeader(INSERT_HEADER_NONE),
         poolPkt(nullptr),
         poolFrame(nullptr) {
     }
@@ -573,7 +579,7 @@ protected:
     AVCodecID PCMRequiresConversion(const AVCodecParameters *codecParm);
 
     //RGY_CODECのcodecからAVCodecのCodecIDを返す
-    AVCodecID getAVCodecId(RGY_CODEC codec);
+    AVCodecID getAVCodecId(RGY_CODEC codec, const std::string& avVideoCodec);
 
     //Bitstreamフィルターを適用する
     RGY_ERR applyBitstreamFilterAudio(AVPacket *pkt, AVMuxAudio *muxAudio);

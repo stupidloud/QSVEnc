@@ -241,7 +241,8 @@ tstring encoder_help() {
         _T("-d,--device <string> or <int>   set device number to encode\n")
         _T("                                 - auto(default), 1, 2, 3, 4\n")
         _T("-c,--codec <string>             set encode codec\n")
-        _T("                                 - h264(default), hevc, mpeg2, vp9, av1, raw\n"));
+        _T("                                 - h264(default), hevc, mpeg2, vp9, av1, raw\n")
+        _T("                                 - av_xxx to use avcodec encoder\n"));
     str += PrintMultipleListOptions(_T("--level <string>"), _T("set codec level"),
         { { _T("H.264"), list_avc_level,   0 },
           { _T("HEVC"),  list_hevc_level,  0 },
@@ -529,6 +530,87 @@ const TCHAR *cmd_short_opt_to_long(TCHAR short_opt) {
 
 int parse_one_vppmfx_option(const TCHAR *option_name, const TCHAR *strInput[], int &i, [[maybe_unused]] int nArgNum, sVppParams *vppmfx, [[maybe_unused]] sArgsData *argData) {
 
+    if (IS_OPTION("vpp-resize")) {
+        if (i + 1 >= nArgNum || strInput[i + 1][0] == _T('-')) {
+            return 0;
+        }
+        i++;
+        int ret = 0;
+        ///////////////////////////////////////////////////////////////////////////////////////
+        // パラメータを追加したら、paramsResizeQSVEncにも追加する！！
+        ///////////////////////////////////////////////////////////////////////////////////////
+        std::vector<std::string> paramListResizeLibPlacebo;
+        for (size_t ielem = 0; ielem < _countof(paramsResizeLibPlacebo); ielem++) {
+            paramListResizeLibPlacebo.push_back(paramsResizeLibPlacebo[ielem]);
+        }
+        std::vector<std::string> paramList = paramListResizeLibPlacebo;
+        for (size_t ielem = 0; ielem < _countof(paramsResizeQSVEnc); ielem++) {
+            paramList.push_back(paramsResizeQSVEnc[ielem]);
+        }
+
+        for (const auto& param : split(strInput[i], _T(","))) {
+            auto pos = param.find_first_of(_T("="));
+            if (pos != std::string::npos) {
+                auto param_arg = param.substr(0, pos);
+                auto param_val = param.substr(pos + 1);
+                param_arg = tolowercase(param_arg);
+                if (param_arg == _T("algo")) {
+                    int value = 0;
+                    if (get_list_value(list_vpp_resize, param_val.c_str(), &value)) {
+                        if ((RGY_VPP_RESIZE_ALGO)value == RGY_VPP_RESIZE_MFX_AI_SUPRERES) {
+                            vppmfx->aiSuperRes.enable = true;
+                        }
+                        ret = -1; // rgy_cmd.cppで処理する
+                    } else {
+                        print_cmd_error_invalid_value(tstring(option_name) + _T(" ") + param_arg + _T("="), param_val, list_vpp_resize);
+                        return 1;
+                    }
+                    continue;
+                }
+                if (param_arg == _T("superres-mode")) {
+                    int value = 0;
+                    if (get_list_value(list_ai_super_resolution_mode, param_val.c_str(), &value)) {
+                        vppmfx->aiSuperRes.mode = (mfxAISuperResolutionMode)value;
+                    } else {
+                        print_cmd_error_invalid_value(tstring(option_name) + _T(" ") + param_arg + _T("="), param_val, list_ai_super_resolution_mode);
+                        return 1;
+                    }
+                    continue;
+                }
+                if (param_arg == _T("superres-algo")) {
+                    int value = 0;
+                    if (get_list_value(list_ai_super_resolution_algorithm, param_val.c_str(), &value)) {
+                        vppmfx->aiSuperRes.algorithm = (mfxAISuperResolutionAlgorithm)value;
+                    } else {
+                        print_cmd_error_invalid_value(tstring(option_name) + _T(" ") + param_arg + _T("="), param_val, list_ai_super_resolution_algorithm);
+                        return 1;
+                    }
+                    continue;
+                }
+                if (ENABLE_LIBPLACEBO && std::find_if(paramListResizeLibPlacebo.begin(), paramListResizeLibPlacebo.end(), [param_arg](const std::string& str) {
+                    return param_arg == char_to_tstring(str);
+                    }) != paramListResizeLibPlacebo.end()) {
+                    ret = -1; // rgy_cmd.cppで処理する
+                    continue;
+                }
+                print_cmd_error_unknown_opt_param(option_name, param_arg, paramList);
+                return 1;
+            } else {
+                int value = 0;
+                if (get_list_value(list_vpp_resize, param.c_str(), &value)) {
+                    if ((RGY_VPP_RESIZE_ALGO)value == RGY_VPP_RESIZE_MFX_AI_SUPRERES) {
+                        vppmfx->aiSuperRes.enable = true;
+                    }
+                    ret = -1; // rgy_cmd.cppで処理する
+                } else {
+                    print_cmd_error_invalid_value(tstring(option_name), param, list_vpp_resize);
+                    return 1;
+                }
+            }
+        }
+        i += ret;
+        return ret;
+    }
     if (IS_OPTION("vpp-denoise")) {
         vppmfx->denoise.enable = true;
         if (i + 1 >= nArgNum || strInput[i + 1][0] == _T('-')) {
@@ -774,8 +856,13 @@ int ParseOneOption(const TCHAR *option_name, const TCHAR* strInput[], int& i, in
             }
         }
         if (list_codec_rgy[j].desc == nullptr) {
-            print_cmd_error_invalid_value(option_name, strInput[i], list_codec_rgy);
-            return 1;
+            if (0 == _tcsncmp(strInput[i], _T("av_"), _tcslen(_T("av_")))) {
+                pParams->common.avVideoCodec = tchar_to_string(strInput[i] + _tcslen(_T("av_")));
+                pParams->codec = RGY_CODEC_AVCODEC;
+            } else {
+                print_cmd_error_invalid_value(option_name, strInput[i], list_codec_rgy);
+                return 1;
+            }
         }
         return 0;
     }
@@ -2070,13 +2157,12 @@ int parse_cmd(sInputParams *pParams, const TCHAR *strInput[], int nArgNum, bool 
 }
 
 #if defined(_WIN32) || defined(_WIN64)
-int parse_cmd(sInputParams *pParams, const char *cmda, bool ignore_parse_err) {
-    if (cmda == nullptr) {
+int parse_cmd(sInputParams *pParams, const wchar_t *cmdw, bool ignore_parse_err) {
+    if (cmdw == nullptr) {
         return 0;
     }
-    std::wstring cmd = char_to_wstring(cmda);
     int argc = 0;
-    auto argvw = CommandLineToArgvW(cmd.c_str(), &argc);
+    auto argvw = CommandLineToArgvW(cmdw, &argc);
     if (argc <= 1) {
         return 0;
     }
@@ -2097,10 +2183,18 @@ int parse_cmd(sInputParams *pParams, const char *cmda, bool ignore_parse_err) {
     const TCHAR **strInput = (const TCHAR **)argv_tchar.data();
     return parse_cmd(pParams, strInput, (int)argv_tchar.size() - 1 /*最後の空白の分*/, ignore_parse_err);
 }
+
+int parse_cmd(sInputParams *pParams, const char *cmda, bool ignore_parse_err) {
+    if (cmda == nullptr) {
+        return 0;
+    }
+    std::wstring cmd = char_to_wstring(cmda);
+    return parse_cmd(pParams, cmd.c_str(), ignore_parse_err);
+}
 #endif
 
 
-tstring gen_cmd(const sVppParams *param, const sVppParams *defaultPrm, bool save_disabled_prm) {
+tstring gen_cmd(const sVppParams *param, const sVppParams *defaultPrm, RGY_VPP_RESIZE_ALGO resize_algo, bool save_disabled_prm) {
 #define OPT_FLOAT(str, opt, prec) if ((param->opt) != (defaultPrm->opt)) cmd << _T(" ") << (str) << _T(" ") << std::setprecision(prec) << (param->opt);
 #define OPT_NUM(str, opt) if ((param->opt) != (defaultPrm->opt)) cmd << _T(" ") << (str) << _T(" ") << (int)(param->opt);
 #define OPT_LST(str, opt, list) if ((param->opt) != (defaultPrm->opt)) cmd << _T(" ") << (str) << _T(" ") << get_chr_from_value(list, (param->opt));
@@ -2124,6 +2218,18 @@ tstring gen_cmd(const sVppParams *param, const sVppParams *defaultPrm, bool save
 
     std::basic_stringstream<TCHAR> tmp;
     std::basic_stringstream<TCHAR> cmd;
+
+    if (isQSVMFXResizeFiter(resize_algo)) {
+        cmd << _T(" --vpp-resize ") << get_chr_from_value(list_vpp_resize, resize_algo);
+        if (resize_algo == RGY_VPP_RESIZE_MFX_AI_SUPRERES) {
+            if (param->aiSuperRes.mode != defaultPrm->aiSuperRes.mode) {
+                cmd << _T(",superres-mode=") << get_chr_from_value(list_ai_super_resolution_mode, param->aiSuperRes.mode);
+            }
+            if (param->aiSuperRes.algorithm != defaultPrm->aiSuperRes.algorithm) {
+                cmd << _T(",superres-algo=") << get_chr_from_value(list_ai_super_resolution_algorithm, param->aiSuperRes.algorithm);
+            }
+        }
+    }
 
     if (param->deinterlace != defaultPrm->deinterlace || param->deinterlaceMode != defaultPrm->deinterlaceMode) {
         auto deinterlace = param->deinterlace | (uint32_t)param->deinterlaceMode;
@@ -2295,7 +2401,11 @@ tstring gen_cmd(const sInputParams *pParams, bool save_disabled_prm) {
 #define OPT_STR_PATH(str, opt) if (pParams->opt.length() > 0) cmd << _T(" ") << str << _T(" \"") << (pParams->opt.c_str()) << _T("\"");
 
     OPT_NUM(_T("-d"), device);
-    cmd << _T(" -c ") << get_chr_from_value(list_codec_rgy, pParams->codec);
+    if (pParams->codec == RGY_CODEC_AVCODEC) {
+        cmd << _T(" -c av_") << char_to_tstring(pParams->common.avVideoCodec);
+    } else {
+        cmd << _T(" -c ") << get_chr_from_value(list_codec_rgy, pParams->codec);
+    }
 
     cmd << gen_cmd(&pParams->input, &encPrmDefault.input, &pParams->inprm, &encPrmDefault.inprm, save_disabled_prm);
 
@@ -2502,7 +2612,7 @@ tstring gen_cmd(const sInputParams *pParams, bool save_disabled_prm) {
 #endif //#if ENABLE_SESSION_THREAD_CONFIG
 
     cmd << gen_cmd(&pParams->common, &encPrmDefault.common, save_disabled_prm);
-    cmd << gen_cmd(&pParams->vppmfx, &encPrmDefault.vppmfx, save_disabled_prm);
+    cmd << gen_cmd(&pParams->vppmfx, &encPrmDefault.vppmfx, pParams->vpp.resize_algo, save_disabled_prm);
     cmd << gen_cmd(&pParams->vpp, &encPrmDefault.vpp, save_disabled_prm);
 
 #if defined(_WIN32) || defined(_WIN64)

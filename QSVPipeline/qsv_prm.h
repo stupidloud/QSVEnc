@@ -190,12 +190,30 @@ struct MFXVppColorspace {
     }
 };
 
+const CX_DESC list_ai_super_resolution_mode[] = {
+    { _T("disabled"), MFX_AI_SUPER_RESOLUTION_MODE_DISABLED },
+    { _T("default"),  MFX_AI_SUPER_RESOLUTION_MODE_DEFAULT },
+    { _T("sharpen"),  MFX_AI_SUPER_RESOLUTION_MODE_SHARPEN },
+    { _T("artifactremoval"), MFX_AI_SUPER_RESOLUTION_MODE_ARTIFACTREMOVAL },
+    { NULL, 0 }
+};
+
+const CX_DESC list_ai_super_resolution_algorithm[] = {
+    { _T("default"), MFX_AI_SUPER_RESOLUTION_ALGORITHM_DEFAULT },
+    { _T("1"),       MFX_AI_SUPER_RESOLUTION_ALGORITHM_1 },
+    { _T("2"),       MFX_AI_SUPER_RESOLUTION_ALGORITHM_2 },
+    { NULL, 0 }
+};
+
 struct MFXVppAISuperRes {
     bool enable;
-    int mode;
+    mfxAISuperResolutionMode mode;
+    mfxAISuperResolutionAlgorithm algorithm;
 
-    MFXVppAISuperRes() : enable(false), mode(MFX_AI_SUPER_RESOLUTION_MODE_DEFAULT) {};
+    MFXVppAISuperRes();
     ~MFXVppAISuperRes() {};
+    bool operator==(const MFXVppAISuperRes &x) const;
+    bool operator!=(const MFXVppAISuperRes &x) const;
 };
 
 struct MFXVppAIFrameInterpolation {
@@ -433,6 +451,7 @@ const CX_DESC list_codec_rgy[] = {
     { _T("av1"),      RGY_CODEC_AV1   },
     { _T("vvc"),      RGY_CODEC_VVC   },
     { _T("raw"),      RGY_CODEC_RAW   },
+    { _T("avcodec"),  RGY_CODEC_AVCODEC },
     { NULL, 0 }
 };
 
@@ -790,6 +809,7 @@ static inline const CX_DESC *get_level_list(const RGY_CODEC codec) {
         case RGY_CODEC_AV1:     return list_av1_level;
         case RGY_CODEC_VVC:     return list_vvc_level;
         case RGY_CODEC_RAW:     return list_empty;
+        case RGY_CODEC_AVCODEC: return list_empty;
         default:                return list_empty;
     }
 }
@@ -805,6 +825,7 @@ static inline const CX_DESC *get_profile_list(const RGY_CODEC codec) {
         case RGY_CODEC_AV1:     return list_av1_profile;
         case RGY_CODEC_VVC:     return list_vvc_profile;
         case RGY_CODEC_RAW:     return list_empty;
+        case RGY_CODEC_AVCODEC: return list_empty;
         default:                return list_empty;
     }
 }

@@ -2278,7 +2278,9 @@ RGYParamCommon::RGYParamCommon() :
     doviRpuFile(),
     doviRpuParams(),
     doviProfile(RGY_DOVI_PROFILE_UNSET),
+    avVideoCodec(),
     videoCodecTag(),
+    avcodec_videnc_prms(),
     videoMetadata(),
     formatMetadata(),
     seekRatio(0.0f),
@@ -2348,6 +2350,7 @@ RGYParamParallelEnc::RGYParamParallelEnc() :
     parallelCount(0),
     parallelId(-1),
     chunks(0),
+    chunkPipeHandles(),
     cacheMode(RGYParamParallelEncCache::Mem),
     delayChildSync(false),
     sendData(nullptr) {
@@ -2357,6 +2360,8 @@ bool RGYParamParallelEnc::operator==(const RGYParamParallelEnc &x) const {
     return parallelCount == x.parallelCount
         && parallelId == x.parallelId
         && chunks == x.chunks
+        && chunkPipeHandles.size() == x.chunkPipeHandles.size()
+        && std::equal(chunkPipeHandles.begin(), chunkPipeHandles.end(), x.chunkPipeHandles.begin())
         && cacheMode == x.cacheMode;
 }
 bool RGYParamParallelEnc::operator!=(const RGYParamParallelEnc &x) const {
@@ -2396,6 +2401,7 @@ RGYParamControl::RGYParamControl() :
     perfMonitorInterval(RGY_DEFAULT_PERF_MONITOR_INTERVAL),
     parentProcessID(0),
     lowLatency(false),
+    fallbackBitdepth(false),
     gpuSelect(),
     skipHWEncodeCheck(false),
     skipHWDecodeCheck(false),

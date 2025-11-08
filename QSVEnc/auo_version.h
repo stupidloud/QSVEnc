@@ -32,19 +32,31 @@
 
 #define AUO_VERSION          VER_FILEVERSION
 #define AUO_VERSION_STR      VER_STR_FILEVERSION
+#define AUO_VERSION_STR_W    VER_STR_FILEVERSION_TCHAR
 #define AUO_NAME_WITHOUT_EXT "QSVEnc"
+#define AUO_NAME_WITHOUT_EXT_W L"QSVEnc"
+#if _M_X64
+#define AUO_NAME             "QSVEnc.auo2"
+#define AUO_NAME_W          L"QSVEnc.auo2"
+#else
 #define AUO_NAME             "QSVEnc.auo"
 #define AUO_NAME_W          L"QSVEnc.auo"
+#endif
 #define AUO_NAME_R            QSVEnc
 #define AUO_FULL_NAME        "拡張 QSV 出力"
 #define AUO_FULL_NAME_W     L"拡張 QSV 出力"
 #define AUO_VERSION_NAME     "拡張 QSV 出力 " AUO_VERSION_STR
 #define AUO_VERSION_INFO     "拡張 QSV 出力 " AUO_VERSION_STR " by rigaya"
+#define AUO_VERSION_INFO_W  L"拡張 QSV 出力 " AUO_VERSION_STR_W L" by rigaya"
 #define AUO_EXT_FILTER       "All Support Formats (*.*)\0*.mp4;*.mkv;*.264;*.mp4\0mp4 file (*.mp4)\0*.mp4\0mkv file (*.mkv)\0*.mkv\0raw file (*.264)\0*.264\0"
+#define AUO_EXT_FILTER_W    L"All Support Formats (*.*)\0*.mp4;*.mkv;*.264;*.mp4\0mp4 file (*.mp4)\0*.mp4\0mkv file (*.mkv)\0*.mkv\0raw file (*.264)\0*.264\0"
 
 #define ENCODER_X264   0
 #define ENCODER_X265   0
 #define ENCODER_SVTAV1 0
+#define ENCODER_FFMPEG 0
+#define ENABLE_AMP (ENCODER_X264 || ENCODER_X265)
+#define ENABLE_TCFILE_IN (ENCODER_X264)
 
 #ifdef DEBUG
 #define VER_DEBUG   VS_FF_DEBUG

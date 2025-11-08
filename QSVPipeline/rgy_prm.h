@@ -631,6 +631,14 @@ enum RGY_VPP_RESIZE_TYPE {
 
 RGY_VPP_RESIZE_TYPE getVppResizeType(RGY_VPP_RESIZE_ALGO resize);
 
+static bool isQSVMFXResizeFiter(const RGY_VPP_RESIZE_ALGO interp) {
+#if ENCODER_QSV && (!defined(_M_IX86) || FOR_AUO) || CUFILTERS || CLFILTERS_AUF
+    return getVppResizeType(interp) == RGY_VPP_RESIZE_TYPE_MFX;
+#else
+    UNREFERENCED_PARAMETER(interp);
+    return false;
+#endif
+}
 
 static bool isNppResizeFiter(const RGY_VPP_RESIZE_ALGO interp) {
 #if ENCODER_NVENC && (!defined(_M_IX86) || FOR_AUO) || CUFILTERS || CLFILTERS_AUF
@@ -848,6 +856,7 @@ const CX_DESC list_vpp_resize_help[] = {
 
 static const char *paramsResizeLibPlacebo[] = { "algo", "pl-radius", "pl-clamp", "pl-taper", "pl-blur", "pl-antiring"/*, "pl-cplace"*/ };
 static const char *paramsResizeNVEnc[] = { "superres-mode", "superres-strength", "vsr-quality" };
+static const char *paramsResizeQSVEnc[] = { "superres-mode", "superres-algo" };
 
 const CX_DESC list_vpp_resize_res_mode[] = {
     { _T("normal"),   (int)RGYResizeResMode::Normal },
@@ -2460,7 +2469,9 @@ struct RGYParamCommon {
     tstring doviRpuFile;
     RGYDOVIRpuConvertParam doviRpuParams;
     RGYDOVIProfile doviProfile;
+    std::string avVideoCodec;
     std::string videoCodecTag;
+    tstring avcodec_videnc_prms;
     std::vector<tstring> videoMetadata;
     std::vector<tstring> formatMetadata;
     float seekRatio;               //指定された秒数分先頭を飛ばす
@@ -2552,10 +2563,21 @@ const CX_DESC list_parallel_enc_cache[] = {
     { NULL, 0 }
 };
 
+struct RGYParamParallelEncPipeHandle {
+    uint64_t handle;
+    int startFrameId;
+
+    RGYParamParallelEncPipeHandle() : handle(0), startFrameId(-1) {};
+    RGYParamParallelEncPipeHandle(uint64_t h, int frameId) : handle(h), startFrameId(frameId) {};
+    bool operator==(const RGYParamParallelEncPipeHandle &x) const { return handle == x.handle && startFrameId == x.startFrameId; }
+    bool operator!=(const RGYParamParallelEncPipeHandle &x) const { return !(*this == x); }
+};
+
 struct RGYParamParallelEnc {
     int parallelCount; // 並列処理数
     int parallelId; // 親=-1, 子=0～
     int chunks; // 分割数
+    std::vector<RGYParamParallelEncPipeHandle> chunkPipeHandles; // 各チャンクの先頭のフレームID (raw読み込み時に使用)
     RGYParamParallelEncCache cacheMode;
     bool delayChildSync; // 親-子間のデータやり取りを少し遅らせる
     RGYParallelEncSendData *sendData; // 並列処理時に親-子間のデータやり取り用
@@ -2603,6 +2625,7 @@ struct RGYParamControl {
     int     perfMonitorInterval;
     uint32_t parentProcessID;
     bool lowLatency;
+    bool fallbackBitdepth;
     GPUAutoSelectMul gpuSelect;
     bool skipHWEncodeCheck;
     bool skipHWDecodeCheck;

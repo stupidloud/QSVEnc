@@ -108,6 +108,7 @@ System::Void frmBitrateCalculator::Init(int VideoBitrate, int AudioBitrate, bool
 System::Void frmBitrateCalculator::CheckTheme(const AuoTheme themeTo) {
     //変更の必要がなければ終了
     if (themeTo == themeMode) return;
+    if (dwStgReader == nullptr) return;
 
     //一度ウィンドウの再描画を完全に抑止する
     SendMessage(reinterpret_cast<HWND>(this->Handle.ToPointer()), WM_SETREDRAW, 0, 0);
@@ -226,8 +227,8 @@ System::Void frmConfig::LoadLocalStg() {
     LocalStg.CustomMP4TmpDir = String(_ex_stg->s_local.custom_mp4box_tmp_dir).ToString();
     LocalStg.LastAppDir      = String(_ex_stg->s_local.app_dir).ToString();
     LocalStg.LastBatDir      = String(_ex_stg->s_local.bat_dir).ToString();
-    LocalStg.vidEncName      = String(_ex_stg->s_vid.filename).ToString();
-    LocalStg.vidEncPath      = String(_ex_stg->s_vid.fullpath).ToString();
+    LocalStg.vidEncName      = String(_ex_stg->s_enc.filename).ToString();
+    LocalStg.vidEncPath      = String(_ex_stg->s_enc.fullpath).ToString();
     LocalStg.MP4MuxerExeName = String(_ex_stg->s_mux[MUXER_MP4].filename).ToString();
     LocalStg.MP4MuxerPath    = String(_ex_stg->s_mux[MUXER_MP4].fullpath).ToString();
     LocalStg.MKVMuxerExeName = String(_ex_stg->s_mux[MUXER_MKV].filename).ToString();
@@ -260,12 +261,12 @@ System::Boolean frmConfig::CheckLocalStg() {
         err += LOAD_CLI_STRING(AUO_CONFIG_VID_ENC_NOT_EXIST) + L"\n [ " + LocalStg.vidEncPath + L" ]\n";
     }
     //音声エンコーダのチェック (実行ファイル名がない場合はチェックしない)
-    if (fcgCBAudioUseExt->Checked
+    if (useAudioExt()
         && LocalStg.audEncExeName[fcgCXAudioEncoder->SelectedIndex]->Length) {
         String^ AudioEncoderPath = LocalStg.audEncPath[fcgCXAudioEncoder->SelectedIndex];
         if (AudioEncoderPath->Length > 0
             && !File::Exists(AudioEncoderPath)
-            && (fcgCXAudioEncoder->SelectedIndex != sys_dat->exstg->get_faw_index(!fcgCBAudioUseExt->Checked)) ) {
+            && (fcgCXAudioEncoder->SelectedIndex != sys_dat->exstg->get_faw_index(!useAudioExt())) ) {
             //音声実行ファイルがない かつ
             //選択された音声がfawでない
             if (!error) err += L"\n\n";
@@ -275,7 +276,7 @@ System::Boolean frmConfig::CheckLocalStg() {
     }
     //FAWのチェック
     if (fcgCBFAWCheck->Checked) {
-        if (sys_dat->exstg->get_faw_index(!fcgCBAudioUseExt->Checked) == FAW_INDEX_ERROR) {
+        if (sys_dat->exstg->get_faw_index(!useAudioExt()) == FAW_INDEX_ERROR) {
             if (!error) err += L"\n\n";
             error = true;
             err += LOAD_CLI_STRING(AUO_CONFIG_FAW_STG_NOT_FOUND_IN_INI1) + L"\n"
@@ -292,18 +293,18 @@ System::Void frmConfig::SaveLocalStg() {
     guiEx_settings *_ex_stg = sys_dat->exstg;
     _ex_stg->load_encode_stg();
     _ex_stg->s_local.large_cmdbox = fcgTXCmd->Multiline;
-    GetCHARfromString(_ex_stg->s_local.custom_tmp_dir,        sizeof(_ex_stg->s_local.custom_tmp_dir),        LocalStg.CustomTmpDir);
-    GetCHARfromString(_ex_stg->s_local.custom_mp4box_tmp_dir, sizeof(_ex_stg->s_local.custom_mp4box_tmp_dir), LocalStg.CustomMP4TmpDir);
-    GetCHARfromString(_ex_stg->s_local.custom_audio_tmp_dir,  sizeof(_ex_stg->s_local.custom_audio_tmp_dir),  LocalStg.CustomAudTmpDir);
-    GetCHARfromString(_ex_stg->s_local.app_dir,               sizeof(_ex_stg->s_local.app_dir),               LocalStg.LastAppDir);
-    GetCHARfromString(_ex_stg->s_local.bat_dir,               sizeof(_ex_stg->s_local.bat_dir),               LocalStg.LastBatDir);
-    GetCHARfromString(_ex_stg->s_vid.fullpath,                sizeof(_ex_stg->s_vid.fullpath),                LocalStg.vidEncPath);
-    GetCHARfromString(_ex_stg->s_mux[MUXER_MP4].fullpath,     sizeof(_ex_stg->s_mux[MUXER_MP4].fullpath),     LocalStg.MP4MuxerPath);
-    GetCHARfromString(_ex_stg->s_mux[MUXER_MKV].fullpath,     sizeof(_ex_stg->s_mux[MUXER_MKV].fullpath),     LocalStg.MKVMuxerPath);
-    GetCHARfromString(_ex_stg->s_mux[MUXER_TC2MP4].fullpath,  sizeof(_ex_stg->s_mux[MUXER_TC2MP4].fullpath),  LocalStg.TC2MP4Path);
-    GetCHARfromString(_ex_stg->s_mux[MUXER_MP4_RAW].fullpath, sizeof(_ex_stg->s_mux[MUXER_MP4_RAW].fullpath), LocalStg.MP4RawPath);
+    GetWCHARfromString(_ex_stg->s_local.custom_tmp_dir,        _countof(_ex_stg->s_local.custom_tmp_dir),        LocalStg.CustomTmpDir);
+    GetWCHARfromString(_ex_stg->s_local.custom_mp4box_tmp_dir, _countof(_ex_stg->s_local.custom_mp4box_tmp_dir), LocalStg.CustomMP4TmpDir);
+    GetWCHARfromString(_ex_stg->s_local.custom_audio_tmp_dir,  _countof(_ex_stg->s_local.custom_audio_tmp_dir),  LocalStg.CustomAudTmpDir);
+    GetWCHARfromString(_ex_stg->s_local.app_dir,               _countof(_ex_stg->s_local.app_dir),               LocalStg.LastAppDir);
+    GetWCHARfromString(_ex_stg->s_local.bat_dir,               _countof(_ex_stg->s_local.bat_dir),               LocalStg.LastBatDir);
+    GetWCHARfromString(_ex_stg->s_enc.fullpath,                _countof(_ex_stg->s_enc.fullpath),                LocalStg.vidEncPath);
+    GetWCHARfromString(_ex_stg->s_mux[MUXER_MP4].fullpath,     _countof(_ex_stg->s_mux[MUXER_MP4].fullpath),     LocalStg.MP4MuxerPath);
+    GetWCHARfromString(_ex_stg->s_mux[MUXER_MKV].fullpath,     _countof(_ex_stg->s_mux[MUXER_MKV].fullpath),     LocalStg.MKVMuxerPath);
+    GetWCHARfromString(_ex_stg->s_mux[MUXER_TC2MP4].fullpath,  _countof(_ex_stg->s_mux[MUXER_TC2MP4].fullpath),  LocalStg.TC2MP4Path);
+    GetWCHARfromString(_ex_stg->s_mux[MUXER_MP4_RAW].fullpath, _countof(_ex_stg->s_mux[MUXER_MP4_RAW].fullpath), LocalStg.MP4RawPath);
     for (int i = 0; i < _ex_stg->s_aud_ext_count; i++)
-        GetCHARfromString(_ex_stg->s_aud_ext[i].fullpath, sizeof(_ex_stg->s_aud_ext[i].fullpath), LocalStg.audEncPath[i]);
+        GetWCHARfromString(_ex_stg->s_aud_ext[i].fullpath, _countof(_ex_stg->s_aud_ext[i].fullpath), LocalStg.audEncPath[i]);
     _ex_stg->save_local();
 }
 
@@ -338,11 +339,11 @@ System::Void frmConfig::fcgTSBOtherSettings_Click(System::Object^  sender, Syste
     frmOtherSettings::Instance::get()->stgDir = String(sys_dat->exstg->s_local.stg_dir).ToString();
     frmOtherSettings::Instance::get()->SetTheme(themeMode, dwStgReader);
     frmOtherSettings::Instance::get()->ShowDialog();
-    char buf[MAX_PATH_LEN];
-    GetCHARfromString(buf, sizeof(buf), frmOtherSettings::Instance::get()->stgDir);
-    if (_stricmp(buf, sys_dat->exstg->s_local.stg_dir)) {
+    TCHAR buf[MAX_PATH_LEN];
+    GetWCHARfromString(buf, _countof(buf), frmOtherSettings::Instance::get()->stgDir);
+    if (_tcsicmp(buf, sys_dat->exstg->s_local.stg_dir)) {
         //変更があったら保存する
-        strcpy_s(sys_dat->exstg->s_local.stg_dir, sizeof(sys_dat->exstg->s_local.stg_dir), buf);
+        _tcscpy_s(sys_dat->exstg->s_local.stg_dir, buf);
         sys_dat->exstg->save_local();
         InitStgFileList();
     }
@@ -628,8 +629,8 @@ ToolStripMenuItem^ frmConfig::fcgTSSettingsSearchItem(String^ stgPath) {
 
 System::Void frmConfig::SaveToStgFile(String^ stgName) {
     size_t nameLen = CountStringBytes(stgName) + 1;
-    char *stg_name = (char *)malloc(nameLen);
-    GetCHARfromString(stg_name, nameLen, stgName);
+    TCHAR *stg_name = (TCHAR *)malloc(nameLen * sizeof(TCHAR));
+    GetWCHARfromString(stg_name, nameLen, stgName);
     init_CONF_GUIEX(cnf_stgSelected, FALSE);
     FrmToConf(cnf_stgSelected);
     String^ stgDir = Path::GetDirectoryName(stgName);
@@ -693,8 +694,8 @@ System::Void frmConfig::fcgTSSettings_DropDownItemClicked(System::Object^  sende
     if (ClickedMenuItem->Tag == nullptr || ClickedMenuItem->Tag->ToString()->Length == 0)
         return;
     CONF_GUIEX load_stg;
-    char stg_path[MAX_PATH_LEN];
-    GetCHARfromString(stg_path, sizeof(stg_path), ClickedMenuItem->Tag->ToString());
+    TCHAR stg_path[MAX_PATH_LEN];
+    GetWCHARfromString(stg_path, _countof(stg_path), ClickedMenuItem->Tag->ToString());
     if (guiEx_config::load_guiEx_conf(&load_stg, stg_path) == CONF_ERROR_FILE_OPEN) {
         if (MessageBox::Show(LOAD_CLI_STRING(AUO_CONFIG_ERR_OPEN_STG_FILE) + L"\n"
                            + LOAD_CLI_STRING(AUO_CONFIG_ASK_STG_FILE_DELETE),
@@ -743,19 +744,19 @@ System::Void frmConfig::CheckTSLanguageDropDownItem(ToolStripMenuItem^ mItem) {
     if (mItem != nullptr)
         mItem->Checked = true;
 }
-System::Void frmConfig::SetSelectedLanguage(const char *language_text) {
+System::Void frmConfig::SetSelectedLanguage(const TCHAR *language_text) {
     for (int i = 0; i < fcgTSLanguage->DropDownItems->Count; i++) {
         ToolStripMenuItem^ item = dynamic_cast<ToolStripMenuItem^>(fcgTSLanguage->DropDownItems[i]);
-        char item_text[MAX_PATH_LEN];
-        GetCHARfromString(item_text, sizeof(item_text), item->Tag->ToString());
-        if (strncmp(item_text, language_text, strlen(language_text)) == 0) {
+        TCHAR item_text[MAX_PATH_LEN];
+        GetWCHARfromString(item_text, _countof(item_text), item->Tag->ToString());
+        if (_tcsncmp(item_text, language_text, _tcslen(language_text)) == 0) {
             CheckTSLanguageDropDownItem(item);
             break;
         }
     }
 }
 
-System::Void frmConfig::SaveSelectedLanguage(const char *language_text) {
+System::Void frmConfig::SaveSelectedLanguage(const TCHAR *language_text) {
     sys_dat->exstg->set_and_save_lang(language_text);
 }
 
@@ -766,8 +767,8 @@ System::Void frmConfig::fcgTSLanguage_DropDownItemClicked(System::Object^  sende
     if (ClickedMenuItem->Tag == nullptr || ClickedMenuItem->Tag->ToString()->Length == 0)
         return;
 
-    char language_text[MAX_PATH_LEN];
-    GetCHARfromString(language_text, sizeof(language_text), ClickedMenuItem->Tag->ToString());
+    TCHAR language_text[MAX_PATH_LEN];
+    GetWCHARfromString(language_text, _countof(language_text), ClickedMenuItem->Tag->ToString());
     SaveSelectedLanguage(language_text);
     load_lng(language_text);
     overwrite_aviutl_ini_auo_info();
@@ -782,7 +783,7 @@ System::Void frmConfig::InitLangList() {
 #define ENABLE_LNG_FILE_DETECT 1
 #if ENABLE_LNG_FILE_DETECT
     auto lnglist = find_lng_files();
-    list_lng = new std::vector<std::string>();
+    list_lng = new std::vector<tstring>();
     for (const auto& lang : lnglist) {
         list_lng->push_back(lang);
     }
@@ -799,7 +800,7 @@ System::Void frmConfig::InitLangList() {
     }
 #if ENABLE_LNG_FILE_DETECT
     for (size_t i = 0; i < list_lng->size(); i++) {
-        auto filename = String(PathFindFileNameA((*list_lng)[i].c_str())).ToString();
+        auto filename = String(PathFindFileNameW((*list_lng)[i].c_str())).ToString();
         ToolStripMenuItem^ mItem = gcnew ToolStripMenuItem(filename);
         mItem->DropDownItemClicked += gcnew System::Windows::Forms::ToolStripItemClickedEventHandler(this, &frmConfig::fcgTSLanguage_DropDownItemClicked);
         mItem->Tag = filename;
@@ -811,7 +812,7 @@ System::Void frmConfig::InitLangList() {
 
 //////////////   初期化関連     ////////////////
 System::Void frmConfig::InitData(CONF_GUIEX *set_config, const SYSTEM_DATA *system_data) {
-    if (set_config->size_all != CONF_INITIALIZED) {
+    if (set_config->header.size_all != CONF_INITIALIZED) {
         //初期化されていなければ初期化する
         init_CONF_GUIEX(set_config, FALSE);
     }
@@ -832,24 +833,27 @@ System::Void frmConfig::InitComboBox() {
     setComboBox(fcgCXQualityPreset,   list_quality);
     setComboBox(fcgCXInterlaced,      list_interlaced_mfx_gui);
     setComboBox(fcgCXAspectRatio,     aspect_desc);
-    setComboBox(fcgCXTrellis,         list_avc_trellis);
     setComboBox(fcgCXLookaheadDS,     list_lookahead_ds);
     
     setComboBox(fcgCXScenarioInfo,    list_scenario_info);
-    setComboBox(fcgCXMVPred,          list_mv_presicion);
-    setComboBox(fcgCXInterPred,       list_pred_block_size);
-    setComboBox(fcgCXIntraPred,       list_pred_block_size);
 
-    setComboBox(fcgCXMVCostScaling,   list_mv_cost_scaling);
+    setComboBox(fcgCXAdaptiveI,   list_mfx_codingoption);
+    setComboBox(fcgCXAdaptiveB,   list_mfx_codingoption);
+    setComboBox(fcgCXWeightP,     list_mfx_weight_pred);
+    setComboBox(fcgCXWeightB,     list_mfx_weight_pred);
+    setComboBox(fcgCXBPyramid,    list_mfx_codingoption);
+    setComboBox(fcgCXFadeDetect,  list_mfx_codingoption);
+    setComboBox(fcgCXMBBRC,       list_mfx_codingoption);
+    setComboBox(fcgCXExtBRC,      list_mfx_codingoption);
 
     setComboBox(fcgCXAudioTempDir,    audtempdir_desc);
     setComboBox(fcgCXMP4BoxTempDir,   mp4boxtempdir_desc);
-    setComboBox(fcgCXTempDir,    tempdir_desc);
+    setComboBox(fcgCXTempDir,         tempdir_desc);
 
-    setComboBox(fcgCXColorPrim,       list_colorprim, "auto");
-    setComboBox(fcgCXColorMatrix,     list_colormatrix, "auto");
-    setComboBox(fcgCXTransfer,        list_transfer, "auto");
-    setComboBox(fcgCXVideoFormat,     list_videoformat, "auto");
+    setComboBox(fcgCXColorPrim,       list_colorprim, L"auto");
+    setComboBox(fcgCXColorMatrix,     list_colormatrix, L"auto");
+    setComboBox(fcgCXTransfer,        list_transfer, L"auto");
+    setComboBox(fcgCXVideoFormat,     list_videoformat, L"auto");
 
     setComboBox(fcgCXVppDenoiseMethod, list_vpp_denoise);
     setComboBox(fcgCXVppDenoiseDctStep, list_vpp_denoise_dct_step_gui);
@@ -900,20 +904,20 @@ System::Void frmConfig::SetTXMaxLen(TextBox^ TX, int max_len) {
 
 System::Void frmConfig::SetTXMaxLenAll() {
     //MaxLengthに最大文字数をセットし、それをもとにバイト数計算を行うイベントをセットする。
-    SetTXMaxLen(fcgTXVideoEncoderPath,   sizeof(sys_dat->exstg->s_vid.fullpath) - 1);
-    SetTXMaxLen(fcgTXAudioEncoderPath,   sizeof(sys_dat->exstg->s_aud_ext[0].fullpath) - 1);
-    SetTXMaxLen(fcgTXMP4MuxerPath,       sizeof(sys_dat->exstg->s_mux[MUXER_MP4].fullpath) - 1);
-    SetTXMaxLen(fcgTXMKVMuxerPath,       sizeof(sys_dat->exstg->s_mux[MUXER_MKV].fullpath) - 1);
-    SetTXMaxLen(fcgTXTC2MP4Path,         sizeof(sys_dat->exstg->s_mux[MUXER_TC2MP4].fullpath) - 1);
-    SetTXMaxLen(fcgTXMP4RawPath,         sizeof(sys_dat->exstg->s_mux[MUXER_MP4_RAW].fullpath) - 1);
-    SetTXMaxLen(fcgTXCustomTempDir,      sizeof(sys_dat->exstg->s_local.custom_tmp_dir) - 1);
-    SetTXMaxLen(fcgTXCustomAudioTempDir, sizeof(sys_dat->exstg->s_local.custom_audio_tmp_dir) - 1);
-    SetTXMaxLen(fcgTXMP4BoxTempDir,      sizeof(sys_dat->exstg->s_local.custom_mp4box_tmp_dir) - 1);
-    SetTXMaxLen(fcgTXBatBeforeAudioPath, sizeof(conf->oth.batfile.before_audio) - 1);
-    SetTXMaxLen(fcgTXBatAfterAudioPath,  sizeof(conf->oth.batfile.after_audio) - 1);
-    SetTXMaxLen(fcgTXBatBeforePath,      sizeof(conf->oth.batfile.before_process) - 1);
-    SetTXMaxLen(fcgTXBatAfterPath,       sizeof(conf->oth.batfile.after_process) - 1);
-    fcgTSTSettingsNotes->MaxLength     = sizeof(conf->oth.notes) - 1;
+    SetTXMaxLen(fcgTXVideoEncoderPath,   _countof(sys_dat->exstg->s_enc.fullpath) - 1);
+    SetTXMaxLen(fcgTXAudioEncoderPath,   _countof(sys_dat->exstg->s_aud_ext[0].fullpath) - 1);
+    SetTXMaxLen(fcgTXMP4MuxerPath,       _countof(sys_dat->exstg->s_mux[MUXER_MP4].fullpath) - 1);
+    SetTXMaxLen(fcgTXMKVMuxerPath,       _countof(sys_dat->exstg->s_mux[MUXER_MKV].fullpath) - 1);
+    SetTXMaxLen(fcgTXTC2MP4Path,         _countof(sys_dat->exstg->s_mux[MUXER_TC2MP4].fullpath) - 1);
+    SetTXMaxLen(fcgTXMP4RawPath,         _countof(sys_dat->exstg->s_mux[MUXER_MP4_RAW].fullpath) - 1);
+    SetTXMaxLen(fcgTXCustomTempDir,      _countof(sys_dat->exstg->s_local.custom_tmp_dir) - 1);
+    SetTXMaxLen(fcgTXCustomAudioTempDir, _countof(sys_dat->exstg->s_local.custom_audio_tmp_dir) - 1);
+    SetTXMaxLen(fcgTXMP4BoxTempDir,      _countof(sys_dat->exstg->s_local.custom_mp4box_tmp_dir) - 1);
+    SetTXMaxLen(fcgTXBatBeforeAudioPath, _countof(conf->oth.batfile.before_audio) - 1);
+    SetTXMaxLen(fcgTXBatAfterAudioPath,  _countof(conf->oth.batfile.after_audio) - 1);
+    SetTXMaxLen(fcgTXBatBeforePath,      _countof(conf->oth.batfile.before_process) - 1);
+    SetTXMaxLen(fcgTXBatAfterPath,       _countof(conf->oth.batfile.after_process) - 1);
+    fcgTSTSettingsNotes->MaxLength     = _countof(conf->oth.notes) - 1;
 }
 
 System::Void frmConfig::InitStgFileList() {
@@ -1078,43 +1082,31 @@ System::Void frmConfig::fcgCheckLibVersion() {
     }
 
     //API v1.6 features
-    fcgCBExtBRC->Enabled = 0 != (available_features & ENC_FEATURE_EXT_BRC);
-    fcgCBMBBRC->Enabled  = 0 != (available_features & ENC_FEATURE_MBBRC);
-    if (!fcgCBExtBRC->Enabled) fcgCBExtBRC->Checked = false;
-    if (!fcgCBMBBRC->Enabled)  fcgCBMBBRC->Checked = false;
-
-    //API v1.7 features
-    fcgCheckRCModeLibVersion(MFX_RATECONTROL_LA, MFX_RATECONTROL_VBR, featuresHW->getRCAvail(fcgCXDevice->SelectedIndex, get_cx_index(list_encmode, MFX_RATECONTROL_LA), codec, funcMode));
-    available_features = featuresHW->getFeatureOfRC(fcgCXDevice->SelectedIndex, fcgCXEncMode->SelectedIndex, codec, funcMode); // fcgCXEncMode->SelectedIndex が変わっている可能性があるので再取得
-    fcgLBTrellis->Enabled = 0 != (available_features & ENC_FEATURE_TRELLIS);
-    fcgCXTrellis->Enabled = 0 != (available_features & ENC_FEATURE_TRELLIS);
-    if (!fcgCXTrellis->Enabled) fcgCXTrellis->SelectedIndex = 0;
+    fcgCXExtBRC->Enabled = 0 != (available_features & ENC_FEATURE_EXT_BRC);
+    fcgCXMBBRC->Enabled  = 0 != (available_features & ENC_FEATURE_MBBRC);
+    if (!fcgCXExtBRC->Enabled) fcgCXExtBRC->SelectedIndex = get_cx_index(list_mfx_codingoption, L"auto");
+    if (!fcgCXMBBRC->Enabled)  fcgCXMBBRC->SelectedIndex = get_cx_index(list_mfx_codingoption, L"auto");
 
     //API v1.8 features
     fcgCheckRCModeLibVersion(MFX_RATECONTROL_ICQ,    MFX_RATECONTROL_CQP, featuresHW->getRCAvail(fcgCXDevice->SelectedIndex, get_cx_index(list_encmode, MFX_RATECONTROL_ICQ),    codec, funcMode));
     fcgCheckRCModeLibVersion(MFX_RATECONTROL_LA_ICQ, MFX_RATECONTROL_CQP, featuresHW->getRCAvail(fcgCXDevice->SelectedIndex, get_cx_index(list_encmode, MFX_RATECONTROL_LA_ICQ), codec, funcMode));
     fcgCheckRCModeLibVersion(MFX_RATECONTROL_VCM,    MFX_RATECONTROL_VBR, featuresHW->getRCAvail(fcgCXDevice->SelectedIndex, get_cx_index(list_encmode, MFX_RATECONTROL_VCM),    codec, funcMode));
     available_features = featuresHW->getFeatureOfRC(fcgCXDevice->SelectedIndex, fcgCXEncMode->SelectedIndex, codec, funcMode); // fcgCXEncMode->SelectedIndex が変わっている可能性があるので再取得
-    fcgCBAdaptiveB->Enabled   = 0 != (available_features & ENC_FEATURE_ADAPTIVE_B);
-    fcgCBAdaptiveI->Enabled   = 0 != (available_features & ENC_FEATURE_ADAPTIVE_I);
-    fcgCBBPyramid->Enabled    = 0 != (available_features & ENC_FEATURE_B_PYRAMID);
+    fcgCXAdaptiveB->Enabled   = 0 != (available_features & ENC_FEATURE_ADAPTIVE_B);
+    fcgCXAdaptiveI->Enabled   = 0 != (available_features & ENC_FEATURE_ADAPTIVE_I);
+    fcgCXBPyramid->Enabled    = 0 != (available_features & ENC_FEATURE_B_PYRAMID);
     fcgLBLookaheadDS->Enabled = 0 != (available_features & ENC_FEATURE_LA_DS);
     fcgCXLookaheadDS->Enabled = 0 != (available_features & ENC_FEATURE_LA_DS);
-    if (!fcgCBAdaptiveB->Enabled)   fcgCBAdaptiveB->Checked = false;
-    if (!fcgCBAdaptiveI->Enabled)   fcgCBAdaptiveI->Checked = false;
-    if (!fcgCBBPyramid->Enabled)    fcgCBBPyramid->Checked  = false;
+    if (!fcgCXAdaptiveB->Enabled)   fcgCXAdaptiveB->SelectedIndex = get_cx_index(list_mfx_codingoption, L"auto");
+    if (!fcgCXAdaptiveI->Enabled)   fcgCXAdaptiveI->SelectedIndex = get_cx_index(list_mfx_codingoption, L"auto");
+    if (!fcgCXBPyramid->Enabled)    fcgCXBPyramid->SelectedIndex  = get_cx_index(list_mfx_codingoption, L"auto");
     if (!fcgCXLookaheadDS->Enabled) fcgCXLookaheadDS->SelectedIndex = 0;
 
     //API v1.9 features
     fcgNUQPMin->Enabled        = 0 != (available_features & ENC_FEATURE_QP_MINMAX);
     fcgNUQPMax->Enabled        = 0 != (available_features & ENC_FEATURE_QP_MINMAX);
-    fcgLBIntraRefreshCycle->Enabled = 0 != (available_features & ENC_FEATURE_INTRA_REFRESH);
-    fcgNUIntraRefreshCycle->Enabled = 0 != (available_features & ENC_FEATURE_INTRA_REFRESH);
-    fcgCBDeblock->Enabled      = 0 != (available_features & ENC_FEATURE_NO_DEBLOCK);
     if (!fcgNUQPMin->Enabled)        fcgNUQPMin->Value = 0;
     if (!fcgNUQPMax->Enabled)        fcgNUQPMax->Value = 0;
-    if (!fcgNUIntraRefreshCycle->Enabled) fcgNUIntraRefreshCycle->Value = 0;
-    if (!fcgCBDeblock->Enabled)      fcgCBDeblock->Checked = true;
 
     //API v1.11 features
     fcgCheckRCModeLibVersion(MFX_RATECONTROL_LA_HRD, MFX_RATECONTROL_VBR, featuresHW->getRCAvail(fcgCXDevice->SelectedIndex, get_cx_index(list_encmode, MFX_RATECONTROL_LA_HRD), codec, funcMode));
@@ -1126,18 +1118,11 @@ System::Void frmConfig::fcgCheckLibVersion() {
     fcgNUWinBRCSize->Enabled     = 0 != (available_features & ENC_FEATURE_WINBRC);
     if (!fcgNUWinBRCSize->Enabled) fcgNUWinBRCSize->Value = 0;
 
-    //API v1.13 features
-    fcgLBMVCostScaling->Enabled    = 0 != (available_features & ENC_FEATURE_GLOBAL_MOTION_ADJUST);
-    fcgCXMVCostScaling->Enabled    = 0 != (available_features & ENC_FEATURE_GLOBAL_MOTION_ADJUST);
-    fcgCBDirectBiasAdjust->Enabled = 0 != (available_features & ENC_FEATURE_DIRECT_BIAS_ADJUST);
-    if (!fcgCXMVCostScaling->Enabled)    fcgCXMVCostScaling->SelectedIndex = 0;
-    if (!fcgCBDirectBiasAdjust->Enabled) fcgCBDirectBiasAdjust->Checked = false;
-
     //API v1.16 features
-    fcgCBWeightP->Enabled          = 0 != (available_features & ENC_FEATURE_WEIGHT_P);
-    fcgCBWeightB->Enabled          = 0 != (available_features & ENC_FEATURE_WEIGHT_B);
-    if (!fcgCBWeightP->Enabled) fcgCBWeightP->Checked = false;
-    if (!fcgCBWeightB->Enabled) fcgCBWeightB->Checked = false;
+    fcgCXWeightP->Enabled          = 0 != (available_features & ENC_FEATURE_WEIGHT_P);
+    fcgCXWeightB->Enabled          = 0 != (available_features & ENC_FEATURE_WEIGHT_B);
+    if (!fcgCXWeightP->Enabled) fcgCXWeightP->SelectedIndex = get_cx_index(list_mfx_codingoption, L"auto");
+    if (!fcgCXWeightB->Enabled) fcgCXWeightB->SelectedIndex = get_cx_index(list_mfx_codingoption, L"auto");
 
     fcgCXBitDepth->Enabled         = 0 != (available_features & ENC_FEATURE_10BIT_DEPTH);
     if (!fcgCXBitDepth->Enabled)   fcgCXBitDepth->SelectedIndex = 0;
@@ -1199,8 +1184,6 @@ System::Void frmConfig::fcgChangeEnabled(System::Object^  sender, System::EventA
     fcgLBWinBRCSize->Visible = la_mode;
     fcgLBWinBRCSizeAuto->Visible = la_mode;
     fcgNUWinBRCSize->Visible = la_mode;
-
-    fcgPNExtSettings->Visible = false;
 
     fcgPNICQ->Visible = icq_mode;
     fcgPNQVBR->Visible = qvbr_mode;
@@ -1526,9 +1509,9 @@ System::Void frmConfig::LoadLangText() {
     LOAD_CLI_TEXT(fcgLBAVBRConvergence2);
     //LOAD_CLI_TEXT(fcgLBMFXLibDetectionHwValue);
     LOAD_CLI_TEXT(fcgLBMFXLibDetectionHwStatus);
-    LOAD_CLI_TEXT(fcgCBFadeDetect);
-    LOAD_CLI_TEXT(fcgCBWeightB);
-    LOAD_CLI_TEXT(fcgCBWeightP);
+    LOAD_CLI_TEXT(fcgLBFadeDetect);
+    LOAD_CLI_TEXT(fcgLBWeightB);
+    LOAD_CLI_TEXT(fcgLBWeightP);
     LOAD_CLI_TEXT(fcgLBWinBRCSizeAuto);
     LOAD_CLI_TEXT(fcgLBWinBRCSize);
     LOAD_CLI_TEXT(fcgLBQPMinMaxAuto);
@@ -1536,31 +1519,18 @@ System::Void frmConfig::LoadLangText() {
     LOAD_CLI_TEXT(fcgLBQPMinMAX);
     LOAD_CLI_TEXT(fcgLBICQQuality);
     LOAD_CLI_TEXT(fcgLBLookaheadDS);
-    LOAD_CLI_TEXT(fcgCBBPyramid);
-    LOAD_CLI_TEXT(fcgCBAdaptiveB);
-    LOAD_CLI_TEXT(fcgCBAdaptiveI);
+    LOAD_CLI_TEXT(fcgLBBPyramid);
+    LOAD_CLI_TEXT(fcgLBAdaptiveB);
+    LOAD_CLI_TEXT(fcgLBAdaptiveI);
     LOAD_CLI_TEXT(fcgLBBlurayCompat);
     LOAD_CLI_TEXT(fcgLBMFXLibDetection);
     LOAD_CLI_TEXT(fcgLBRefAuto);
     LOAD_CLI_TEXT(fcgLBBframesAuto);
-    LOAD_CLI_TEXT(fcgCBOpenGOP);
+    LOAD_CLI_TEXT(fcgLBOpenGOP);
     LOAD_CLI_TEXT(fcgCBOutputPicStruct);
     LOAD_CLI_TEXT(fcgCBOutputAud);
-    LOAD_CLI_TEXT(fcggroupBoxDetail);
-    LOAD_CLI_TEXT(fcgCBDirectBiasAdjust);
-    LOAD_CLI_TEXT(fcgLBMVCostScaling);
-    LOAD_CLI_TEXT(fcgCBExtBRC);
-    LOAD_CLI_TEXT(fcgCBMBBRC);
-    LOAD_CLI_TEXT(fcgLBTrellis);
-    LOAD_CLI_TEXT(fcgLBIntraRefreshCycle);
-    LOAD_CLI_TEXT(fcgCBDeblock);
-    LOAD_CLI_TEXT(fcgLBInterPred);
-    LOAD_CLI_TEXT(fcgLBIntraPred);
-    LOAD_CLI_TEXT(fcgLBMVPred);
-    LOAD_CLI_TEXT(fcgLBMVWindowSize);
-    LOAD_CLI_TEXT(fcgLBMVSearch);
-    LOAD_CLI_TEXT(fcgCBRDO);
-    LOAD_CLI_TEXT(fcgCBCABAC);
+    LOAD_CLI_TEXT(fcgLBExtBRC);
+    LOAD_CLI_TEXT(fcgLBMBBRC);
     LOAD_CLI_TEXT(fcgCBD3DMemAlloc);
     LOAD_CLI_TEXT(fcgLBLookaheadDepth2);
     LOAD_CLI_TEXT(fcgLBLookaheadDepth);
@@ -1758,7 +1728,6 @@ System::Void frmConfig::ConfToFrm(CONF_GUIEX *cnf) {
     } else {
         SetNUValue(fcgNUBframes, prm_qsv.GopRefDist);
     }
-    SetCXIndex(fcgCXTrellis,      get_cx_index(list_avc_trellis, prm_qsv.nTrellis));
     SetCXIndex(fcgCXCodecLevel,   get_cx_index(get_level_list(prm_qsv.codec),   prm_qsv.CodecLevel));
     SetCXIndex(fcgCXCodecProfile, get_cx_index(get_profile_list(prm_qsv.codec), prm_qsv.CodecProfile));
     SetCXIndex(fcgCXFunctionMode, get_cx_index(list_qsv_function_mode, (int)prm_qsv.functionMode));
@@ -1767,15 +1736,15 @@ System::Void frmConfig::ConfToFrm(CONF_GUIEX *cnf) {
     SetNUValue(fcgNUAVBRAccuarcy, prm_qsv.rcParam.avbrAccuarcy / Convert::ToDecimal(10.0));
     SetNUValue(fcgNUAVBRConvergence, prm_qsv.rcParam.avbrConvergence);
     SetNUValue(fcgNULookaheadDepth, prm_qsv.nLookaheadDepth);
-    fcgCBAdaptiveI->Checked     = prm_qsv.bAdaptiveI.value_or(false);
-    fcgCBAdaptiveB->Checked     = prm_qsv.bAdaptiveB.value_or(false);
-    fcgCBWeightP->Checked       = prm_qsv.nWeightP != MFX_WEIGHTED_PRED_UNKNOWN;
-    fcgCBWeightB->Checked       = prm_qsv.nWeightB != MFX_WEIGHTED_PRED_UNKNOWN;
-    fcgCBFadeDetect->Checked    = prm_qsv.nFadeDetect.value_or(false);
-    fcgCBBPyramid->Checked      = prm_qsv.bBPyramid.value_or(false);
+    SetCXIndex(fcgCXAdaptiveI,   prm_qsv.bAdaptiveI);
+    SetCXIndex(fcgCXAdaptiveB,   prm_qsv.bAdaptiveB);
+    SetCXIndex(fcgCXWeightP,     get_cx_index(list_mfx_weight_pred, prm_qsv.nWeightP));
+    SetCXIndex(fcgCXWeightB,     get_cx_index(list_mfx_weight_pred, prm_qsv.nWeightB));
+    SetCXIndex(fcgCXFadeDetect,  prm_qsv.nFadeDetect);
+    SetCXIndex(fcgCXBPyramid,    prm_qsv.bBPyramid);
     SetCXIndex(fcgCXLookaheadDS,  get_cx_index(list_lookahead_ds, prm_qsv.nLookaheadDS));
-    fcgCBMBBRC->Checked         = prm_qsv.bMBBRC.value_or(false);
-    //fcgCBExtBRC->Checked        = prm_qsv.bExtBRC != 0;
+    SetCXIndex(fcgCXMBBRC,        prm_qsv.bMBBRC);
+    SetCXIndex(fcgCXExtBRC,       prm_qsv.extBRC);
     SetNUValue(fcgNUWinBRCSize,       prm_qsv.nWinBRCSize);
     SetCXIndex(fcgCXInterlaced,   get_cx_index(list_interlaced, prm_qsv.input.picstruct));
     if (prm_qsv.nPAR[0] * prm_qsv.nPAR[1] <= 0)
@@ -1795,18 +1764,6 @@ System::Void frmConfig::ConfToFrm(CONF_GUIEX *cnf) {
     SetNUValue(fcgNUQPMin,         prm_qsv.qpMin.qpI);
     SetNUValue(fcgNUQPMax,         prm_qsv.qpMax.qpI);
 
-    fcgCBCABAC->Checked          = !prm_qsv.bCAVLC;
-    fcgCBRDO->Checked            = prm_qsv.bRDO.value_or(false);
-    SetNUValue(fcgNUMVSearchWindow, prm_qsv.MVSearchWindow.first);
-    SetCXIndex(fcgCXMVPred,      get_cx_index(list_mv_presicion,    prm_qsv.nMVPrecision));
-    SetCXIndex(fcgCXInterPred,   get_cx_index(list_pred_block_size, prm_qsv.nInterPred));
-    SetCXIndex(fcgCXIntraPred,   get_cx_index(list_pred_block_size, prm_qsv.nIntraPred));
-
-    fcgCBDirectBiasAdjust->Checked = prm_qsv.bDirectBiasAdjust.value_or(false);
-    SetCXIndex(fcgCXMVCostScaling, (prm_qsv.bGlobalMotionAdjust) ? get_cx_index(list_mv_cost_scaling, prm_qsv.nMVCostScaling) : 0);
-
-    fcgCBDeblock->Checked        = prm_qsv.bNoDeblock == 0;
-    SetNUValue(fcgNUIntraRefreshCycle, prm_qsv.intraRefreshCycle);
 
     SetCXIndex(fcgCXTransfer,    get_cx_index(list_transfer,    prm_qsv.common.out_vui.transfer));
     SetCXIndex(fcgCXColorMatrix, get_cx_index(list_colormatrix, prm_qsv.common.out_vui.matrix));
@@ -1965,9 +1922,9 @@ System::Void frmConfig::ConfToFrm(CONF_GUIEX *cnf) {
 
         SetNUValue(fcgNUVppMctf, (prm_qsv.vppmfx.mctf.enable) ? prm_qsv.vppmfx.mctf.strength : 0);
         SetCXIndex(fcgCXVppResizeAlg, get_cx_index(list_vpp_resize, prm_qsv.vpp.resize_algo));
-        fcgCBVppResize->Checked = cnf->vid.resize_enable;
-        SetNUValue(fcgNUResizeW, cnf->vid.resize_width);
-        SetNUValue(fcgNUResizeH, cnf->vid.resize_height);
+        fcgCBVppResize->Checked = cnf->enc.resize_enable;
+        SetNUValue(fcgNUResizeW, cnf->enc.resize_width);
+        SetNUValue(fcgNUResizeH, cnf->enc.resize_height);
 
         fcgCBSsim->Checked = prm_qsv.common.metric.ssim;
         fcgCBPsnr->Checked = prm_qsv.common.metric.psnr;
@@ -2057,17 +2014,16 @@ System::String^ frmConfig::FrmToConf(CONF_GUIEX *cnf) {
     } else {
         prm_qsv.GopRefDist = (int)fcgNUBframes->Value;
     }
-    prm_qsv.nTrellis               = (int)list_avc_trellis[fcgCXTrellis->SelectedIndex].value;
     prm_qsv.input.picstruct        = (RGY_PICSTRUCT)list_interlaced[fcgCXInterlaced->SelectedIndex].value;
-    prm_qsv.bAdaptiveI             = fcgCBAdaptiveI->Checked;
-    prm_qsv.bAdaptiveB             = fcgCBAdaptiveB->Checked;
-    prm_qsv.nWeightP               = (int)(fcgCBWeightP->Checked    ? MFX_WEIGHTED_PRED_DEFAULT : MFX_WEIGHTED_PRED_UNKNOWN);
-    prm_qsv.nWeightB               = (int)(fcgCBWeightB->Checked    ? MFX_WEIGHTED_PRED_DEFAULT : MFX_WEIGHTED_PRED_UNKNOWN);
-    prm_qsv.nFadeDetect            = (int)(fcgCBFadeDetect->Checked ? MFX_CODINGOPTION_ON : MFX_CODINGOPTION_UNKNOWN);
-    prm_qsv.bBPyramid              = fcgCBBPyramid->Checked;
+    SetOptValueCX(prm_qsv.bAdaptiveI, fcgCXAdaptiveI);
+    SetOptValueCX(prm_qsv.bAdaptiveB, fcgCXAdaptiveB);
+    prm_qsv.nWeightP               = (int)(fcgCXWeightP->SelectedIndex ? MFX_WEIGHTED_PRED_DEFAULT : MFX_WEIGHTED_PRED_UNKNOWN);
+    prm_qsv.nWeightB               = (int)(fcgCXWeightB->SelectedIndex ? MFX_WEIGHTED_PRED_DEFAULT : MFX_WEIGHTED_PRED_UNKNOWN);
+    SetOptValueCX(prm_qsv.nFadeDetect, fcgCXFadeDetect);
+    SetOptValueCX(prm_qsv.bBPyramid, fcgCXBPyramid);
     prm_qsv.nLookaheadDS           = (int)list_lookahead_ds[fcgCXLookaheadDS->SelectedIndex].value;
-    prm_qsv.bMBBRC                 = fcgCBMBBRC->Checked;
-    //prm_qsv.bExtBRC                = fcgCBExtBRC->Checked;
+    SetOptValueCX(prm_qsv.bMBBRC, fcgCXMBBRC);
+    SetOptValueCX(prm_qsv.extBRC, fcgCXExtBRC);
     prm_qsv.nWinBRCSize            = (int)fcgNUWinBRCSize->Value;
     prm_qsv.functionMode           = (QSVFunctionMode)list_qsv_function_mode[fcgCXFunctionMode->SelectedIndex].value;
     prm_qsv.memType                = (fcgCBD3DMemAlloc->Checked) ? HW_MEMORY : SYSTEM_MEMORY;
@@ -2079,21 +2035,6 @@ System::String^ frmConfig::FrmToConf(CONF_GUIEX *cnf) {
     prm_qsv.qpMax                  = RGYQPSet((int)fcgNUQPMax->Value, (int)fcgNUQPMax->Value, (int)fcgNUQPMax->Value);
 
     prm_qsv.nBluray                = fcgCBBlurayCompat->Checked;
-
-    prm_qsv.bNoDeblock             = !fcgCBDeblock->Checked;
-    prm_qsv.intraRefreshCycle      = (int)fcgNUIntraRefreshCycle->Value;
-
-    prm_qsv.bCAVLC                 = !fcgCBCABAC->Checked;
-    prm_qsv.bRDO                   = fcgCBRDO->Checked;
-    prm_qsv.MVSearchWindow.first   = (int)fcgNUMVSearchWindow->Value;
-    prm_qsv.MVSearchWindow.second  = (int)fcgNUMVSearchWindow->Value;
-    prm_qsv.nMVPrecision           = (int)list_mv_presicion[fcgCXMVPred->SelectedIndex].value;
-    prm_qsv.nInterPred             = (int)list_pred_block_size[fcgCXInterPred->SelectedIndex].value;
-    prm_qsv.nIntraPred             = (int)list_pred_block_size[fcgCXIntraPred->SelectedIndex].value;
-
-    prm_qsv.bDirectBiasAdjust      = fcgCBDirectBiasAdjust->Checked;
-    prm_qsv.bGlobalMotionAdjust    = list_mv_cost_scaling[fcgCXMVCostScaling->SelectedIndex].value > 0;
-    prm_qsv.nMVCostScaling         = (int)((prm_qsv.bGlobalMotionAdjust) ? list_mv_cost_scaling[fcgCXMVCostScaling->SelectedIndex].value : 0);
 
     prm_qsv.common.out_vui.matrix    = (CspMatrix)list_colormatrix[fcgCXColorMatrix->SelectedIndex].value;
     prm_qsv.common.out_vui.colorprim = (CspColorprim)list_colorprim[fcgCXColorPrim->SelectedIndex].value;
@@ -2250,12 +2191,12 @@ System::String^ frmConfig::FrmToConf(CONF_GUIEX *cnf) {
     prm_qsv.vpp.transform.setRotate((int)list_rotate_angle_ja[fcgCXRotate->SelectedIndex].value);
 
     prm_qsv.vpp.resize_algo = (RGY_VPP_RESIZE_ALGO)list_vpp_resize[fcgCXVppResizeAlg->SelectedIndex].value;
-    cnf->vid.resize_enable = fcgCBVppResize->Checked;
-    cnf->vid.resize_width = (int)fcgNUResizeW->Value;
-    cnf->vid.resize_height = (int)fcgNUResizeH->Value;
-    if (cnf->vid.resize_enable) {
-        prm_qsv.input.dstWidth = cnf->vid.resize_width;
-        prm_qsv.input.dstHeight = cnf->vid.resize_height;
+    cnf->enc.resize_enable = fcgCBVppResize->Checked;
+    cnf->enc.resize_width = (int)fcgNUResizeW->Value;
+    cnf->enc.resize_height = (int)fcgNUResizeH->Value;
+    if (cnf->enc.resize_enable) {
+        prm_qsv.input.dstWidth = cnf->enc.resize_width;
+        prm_qsv.input.dstHeight = cnf->enc.resize_height;
     } else {
         prm_qsv.input.dstWidth = 0;
         prm_qsv.input.dstHeight = 0;
@@ -2310,24 +2251,24 @@ System::String^ frmConfig::FrmToConf(CONF_GUIEX *cnf) {
     cnf->oth.dont_wait_bat_fin      = RUN_BAT_NONE;
     cnf->oth.dont_wait_bat_fin     |= (!fcgCBWaitForBatBefore->Checked) ? RUN_BAT_BEFORE_PROCESS : NULL;
     cnf->oth.dont_wait_bat_fin     |= (!fcgCBWaitForBatAfter->Checked)  ? RUN_BAT_AFTER_PROCESS  : NULL;
-    GetCHARfromString(cnf->oth.batfile.before_process, sizeof(cnf->oth.batfile.before_process), fcgTXBatBeforePath->Text);
-    GetCHARfromString(cnf->oth.batfile.after_process,  sizeof(cnf->oth.batfile.after_process),  fcgTXBatAfterPath->Text);
-    GetCHARfromString(cnf->oth.batfile.before_audio, sizeof(cnf->oth.batfile.before_audio), fcgTXBatBeforeAudioPath->Text);
-    GetCHARfromString(cnf->oth.batfile.after_audio,  sizeof(cnf->oth.batfile.after_audio),  fcgTXBatAfterAudioPath->Text);
+    GetWCHARfromString(cnf->oth.batfile.before_process, _countof(cnf->oth.batfile.before_process), fcgTXBatBeforePath->Text);
+    GetWCHARfromString(cnf->oth.batfile.after_process,  _countof(cnf->oth.batfile.after_process),  fcgTXBatAfterPath->Text);
+    GetWCHARfromString(cnf->oth.batfile.before_audio, _countof(cnf->oth.batfile.before_audio), fcgTXBatBeforeAudioPath->Text);
+    GetWCHARfromString(cnf->oth.batfile.after_audio,  _countof(cnf->oth.batfile.after_audio),  fcgTXBatAfterAudioPath->Text);
 
-    GetfcgTSLSettingsNotes(cnf->oth.notes, sizeof(cnf->oth.notes));
-    strcpy_s(cnf->enc.cmd, gen_cmd(&prm_qsv, true).c_str());
+    GetfcgTSLSettingsNotes(cnf->oth.notes, _countof(cnf->oth.notes));
+    _tcscpy_s(cnf->enc.cmd, gen_cmd(&prm_qsv, true).c_str());
 
     return String(gen_cmd(&prm_qsv, false).c_str()).ToString();
 }
 
-System::Void frmConfig::GetfcgTSLSettingsNotes(char *notes, int nSize) {
+System::Void frmConfig::GetfcgTSLSettingsNotes(TCHAR *notes, int nSize) {
     ZeroMemory(notes, nSize);
     if (fcgTSLSettingsNotes->Overflow != ToolStripItemOverflow::Never)
-        GetCHARfromString(notes, nSize, fcgTSLSettingsNotes->Text);
+        GetWCHARfromString(notes, nSize, fcgTSLSettingsNotes->Text);
 }
 
-System::Void frmConfig::SetfcgTSLSettingsNotes(const char *notes) {
+System::Void frmConfig::SetfcgTSLSettingsNotes(const TCHAR *notes) {
     if (str_has_char(notes)) {
         fcgTSLSettingsNotes->ForeColor = Color::FromArgb(StgNotesColor[0][0], StgNotesColor[0][1], StgNotesColor[0][2]);
         fcgTSLSettingsNotes->Text = String(notes).ToString();
@@ -2419,13 +2360,19 @@ System::Void frmConfig::SetAllMouseMove(Control ^top, const AuoTheme themeTo) {
 }
 
 System::Void frmConfig::CheckTheme() {
-    //DarkenWindowが使用されていれば設定をロードする
-    if (dwStgReader != nullptr) delete dwStgReader;
-    const auto [themeTo, dwStg] = check_current_theme(sys_dat->aviutl_dir);
-    dwStgReader = dwStg;
-
-    //変更の必要がなければ終了
-    if (themeTo == themeMode) return;
+    AuoTheme themeTo = AuoTheme::DefaultLight;
+    try {
+        //DarkenWindowが使用されていれば設定をロードする
+        if (dwStgReader != nullptr) delete dwStgReader;
+        const auto [theme, dwStg] = check_current_theme(sys_dat->aviutl_dir);
+        if (dwStg == nullptr) return;
+        themeTo = theme;
+        dwStgReader = dwStg;
+        //変更の必要がなければ終了
+        if (themeTo == themeMode) return;
+    } catch (...) {
+        return;
+    }
 
     //一度ウィンドウの再描画を完全に抑止する
     SendMessage(reinterpret_cast<HWND>(this->Handle.ToPointer()), WM_SETREDRAW, 0, 0);
@@ -2514,13 +2461,13 @@ System::Void frmConfig::SetHelpToolTips() {
     SET_TOOL_TIP_EX(fcgNUGopLength);
     SET_TOOL_TIP_EX(fcgNURef);
     SET_TOOL_TIP_EX(fcgNUBframes);
-    SET_TOOL_TIP_EX(fcgCBAdaptiveI);
-    SET_TOOL_TIP_EX(fcgCBAdaptiveB);
-    SET_TOOL_TIP_EX(fcgCBWeightP);
-    SET_TOOL_TIP_EX(fcgCBWeightB);
-    SET_TOOL_TIP_EX(fcgCBFadeDetect);
+    SET_TOOL_TIP_EX(fcgCXAdaptiveI);
+    SET_TOOL_TIP_EX(fcgCXAdaptiveB);
+    SET_TOOL_TIP_EX(fcgCXWeightP);
+    SET_TOOL_TIP_EX(fcgCXWeightB);
+    SET_TOOL_TIP_EX(fcgCXFadeDetect);
     SET_TOOL_TIP_EX(fcgCBOpenGOP);
-    SET_TOOL_TIP_EX(fcgCBBPyramid);
+    SET_TOOL_TIP_EX(fcgCXBPyramid);
     SET_TOOL_TIP_EX(fcgCXLookaheadDS);
     SET_TOOL_TIP_EX(fcgNUWinBRCSize);
     SET_TOOL_TIP_EX(fcgNUQPMin);
@@ -2539,19 +2486,8 @@ System::Void frmConfig::SetHelpToolTips() {
     SET_TOOL_TIP_EX(fcgCBAvoidIdleClock);
     SET_TOOL_TIP_EX(fcgCBOutputAud);
     SET_TOOL_TIP_EX(fcgCBOutputPicStruct);
-    SET_TOOL_TIP_EX(fcgCBDeblock);
-    SET_TOOL_TIP_EX(fcgNUIntraRefreshCycle);
-    SET_TOOL_TIP_EX(fcgCBDirectBiasAdjust);
-    SET_TOOL_TIP_EX(fcgCXMVCostScaling);
-    SET_TOOL_TIP_EX(fcgCXTrellis);
-    SET_TOOL_TIP_EX(fcgCBMBBRC);
-    SET_TOOL_TIP_EX(fcgCBExtBRC);
-    SET_TOOL_TIP_EX(fcgCXIntraPred);
-    SET_TOOL_TIP_EX(fcgCXInterPred);
-    SET_TOOL_TIP_EX(fcgNUMVSearchWindow);
-    SET_TOOL_TIP_EX(fcgCXMVPred);
-    SET_TOOL_TIP_EX(fcgCBCABAC);
-    SET_TOOL_TIP_EX(fcgCBRDO);
+    SET_TOOL_TIP_EX(fcgCXMBBRC);
+    SET_TOOL_TIP_EX(fcgCXExtBRC);
 
     SET_TOOL_TIP_EX(fcgCXOutputCsp);
 
@@ -2729,11 +2665,11 @@ System::Void frmConfig::ShowExehelp(String^ ExePath, String^ args) {
     if (!File::Exists(ExePath)) {
         MessageBox::Show(L"指定された実行ファイルが存在しません。", L"エラー", MessageBoxButtons::OK, MessageBoxIcon::Error);
     } else {
-        char exe_path[MAX_PATH_LEN];
-        char file_path[MAX_PATH_LEN];
-        char cmd[MAX_CMD_LEN];
-        GetCHARfromString(exe_path, sizeof(exe_path), ExePath);
-        apply_appendix(file_path, _countof(file_path), exe_path, "_fullhelp.txt");
+        TCHAR exe_path[MAX_PATH_LEN];
+        TCHAR file_path[MAX_PATH_LEN];
+        TCHAR cmd[MAX_CMD_LEN];
+        GetWCHARfromString(exe_path, _countof(exe_path), ExePath);
+        apply_appendix(file_path, _countof(file_path), exe_path, _T("_fullhelp.txt"));
         File::Delete(String(file_path).ToString());
         array<String^>^ arg_list = args->Split(L';');
         for (int i = 0; i < arg_list->Length; i++) {
@@ -2749,7 +2685,7 @@ System::Void frmConfig::ShowExehelp(String^ ExePath, String^ args) {
                     if (sw != nullptr) { sw->Close(); }
                 }
             }
-            GetCHARfromString(cmd, sizeof(cmd), arg_list[i]);
+            GetWCHARfromString(cmd, _countof(cmd), arg_list[i]);
             if (get_exe_message_to_file(exe_path, cmd, file_path, AUO_PIPE_MUXED, 5) != RP_SUCCESS) {
                 File::Delete(String(file_path).ToString());
                 MessageBox::Show(L"helpの取得に失敗しました。", L"エラー", MessageBoxButtons::OK, MessageBoxIcon::Error);
