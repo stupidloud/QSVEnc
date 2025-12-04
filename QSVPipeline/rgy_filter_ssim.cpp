@@ -366,6 +366,12 @@ RGY_ERR RGYFilterSsim::init_cl_resources() {
         return err_to_rgy(res);
     }
 
+    //AMF_VIDEO_DECODER_SURFACE_COPYを使用すると、pre-analysis使用時などに発生するSubmitInput時のAMF_DECODER_NO_FREE_SURFACESを回避できる
+    //しかし、メモリ確保エラーが発生することがある(AMF_DIRECTX_FAIL)
+    //そこで、AMF_VIDEO_DECODER_SURFACE_COPYは使用せず、QueryOutput後、明示的にsurface->Duplicateを行って同様の挙動を再現する
+    //AV1デコードでは、これを有効にしないとAMF_DECODER_NO_FREE_SURFACESで止まってしまうことがわかったので、再度有効にする
+    m_decoder->SetProperty(AMF_VIDEO_DECODER_SURFACE_COPY, true);
+
     amf::AMFBufferPtr buffer;
     m_context->AllocBuffer(amf::AMF_MEMORY_HOST, prm->input.codecExtraSize, &buffer);
 
@@ -470,7 +476,12 @@ RGY_ERR RGYFilterSsim::addBitstream(const RGYBitstream *bitstream) {
     pictureBuffer->SetDuration(bitstream->duration());
     pictureBuffer->SetPts(bitstream->pts());
     for (;;) {
-        ar = m_decoder->SubmitInput(pictureBuffer);
+        try {
+            ar = m_decoder->SubmitInput(pictureBuffer);
+        } catch (...) {
+            AddMessage(RGY_LOG_ERROR, _T("ERROR: Unexpected error while submitting bitstream to decoder.\n"));
+            ar = AMF_UNEXPECTED;
+        }
         if (ar == AMF_NEED_MORE_INPUT) {
             break;
         } else if (ar == AMF_RESOLUTION_CHANGED || ar == AMF_RESOLUTION_UPDATED) {
@@ -479,7 +490,7 @@ RGY_ERR RGYFilterSsim::addBitstream(const RGYBitstream *bitstream) {
         } else if (ar == AMF_INPUT_FULL || ar == AMF_DECODER_NO_FREE_SURFACES) {
             std::this_thread::sleep_for(std::chrono::milliseconds(1));
         } else if (ar == AMF_REPEAT) {
-            pictureBuffer = nullptr;
+            continue; // 46ab4241 を反映、データはまだ使用されていないので、再度呼び出し
         } else {
             break;
         }
@@ -645,50 +656,52 @@ RGY_ERR RGYFilterSsim::compare_frames() {
     auto ar = AMF_REPEAT;
     //auto timeS = std::chrono::system_clock::now();
     amf::AMFDataPtr data;
-    ar = m_decoder->QueryOutput(&data);
+    try {
+        ar = m_decoder->QueryOutput(&data);
+    } catch (...) {
+        AddMessage(RGY_LOG_ERROR, _T("ERROR: Unexpected error while getting frame from decoder.\n"));
+        ar = AMF_UNEXPECTED;
+    }
     if (ar == AMF_EOF) {
         return RGY_ERR_MORE_DATA;
     }
     if (ar == AMF_REPEAT) {
         ar = AMF_OK; //これ重要...ここが欠けると最後の数フレームが欠落する
     }
-    if (ar == AMF_OK && data != nullptr) {
-        surf = amf::AMFSurfacePtr(data);
-    } else if (ar != AMF_OK) {
+    if (ar != AMF_OK) {
         auto res = err_to_rgy(ar);
         AddMessage(RGY_LOG_ERROR, _T("Failed to query output: %s.\n"), get_err_mes(res));
         return res;
-    } else if (m_abort) {
+    }
+    if (m_abort) {
         return RGY_ERR_ABORTED;
-    } else {
+    }
+    if (data == nullptr) {
         if (m_thread.joinable()) {
             std::this_thread::sleep_for(std::chrono::milliseconds(1));
         }
         return RGY_ERR_MORE_BITSTREAM;
     }
+    // ar == AMF_OK && data != nullptr のケース: 取得できたフレームを処理
+    surf = amf::AMFSurfacePtr(data);
     //if ((std::chrono::system_clock::now() - timeS) > std::chrono::seconds(10)) {
     //    PrintMes(RGY_LOG_ERROR, _T("10 sec has passed after getting last frame from decoder.\n"));
     //    PrintMes(RGY_LOG_ERROR, _T("Decoder seems to have crushed.\n"));
     //    ar = AMF_FAIL;
     //    break;
     //}
-    auto decFrame = std::make_unique<RGYFrameAMF>(surf);
-    const auto &decAmf = decFrame->amf();
+    // 取得したデコーダサーフェスを必ずOpenCLメモリへDuplicateしてから使用する
+    amf::AMFDataPtr dataOCL;
     {
         VCEAMF(amf::AMFContext::AMFOpenCLLocker locker(m_context));
-#if 1
-        //dummyのCPUへのメモリコピーを行う
-        //こうしないとデコーダからの出力をOpenCLに渡したときに、フレームが壊れる(フレーム順序が入れ替わってガクガクする)
-        amf::AMFDataPtr data;
-        decAmf->Duplicate(amf::AMF_MEMORY_HOST, &data);
-#endif
-        ar = decAmf->Convert(amf::AMF_MEMORY_OPENCL);
-        if (ar != AMF_OK) {
-            auto res = err_to_rgy(ar);
-            AddMessage(RGY_LOG_ERROR, _T("Failed to load input frame: %s.\n"), get_err_mes(res));
-            return res;
-        }
+        ar = surf->Duplicate(amf::AMF_MEMORY_OPENCL, &dataOCL);
     }
+    if (ar != AMF_OK) {
+        auto res = err_to_rgy(ar);
+        AddMessage(RGY_LOG_ERROR, _T("Failed to copy decoded frame to OpenCL: %s.\n"), get_err_mes(res));
+        return res;
+    }
+    auto decFrame = std::make_unique<RGYFrameAMF>(amf::AMFSurfacePtr(dataOCL));
     {
         if (!m_cropDec) {
             AddMessage(RGY_LOG_ERROR, _T("m_cropDec not set.\n"));
@@ -1009,6 +1022,38 @@ void RGYFilterSsim::close() {
         m_abort = true;
         m_thread.join();
     }
+    // デコーダの出力を確実に回収してサーフェスを解放する
+#if ENCODER_VCEENC
+    if (m_decoder) {
+        try {
+            m_decoder->Drain();
+        } catch (...) {
+            AddMessage(RGY_LOG_ERROR, _T("ERROR: Unexpected error while draining decoder.\n"));
+        }
+        for (;;) {
+            amf::AMFDataPtr data;
+            AMF_RESULT ar = AMF_OK;
+            try {
+                ar = m_decoder->QueryOutput(&data);
+            } catch (...) {
+                AddMessage(RGY_LOG_ERROR, _T("ERROR: Unexpected error while getting frame from decoder on close.\n"));
+                break;
+            }
+            if (ar == AMF_EOF) {
+                break;
+            }
+            if (ar == AMF_REPEAT || (ar == AMF_OK && data == nullptr)) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(1));
+                continue;
+            }
+            if (ar != AMF_OK) {
+                AddMessage(RGY_LOG_WARN, _T("Decoder QueryOutput returned %s on close.\n"), AMFRetString(ar));
+                break;
+            }
+            // dataがある場合は、そのままスコープアウトで参照を落とす
+        }
+    }
+#endif
     close_cl_resources();
     m_cropOrg.reset();
     m_cropDec.reset();
