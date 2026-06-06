@@ -58,10 +58,13 @@ COPY --from=builder /usr/lib/libswscale*.so* /usr/lib/
 RUN ldconfig && \
     ffmpeg -version
 
-# Install the latest QSVEnc release for Ubuntu
-RUN LATEST_URL=$(wget -qO- https://api.github.com/repos/rigaya/QSVEnc/releases/latest | grep -o 'https://github.com/rigaya/QSVEnc/releases/download/[^"]*Ubuntu22.04_amd64.deb') \
-    && echo "Downloading latest QSVEnc from: $LATEST_URL" \
-    && wget -O /tmp/qsvencc.deb "$LATEST_URL" \
+# Install QSVEnc release for Ubuntu
+# QSVENC_DEB_URL 由 CI 通过 gh api（已认证，限额 1000/h）解析后注入，
+# 避免 docker build 内未认证调用 api.github.com 触发 60/h 速率限制。
+ARG QSVENC_DEB_URL
+RUN test -n "$QSVENC_DEB_URL" || (echo "QSVENC_DEB_URL build-arg is required" >&2 && exit 1) \
+    && echo "Downloading QSVEnc from: $QSVENC_DEB_URL" \
+    && wget -O /tmp/qsvencc.deb "$QSVENC_DEB_URL" \
     && apt-get update \
     && dpkg -i --force-depends /tmp/qsvencc.deb \
     && rm /tmp/qsvencc.deb \
