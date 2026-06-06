@@ -26,30 +26,32 @@
 //
 // ------------------------------------------------------------------------------------------
 
+#pragma once
+
 #include "rgy_filter_cl.h"
 #include "rgy_prm.h"
 #include <array>
 
-class RGYFilterParamMsharpen : public RGYFilterParam {
+class RGYFilterParamCas : public RGYFilterParam {
 public:
-    VppMsharpen msharpen;
-    RGYFilterParamMsharpen() : msharpen() {};
-    virtual ~RGYFilterParamMsharpen() {};
-    virtual tstring print() const override { return msharpen.print(); };
+    VppCas cas;
+    RGYFilterParamCas() : cas() {};
+    virtual ~RGYFilterParamCas() {};
+    virtual tstring print() const override { return cas.print(); };
 };
 
-class RGYFilterMsharpen : public RGYFilter {
+class RGYFilterCas : public RGYFilter {
 public:
-    RGYFilterMsharpen(shared_ptr<RGYOpenCLContext> context);
-    virtual ~RGYFilterMsharpen();
+    RGYFilterCas(shared_ptr<RGYOpenCLContext> context);
+    virtual ~RGYFilterCas();
     virtual RGY_ERR init(shared_ptr<RGYFilterParam> pParam, shared_ptr<RGYLog> pPrintMes) override;
 protected:
     virtual RGY_ERR run_filter(const RGYFrameInfo *pInputFrame, RGYFrameInfo **ppOutputFrames, int *pOutputFrameNum, RGYOpenCLQueue &queue, const std::vector<RGYOpenCLEvent> &wait_events, RGYOpenCLEvent *event) override;
     virtual void close() override;
 
-    RGY_ERR procPlane(RGYFrameInfo *pOutputPlane, const RGYFrameInfo *pInputPlane, RGY_PLANE plane, RGYOpenCLQueue &queue, const std::vector<RGYOpenCLEvent> &wait_events, RGYOpenCLEvent *event);
+    RGY_ERR procPlane(RGYFrameInfo *pOutputPlane, const RGYFrameInfo *pInputPlane, float peak, int apply_gamma2, RGYOpenCLQueue &queue, const std::vector<RGYOpenCLEvent> &wait_events, RGYOpenCLEvent *event);
     RGY_ERR procFrame(RGYFrameInfo *pOutputFrame, const RGYFrameInfo *pInputFrame, RGYOpenCLQueue &queue, const std::vector<RGYOpenCLEvent> &wait_events, RGYOpenCLEvent *event);
 
     bool m_bInterlacedWarn;
-    RGYOpenCLProgramAsync m_msharpen;
+    RGYOpenCLProgramAsync m_cas;
 };

@@ -1,5 +1,5 @@
 ﻿// -----------------------------------------------------------------------------------------
-// NVEnc by rigaya
+// QSVEnc/NVEnc/VCEEnc by rigaya
 // -----------------------------------------------------------------------------------------
 //
 // The MIT License
@@ -26,30 +26,38 @@
 //
 // ------------------------------------------------------------------------------------------
 
-#include "rgy_filter_cl.h"
-#include "rgy_prm.h"
-#include <array>
+#pragma once
+#ifndef __RGY_FILTER_INPUT_PROBE_H__
+#define __RGY_FILTER_INPUT_PROBE_H__
 
-class RGYFilterParamMsharpen : public RGYFilterParam {
-public:
-    VppMsharpen msharpen;
-    RGYFilterParamMsharpen() : msharpen() {};
-    virtual ~RGYFilterParamMsharpen() {};
-    virtual tstring print() const override { return msharpen.print(); };
-};
+#include <cstring>
+#include <string>
+#include "rgy_avutil.h"
 
-class RGYFilterMsharpen : public RGYFilter {
-public:
-    RGYFilterMsharpen(shared_ptr<RGYOpenCLContext> context);
-    virtual ~RGYFilterMsharpen();
-    virtual RGY_ERR init(shared_ptr<RGYFilterParam> pParam, shared_ptr<RGYLog> pPrintMes) override;
-protected:
-    virtual RGY_ERR run_filter(const RGYFrameInfo *pInputFrame, RGYFrameInfo **ppOutputFrames, int *pOutputFrameNum, RGYOpenCLQueue &queue, const std::vector<RGYOpenCLEvent> &wait_events, RGYOpenCLEvent *event) override;
-    virtual void close() override;
+// Returns a short human-readable protocol name when the given input
+// path cannot be re-opened safely for a private libav pre-scan, or
+// nullptr when the path looks like a re-openable local file.
+//
+// "Re-openable" means: the filter can open a second AVFormatContext
+// against the same source without consuming bytes from the primary
+// reader. stdin and named-pipe protocols fail this property because
+// the primary reader has already drained the stream by the time the
+// filter's init() runs.
+//
+// Used by --vpp-ivtc expand= pre-scan, --vpp-descale kernel=auto
+// probe, and --vpp-colorfix mode=auto / gray init-time analysis.
+inline const char *unsupportedProbeProtocol(const std::string &filename) {
+    if (filename == "-") {
+        return "stdin";
+    }
+    if (filename.c_str() == std::strstr(filename.c_str(), R"(\\.\pipe\)")) {
+        return "windows named pipe";
+    }
+    const char *protocol = avio_find_protocol_name(filename.c_str());
+    if (protocol != nullptr && std::strcmp(protocol, "file") != 0) {
+        return protocol;
+    }
+    return nullptr;
+}
 
-    RGY_ERR procPlane(RGYFrameInfo *pOutputPlane, const RGYFrameInfo *pInputPlane, RGY_PLANE plane, RGYOpenCLQueue &queue, const std::vector<RGYOpenCLEvent> &wait_events, RGYOpenCLEvent *event);
-    RGY_ERR procFrame(RGYFrameInfo *pOutputFrame, const RGYFrameInfo *pInputFrame, RGYOpenCLQueue &queue, const std::vector<RGYOpenCLEvent> &wait_events, RGYOpenCLEvent *event);
-
-    bool m_bInterlacedWarn;
-    RGYOpenCLProgramAsync m_msharpen;
-};
+#endif // __RGY_FILTER_INPUT_PROBE_H__

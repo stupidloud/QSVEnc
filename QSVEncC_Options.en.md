@@ -243,6 +243,8 @@
   - [--vpp-knn \[\<param1\>=\<value1\>\[,\<param2\>=\<value2\>\]...\]](#--vpp-knn-param1value1param2value2)
   - [--vpp-nlmeans \[\<param1\>=\<value1\>\[,\<param2\>=\<value2\>\]...\]](#--vpp-nlmeans-param1value1param2value2)
   - [--vpp-pmd \[\<param1\>=\<value1\>\[,\<param2\>=\<value2\>\]...\]](#--vpp-pmd-param1value1param2value2)
+  - [--vpp-hqdn3d \[\<param1\>=\<value1\>\[,\<param2\>=\<value2\>\]...\]](#--vpp-hqdn3d-param1value1param2value2)
+  - [--vpp-descale \[\<param1\>=\<value1\>\[,\<param2\>=\<value2\>\]...\]](#--vpp-descale-param1value1param2value2)
   - [--vpp-denoise \<int\> or \[\<param1\>=\<value1\>\[,\<param2\>=\<value2\>\]...\]](#--vpp-denoise-int-or-param1value1param2value2)
   - [--vpp-image-stab \<string\>](#--vpp-image-stab-string)
   - [--vpp-mctf \["auto" or \<int\>\]](#--vpp-mctf-auto-or-int)
@@ -251,15 +253,18 @@
   - [--vpp-resize \<string\>](#--vpp-resize-string)
   - [--vpp-resize-mode \<string\>](#--vpp-resize-mode-string)
   - [--vpp-unsharp \[\<param1\>=\<value1\>\[,\<param2\>=\<value2\>\]...\]](#--vpp-unsharp-param1value1param2value2)
+  - [--vpp-vinverse \[\<param1\>=\<value1\>\[,\<param2\>=\<value2\>\]...\]](#--vpp-vinverse-param1value1param2value2)
   - [--vpp-chromashift \[\<param1\>=\<value1\>\[,\<param2\>=\<value2\>\]...\]](#--vpp-chromashift-param1value1param2value2)
   - [--vpp-deblock \[\<param1\>=\<value1\>\[,\<param2\>=\<value2\>\]...\]](#--vpp-deblock-param1value1param2value2)
   - [--vpp-deflicker \[\<param1\>=\<value1\>\[,\<param2\>=\<value2\>\]...\]](#--vpp-deflicker-param1value1param2value2)
+  - [--vpp-stab \[\<param1\>=\<value1\>\[,\<param2\>=\<value2\>\]...\]](#--vpp-stab-param1value1param2value2)
   - [--vpp-colorfix \[\<param1\>=\<value1\>\[,\<param2\>=\<value2\>\]...\]](#--vpp-colorfix-param1value1param2value2)
   - [--vpp-dehalo \[\<param1\>=\<value1\>\[,\<param2\>=\<value2\>\]...\]](#--vpp-dehalo-param1value1param2value2)
   - [--vpp-finedehalo \[\<param1\>=\<value1\>\[,\<param2\>=\<value2\>\]...\]](#--vpp-finedehalo-param1value1param2value2)
   - [--vpp-hqdering \[\<param1\>=\<value1\>\[,\<param2\>=\<value2\>\]...\]](#--vpp-hqdering-param1value1param2value2)
   - [--vpp-edgelevel \[\<param1\>=\<value1\>\[,\<param2\>=\<value2\>\]...\]](#--vpp-edgelevel-param1value1param2value2)
   - [--vpp-msharpen \[\<param1\>=\<value1\>\[,\<param2\>=\<value2\>\]...\]](#--vpp-msharpen-param1value1param2value2)
+  - [--vpp-cas \[\<param1\>=\<value1\>\[,\<param2\>=\<value2\>\]...\]](#--vpp-cas-param1value1param2value2)
   - [--vpp-warpsharp \[\<param1\>=\<value1\>\[,\<param2\>=\<value2\>\]...\]](#--vpp-warpsharp-param1value1param2value2)
   - [--vpp-maa \[\<param1\>=\<value1\>\[,\<param2\>=\<value2\>\]...\]](#--vpp-maa-param1value1param2value2)
   - [--vpp-detail-enhance \<int\>](#--vpp-detail-enhance-int)
@@ -1811,6 +1816,8 @@ Vpp filters will be applied in fixed order, regardless of the order in the comma
   - [--vpp-knn](#--vpp-knn-param1value1param2value2)
   - [--vpp-nlmeans](#--vpp-nlmeans-param1value1param2value2)
   - [--vpp-pmd](#--vpp-pmd-param1value1param2value2)
+  - [--vpp-hqdn3d](#--vpp-hqdn3d-param1value1param2value2)
+  - [--vpp-descale](#--vpp-descale-param1value1param2value2)
   - [--vpp-denoise](#--vpp-denoise-int-or-param1value1param2value2)
   - [--vpp-image-stab](#--vpp-image-stab-string)
   - [--vpp-mctf](#--vpp-mctf-auto-or-int)
@@ -1818,15 +1825,18 @@ Vpp filters will be applied in fixed order, regardless of the order in the comma
   - [--vpp-libplacebo-shader](#--vpp-libplacebo-shader-param1value1param2value2)
   - [--vpp-resize](#--vpp-resize-string)
   - [--vpp-unsharp](#--vpp-unsharp-param1value1param2value2)
+  - [--vpp-vinverse](#--vpp-vinverse-param1value1param2value2)
   - [--vpp-chromashift](#--vpp-chromashift-param1value1param2value2)
   - [--vpp-deblock](#--vpp-deblock-param1value1param2value2)
   - [--vpp-deflicker](#--vpp-deflicker-param1value1param2value2)
+  - [--vpp-stab](#--vpp-stab-param1value1param2value2)
   - [--vpp-colorfix](#--vpp-colorfix-param1value1param2value2)
   - [--vpp-dehalo](#--vpp-dehalo-param1value1param2value2)
   - [--vpp-finedehalo](#--vpp-finedehalo-param1value1param2value2)
   - [--vpp-hqdering](#--vpp-hqdering-param1value1param2value2)
   - [--vpp-edgelevel](#--vpp-edgelevel-param1value1param2value2)
   - [--vpp-msharpen](#--vpp-msharpen-param1value1param2value2)
+  - [--vpp-cas](#--vpp-cas-param1value1param2value2)
   - [--vpp-warpsharp](#--vpp-warpsharp-param1value1param2value2)
   - [--vpp-maa](#--vpp-maa-param1value1param2value2)
   - [--vpp-detail-enhance ](#--vpp-detail-enhance-int)
@@ -2781,8 +2791,8 @@ Detail-preserving smoothing filter. Detects edges to create a mask, then applies
   - threshold=&lt;float&gt;  (default=15.0, 0.0 - 255.0)  
     Edge detection threshold.
 
-  - threshold_c=&lt;float&gt;  (default=-1.0, -1.0 - 255.0)  
-    Chroma edge detection threshold. -1.0 uses the same value as threshold.
+  - threshold_c=&lt;float&gt;  (default=-1.0, -1.0 / 0.0 - 255.0)  
+    Edge detection threshold for chroma planes. -1.0 uses the same value as threshold.
   
   - highq=&lt;bool&gt;  (default=true)  
     When true, uses 4-direction edge detection (diagonal + horizontal/vertical). When false, uses only 2 diagonal directions.
@@ -2796,10 +2806,7 @@ Detail-preserving smoothing filter. Detects edges to create a mask, then applies
   --vpp-msmooth
   
   Example: Stronger smoothing
-  --vpp-msmooth strength=6,threshold=10.0
-
-  Example: Separate chroma threshold
-  --vpp-msmooth threshold=12.0,threshold_c=18.0
+  --vpp-msmooth strength=6,threshold=10.0,threshold_c=18.0
   ```
 
 ### --vpp-knn [&lt;param1&gt;=&lt;value1&gt;[,&lt;param2&gt;=&lt;value2&gt;]...]
@@ -2839,6 +2846,12 @@ Non local means noise reduction filter.
   
   - search=&lt;int&gt;  (default=11, 3 - )  
     Set search size. Must be odd number.
+
+  - d=&lt;int&gt;  (default=0, 0 - 5)  
+    Temporal radius. `0` uses spatial NLMeans only.
+
+  - search_t=&lt;int&gt;  (default=11, 3 - )  
+    Set temporal search size. Must be odd number.
   
   - fp16=&lt;string&gt;  (default=blockdiff)  
     - none  
@@ -2854,6 +2867,9 @@ Non local means noise reduction filter.
   ```
   Example: Use larger search area
   --vpp-nlmeans patch=7,search=15
+
+  Example: Enable temporal NLMeans
+  --vpp-nlmeans d=1,search_t=7
   ```
 
 ### --vpp-pmd [&lt;param1&gt;=&lt;value1&gt;[,&lt;param2&gt;=&lt;value2&gt;]...]
@@ -2873,6 +2889,27 @@ Rather weak noise reduction by modified pmd method, aimed to preserve edge while
   ```
   Example: Slightly weak than default
   --vpp-pmd apply_count=2,strength=90,threshold=120
+  ```
+
+### --vpp-hqdn3d [&lt;param1&gt;=&lt;value1&gt;[,&lt;param2&gt;=&lt;value2&gt;]...]
+HQDN3D spatial and temporal denoise filter. Scratch buffers use FP16 automatically on devices supporting `cl_khr_fp16`, otherwise FP32 is used.
+
+- **Parameters**
+  - luma_spatial=&lt;float&gt;  (default=4.0, 0-255)  
+    Spatial denoise strength for luma.
+  
+  - chroma_spatial=&lt;float&gt;  (default=3.0, 0-255)  
+    Spatial denoise strength for chroma.
+  
+  - luma_temporal=&lt;float&gt;  (default=6.0, 0-255)  
+    Temporal denoise strength for luma.
+  
+  - chroma_temporal=&lt;float&gt;  (default=4.5, 0-255)  
+    Temporal denoise strength for chroma.
+  
+- Examples
+  ```
+  --vpp-hqdn3d luma_spatial=4.0,chroma_spatial=3.0,luma_temporal=6.0,chroma_temporal=4.5
   ```
 
 ### --vpp-denoise &lt;int&gt; or [&lt;param1&gt;=&lt;value1&gt;[,&lt;param2&gt;=&lt;value2&gt;]...]
@@ -3050,6 +3087,49 @@ Apply custom shaders in the specified path using [libplacebo](https://code.video
     --vpp-libplacebo-shader shader=default-shader-pack-2.1.0\Anime4K_Upscale_CNN_x2_L.glsl,res=2560x1440
     ```
 
+### --vpp-descale [&lt;param1&gt;=&lt;value1&gt;[,&lt;param2&gt;=&lt;value2&gt;]...]
+Undo upscaling by solving the inverse system for a known upscaler kernel and output a lower native resolution.
+
+- **Parameters**
+    - kernel=&lt;string&gt;
+      Upscaler kernel to invert. Default: bicubic.
+      ```
+      bilinear, bicubic, spline16, spline36, spline64, lanczos2, lanczos3, lanczos4, auto
+      ```
+
+    - width=&lt;int&gt; / height=&lt;int&gt;
+      Target native resolution. Specify both for an explicit kernel.
+
+    - b=&lt;float&gt;, c=&lt;float&gt;
+      Bicubic parameters. Default: b=0.0, c=0.5.
+
+    - src_left=&lt;float&gt;, src_top=&lt;float&gt;
+      Source sub-pixel offsets. Default: 0.0.
+
+    - border_handling=&lt;string&gt;
+      Border extension mode. Default: mirror.
+      ```
+      mirror, zero, repeat
+      ```
+
+    - auto=&lt;bool&gt;
+      Enable `kernel=auto` and native resolution search. This opens the input separately and analyzes `detect_frames` frames, so stdin and pipes are unsupported.
+
+    - search_min=&lt;int&gt;, search_max=&lt;int&gt;, search_step=&lt;int&gt;
+      Search range and fine step for `auto=true`. Default search_step: 1.
+
+    - detect_frames=&lt;int&gt;
+      Number of frames averaged by auto detection. Default: 10.
+
+    - show_scores=&lt;bool&gt;
+      Log per-candidate auto-detection scores. Default: false.
+
+- **Examples**
+    ```
+    --vpp-descale kernel=bicubic,width=1280,height=720,b=0,c=0.5
+    --vpp-descale auto=true,detect_frames=8
+    ```
+
 ### --vpp-resize &lt;string&gt;
 Specify the resizing algorithm.
 
@@ -3095,6 +3175,12 @@ Specify the resizing algorithm.
       | lanczos3       | 6x6 Lanczos resampling                                     |
       | lanczos4       | 8x8 Lanczos resampling                                     |
       | gauss          | Gaussian filter (p=2.0)                                    |
+      | fsr1           | AMD FidelityFX Super Resolution 1.0 (EASU + RCAS)          |
+
+      - Additional parameters for fsr1
+
+        - sharpness=&lt;float&gt;  
+          RCAS sharpness. (0.0 - 1.0, default = 0.5)
       
     - [libplacebo](https://code.videolan.org/videolan/libplacebo) library resize filters
 
@@ -3164,6 +3250,9 @@ Specify the resizing algorithm.
   
   Examples: Use mfx_ai_superres
   --vpp-resize algo=mfx_ai_superres,superres-mode=sharpen,superres-algo=2
+
+  Examples: Use fsr1
+  --vpp-resize algo=fsr1,sharpness=0.8
   ```
 
 ### --vpp-resize-mode &lt;string&gt;
@@ -3193,6 +3282,34 @@ unsharp filter, for edge and detail enhancement.
   ```
   Example: Somewhat stronger
   --vpp-unsharp weight=1.0
+  ```
+
+### --vpp-vinverse [&lt;param1&gt;=&lt;value1&gt;[,&lt;param2&gt;=&lt;value2&gt;]...]
+Removes residual combing left after deinterlace.
+
+- **Parameters**
+  - mode=&lt;vinverse|vinverse2&gt; (default=vinverse)
+    Filter mode.
+
+  - sstr=&lt;float&gt; (default=2.7, 0.0 - 8.0)
+    Strength of the contra reference.
+
+  - amnt=&lt;float&gt; (default=255.0, 0.0 - 255.0)
+    Maximum per-pixel delta in 8-bit scale. 255.0 disables the cap.
+
+  - scl=&lt;float&gt; (default=0.25, 0.0 - 4.0)
+    Soft clip scale used when residual and reference difference have opposite signs.
+
+  - thr=&lt;float&gt; (default=0.0, 0.0 - 255.0)
+    Residual threshold in 8-bit scale. Pixels below this threshold are left unchanged.
+
+  - chroma=&lt;bool&gt; (default=true)
+    Process chroma planes.
+
+- examples
+  ```
+  --vpp-vinverse
+  --vpp-vinverse mode=vinverse2,sstr=2.0,amnt=160,thr=4,chroma=false
   ```
 
 ### --vpp-chromashift [&lt;param1&gt;=&lt;value1&gt;[,&lt;param2&gt;=&lt;value2&gt;]...]
@@ -3272,6 +3389,32 @@ Temporal filter to stabilize frame-to-frame brightness flicker statistically.
   ```
   --vpp-deflicker
   --vpp-deflicker strength=0.8,damping=0.9,frames=60,predictor=false,chroma=true
+  ```
+
+### --vpp-stab [&lt;param1&gt;=&lt;value1&gt;[,&lt;param2&gt;=&lt;value2&gt;]...]
+OpenCL camera-shake stabilizer that estimates frame-to-frame translation from the luma plane using phase correlation and warps the frame to compensate.
+This is separate from the MFX `--vpp-image-stab` filter.
+
+- **Parameters**
+  - strength=&lt;float&gt; (default=1.0, 0.0-1.0)
+    Correction strength. 0.0 disables compensation, 1.0 applies the estimated shift fully.
+
+  - damping=&lt;float&gt; (default=0.9, 0.0-1.0)
+    Temporal smoothing of the detected shift. Higher values make the trajectory more gradual.
+
+  - trust=&lt;float&gt; (default=0.3, 0.0-1.0)
+    Trust threshold for the correlation peak. Frames below the threshold keep the previous trusted correction.
+
+  - max_shift=&lt;float&gt; (default=32.0, 1.0-256.0)
+    Maximum per-frame correction in luma pixels.
+
+  - border=&lt;black|clamp|mirror&gt; (default=black)
+    Border fill mode for pixels sampled from outside the source frame.
+
+- examples
+  ```
+  --vpp-stab
+  --vpp-stab strength=0.8,damping=0.95,trust=0.25,max_shift=48,border=mirror
   ```
 
 ### --vpp-colorfix [&lt;param1&gt;=&lt;value1&gt;[,&lt;param2&gt;=&lt;value2&gt;]...]
@@ -3452,11 +3595,14 @@ Edge-selective sharpening filter.
   - threshold=&lt;float&gt;  (default=15.0, 0.0 - 255.0)  
     Edge detection threshold.
 
-  - slope=&lt;float&gt; (default=0.0, 0.0 disables)
-    Enables a sigmoid soft mask for smoother edge gating. Larger values make the transition sharper.
+  - slope=&lt;float&gt; (default=0.0, 0.0 -)
+    Slope of the sigmoid soft mask. 0.0 keeps the legacy binary mask.
 
-  - luma_limit=&lt;float&gt; (default=0.0, 0.0 disables)
-    Reduces sharpening in dark luma regions below the specified 8-bit luma value.
+  - luma_limit=&lt;float&gt; (default=0.0, 0.0 - 255.0)
+    Reduces sharpening in luma areas darker than this value. 0.0 disables it.
+
+  - block_protect=&lt;float&gt; (default=0.0, 0.0 - 1.0)
+    Reduces sharpening near detected DCT block boundaries. 0.0 disables it.
   
   - highq=&lt;bool&gt;  (default=true)  
     When true, uses 4-direction edge detection (diagonal + horizontal/vertical). When false, uses only 2 diagonal directions.
@@ -3472,8 +3618,30 @@ Edge-selective sharpening filter.
   Example: Somewhat weaker
   --vpp-msharpen strength=0.5,threshold=20.0
 
-  Example: Use soft mask and dark luma attenuation
-  --vpp-msharpen strength=0.8,threshold=18.0,slope=8.0,luma_limit=32.0
+  Example: Use soft mask, dark luma attenuation, and block protection
+  --vpp-msharpen strength=0.8,threshold=18.0,slope=8.0,luma_limit=32.0,block_protect=0.5
+  ```
+
+### --vpp-cas [&lt;param1&gt;=&lt;value1&gt;[,&lt;param2&gt;=&lt;value2&gt;]...]
+Luma-only Contrast Adaptive Sharpening filter. Applies CAS to luma and copies chroma unchanged.
+
+- **Parameters**
+  - sharpness=&lt;float&gt; (default=0.4, 0.0 - 1.0)
+    Sharpening strength. Internally maps to the CAS peak value.
+
+  - hdr=&lt;bool&gt; (default=false)
+    Skips the SDR gamma 2.0 luma approximation. Enable this for HDR sources such as PQ or HLG.
+
+- examples
+  ```
+  Example: Default settings
+  --vpp-cas
+
+  Example: Stronger sharpening
+  --vpp-cas sharpness=0.7
+
+  Example: HDR source
+  --vpp-cas sharpness=0.5,hdr=true
   ```
 
 ### --vpp-warpsharp [&lt;param1&gt;=&lt;value1&gt;[,&lt;param2&gt;=&lt;value2&gt;]...]

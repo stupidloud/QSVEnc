@@ -243,6 +243,8 @@
   - [--vpp-knn \[\<param1\>=\<value1\>\[,\<param2\>=\<value2\>\]...\]](#--vpp-knn-param1value1param2value2)
   - [--vpp-nlmeans \[\<param1\>=\<value1\>\[,\<param2\>=\<value2\>\]...\]](#--vpp-nlmeans-param1value1param2value2)
   - [--vpp-pmd \[\<param1\>=\<value1\>\[,\<param2\>=\<value2\>\]...\]](#--vpp-pmd-param1value1param2value2)
+  - [--vpp-hqdn3d \[\<param1\>=\<value1\>\[,\<param2\>=\<value2\>\]...\]](#--vpp-hqdn3d-param1value1param2value2)
+  - [--vpp-descale \[\<param1\>=\<value1\>\[,\<param2\>=\<value2\>\]...\]](#--vpp-descale-param1value1param2value2)
   - [--vpp-denoise \<int\> or \[\<param1\>=\<value1\>\[,\<param2\>=\<value2\>\]...\]](#--vpp-denoise-int-or-param1value1param2value2)
   - [--vpp-image-stab \<string\>](#--vpp-image-stab-string)
   - [--vpp-mctf \[ "auto" or \<int\> \]](#--vpp-mctf--auto-or-int-)
@@ -251,15 +253,18 @@
   - [--vpp-resize \<string\>](#--vpp-resize-string)
   - [--vpp-resize-mode \<string\>](#--vpp-resize-mode-string)
   - [--vpp-unsharp \[\<param1\>=\<value1\>\[,\<param2\>=\<value2\>\]...\]](#--vpp-unsharp-param1value1param2value2)
+  - [--vpp-vinverse \[\<param1\>=\<value1\>\[,\<param2\>=\<value2\>\]...\]](#--vpp-vinverse-param1value1param2value2)
   - [--vpp-chromashift \[\<param1\>=\<value1\>\[,\<param2\>=\<value2\>\]...\]](#--vpp-chromashift-param1value1param2value2)
   - [--vpp-deblock \[\<param1\>=\<value1\>\[,\<param2\>=\<value2\>\]...\]](#--vpp-deblock-param1value1param2value2)
   - [--vpp-deflicker \[\<param1\>=\<value1\>\[,\<param2\>=\<value2\>\]...\]](#--vpp-deflicker-param1value1param2value2)
+  - [--vpp-stab \[\<param1\>=\<value1\>\[,\<param2\>=\<value2\>\]...\]](#--vpp-stab-param1value1param2value2)
   - [--vpp-colorfix \[\<param1\>=\<value1\>\[,\<param2\>=\<value2\>\]...\]](#--vpp-colorfix-param1value1param2value2)
   - [--vpp-dehalo \[\<param1\>=\<value1\>\[,\<param2\>=\<value2\>\]...\]](#--vpp-dehalo-param1value1param2value2)
   - [--vpp-finedehalo \[\<param1\>=\<value1\>\[,\<param2\>=\<value2\>\]...\]](#--vpp-finedehalo-param1value1param2value2)
   - [--vpp-hqdering \[\<param1\>=\<value1\>\[,\<param2\>=\<value2\>\]...\]](#--vpp-hqdering-param1value1param2value2)
   - [--vpp-edgelevel \[\<param1\>=\<value1\>\[,\<param2\>=\<value2\>\]...\]](#--vpp-edgelevel-param1value1param2value2)
   - [--vpp-msharpen \[\<param1\>=\<value1\>\[,\<param2\>=\<value2\>\]...\]](#--vpp-msharpen-param1value1param2value2)
+  - [--vpp-cas \[\<param1\>=\<value1\>\[,\<param2\>=\<value2\>\]...\]](#--vpp-cas-param1value1param2value2)
   - [--vpp-warpsharp \[\<param1\>=\<value1\>\[,\<param2\>=\<value2\>\]...\]](#--vpp-warpsharp-param1value1param2value2)
   - [--vpp-maa \[\<param1\>=\<value1\>\[,\<param2\>=\<value2\>\]...\]](#--vpp-maa-param1value1param2value2)
   - [--vpp-detail-enhance \<int\>](#--vpp-detail-enhance-int)
@@ -1823,6 +1828,8 @@ vppフィルタの適用順は固定で、コマンドラインの順序によ�
   - [--vpp-nlmeans](#--vpp-nlmeans-param1value1param2value2)
   - [--vpp-knn](#--vpp-knn-param1value1param2value2)
   - [--vpp-pmd](#--vpp-pmd-param1value1param2value2)
+  - [--vpp-hqdn3d](#--vpp-hqdn3d-param1value1param2value2)
+  - [--vpp-descale](#--vpp-descale-param1value1param2value2)
   - [--vpp-denoise](#--vpp-denoise-int-or-param1value1param2value2)
   - [--vpp-image-stab](#--vpp-image-stab-string)
   - [--vpp-mctf](#--vpp-mctf-auto-or-int)
@@ -1830,15 +1837,18 @@ vppフィルタの適用順は固定で、コマンドラインの順序によ�
   - [--vpp-libplacebo-shader](#--vpp-libplacebo-shader-param1value1param2value2)
   - [--vpp-resize](#--vpp-resize-string)
   - [--vpp-unsharp](#--vpp-unsharp-param1value1param2value2)
+  - [--vpp-vinverse](#--vpp-vinverse-param1value1param2value2)
   - [--vpp-chromashift](#--vpp-chromashift-param1value1param2value2)
   - [--vpp-deblock](#--vpp-deblock-param1value1param2value2)
   - [--vpp-deflicker](#--vpp-deflicker-param1value1param2value2)
+  - [--vpp-stab](#--vpp-stab-param1value1param2value2)
   - [--vpp-colorfix](#--vpp-colorfix-param1value1param2value2)
   - [--vpp-dehalo](#--vpp-dehalo-param1value1param2value2)
   - [--vpp-finedehalo](#--vpp-finedehalo-param1value1param2value2)
   - [--vpp-hqdering](#--vpp-hqdering-param1value1param2value2)
   - [--vpp-edgelevel](#--vpp-edgelevel-param1value1param2value2)
   - [--vpp-msharpen](#--vpp-msharpen-param1value1param2value2)
+  - [--vpp-cas](#--vpp-cas-param1value1param2value2)
   - [--vpp-warpsharp](#--vpp-warpsharp-param1value1param2value2)
   - [--vpp-maa](#--vpp-maa-param1value1param2value2)
   - [--vpp-detail-enhance ](#--vpp-detail-enhance-int)
@@ -2831,8 +2841,8 @@ GPUによるインタレ解除を使用する。"normal", "bob"はわりとき�
   - threshold=&lt;float&gt;  (default=15.0, 0.0 - 255.0)  
     エッジ検出の閾値。
 
-  - threshold_c=&lt;float&gt;  (default=-1.0, -1.0 - 255.0)  
-    色差のエッジ検出の閾値。-1.0 の場合は threshold と同じ値を使用する。
+  - threshold_c=&lt;float&gt;  (default=-1.0, -1.0 / 0.0 - 255.0)  
+    色差成分のエッジ検出の閾値。-1.0 の場合は threshold と同じ値を使用。
   
   - highq=&lt;bool&gt;  (default=true)  
     trueの場合、4方向(対角+水平垂直)でエッジ検出を行う。falseの場合は対角2方向のみ。
@@ -2846,10 +2856,7 @@ GPUによるインタレ解除を使用する。"normal", "bob"はわりとき�
   --vpp-msmooth
   
   例: 強めの平滑化
-  --vpp-msmooth strength=6,threshold=10.0
-
-  例: 色差の閾値を個別に指定
-  --vpp-msmooth threshold=12.0,threshold_c=18.0
+  --vpp-msmooth strength=6,threshold=10.0,threshold_c=18.0
   ```
 
 ### --vpp-knn [&lt;param1&gt;=&lt;value1&gt;[,&lt;param2&gt;=&lt;value2&gt;]...]
@@ -2888,6 +2895,12 @@ Non local meansを用いたノイズ除去フィルタ。
   
   - search=&lt;int&gt;  (default=11, 3 - )  
     探索範囲。奇数で指定。 
+
+  - d=&lt;int&gt;  (default=0, 0 - 5)  
+    時間方向の参照半径。`0` では従来の空間方向のみのNLMeansを使用する。
+
+  - search_t=&lt;int&gt;  (default=11, 3 - )  
+    時間方向参照フレームでの探索範囲。奇数で指定。
   
   - fp16=&lt;string&gt;  (default=blockdiff)  
     - none  
@@ -2903,6 +2916,9 @@ Non local meansを用いたノイズ除去フィルタ。
   ```
   例: 探索範囲を広げてより高精度に
   --vpp-nlmeans patch=7,search=15
+
+  例: 時間方向のNLMeansを有効化
+  --vpp-nlmeans d=1,search_t=7
   ```
 
 ### --vpp-pmd [&lt;param1&gt;=&lt;value1&gt;[,&lt;param2&gt;=&lt;value2&gt;]...]
@@ -2922,6 +2938,27 @@ Non local meansを用いたノイズ除去フィルタ。
   ```
   例: すこし弱め
   --vpp-pmd apply_count=2,strength=90,threshold=120
+  ```
+
+### --vpp-hqdn3d [&lt;param1&gt;=&lt;value1&gt;[,&lt;param2&gt;=&lt;value2&gt;]...]
+HQDN3D による空間・時間方向のノイズ除去を行う。`cl_khr_fp16` 対応デバイスでは中間バッファに FP16 を自動使用し、非対応デバイスでは FP32 にフォールバックする。
+
+- **パラメータ**
+  - luma_spatial=&lt;float&gt;  (default=4.0, 0-255)  
+    輝度の空間方向ノイズ除去の強さ。
+  
+  - chroma_spatial=&lt;float&gt;  (default=3.0, 0-255)  
+    色差の空間方向ノイズ除去の強さ。
+  
+  - luma_temporal=&lt;float&gt;  (default=6.0, 0-255)  
+    輝度の時間方向ノイズ除去の強さ。
+  
+  - chroma_temporal=&lt;float&gt;  (default=4.5, 0-255)  
+    色差の時間方向ノイズ除去の強さ。
+  
+- 使用例
+  ```
+  --vpp-hqdn3d luma_spatial=4.0,chroma_spatial=3.0,luma_temporal=6.0,chroma_temporal=4.5
   ```
 
 ### --vpp-denoise &lt;int&gt; or [&lt;param1&gt;=&lt;value1&gt;[,&lt;param2&gt;=&lt;value2&gt;]...]
@@ -3101,6 +3138,49 @@ image stabilizerのモードの指定。
     --vpp-libplacebo-shader shader=default-shader-pack-2.1.0\Anime4K_Upscale_CNN_x2_L.glsl,res=2560x1440
     ```
 
+### --vpp-descale [&lt;param1&gt;=&lt;value1&gt;[,&lt;param2&gt;=&lt;value2&gt;]...]
+既知のアップスケールカーネルを逆算し、元の低解像度に近い画像へ縮小します。
+
+- **パラメータ**
+    - kernel=&lt;string&gt;
+      逆算するアップスケールカーネル。デフォルトは bicubic。
+      ```
+      bilinear, bicubic, spline16, spline36, spline64, lanczos2, lanczos3, lanczos4, auto
+      ```
+
+    - width=&lt;int&gt; / height=&lt;int&gt;
+      出力する元解像度。明示カーネルでは両方を指定します。
+
+    - b=&lt;float&gt;, c=&lt;float&gt;
+      bicubic のパラメータ。デフォルトは b=0.0, c=0.5。
+
+    - src_left=&lt;float&gt;, src_top=&lt;float&gt;
+      入力画像のサブピクセルオフセット。デフォルトは 0.0。
+
+    - border_handling=&lt;string&gt;
+      端処理。デフォルトは mirror。
+      ```
+      mirror, zero, repeat
+      ```
+
+    - auto=&lt;bool&gt;
+      `kernel=auto` と解像度探索を有効にします。入力を別途開いて `detect_frames` 枚を解析するため、stdin や pipe では使用できません。
+
+    - search_min=&lt;int&gt;, search_max=&lt;int&gt;, search_step=&lt;int&gt;
+      `auto=true` 時の探索範囲と細かさ。`search_step` のデフォルトは 1。
+
+    - detect_frames=&lt;int&gt;
+      自動検出で平均化するフレーム数。デフォルトは 10。
+
+    - show_scores=&lt;bool&gt;
+      自動検出時の候補スコアをログに出力します。デフォルトは false。
+
+- 使用例
+    ```
+    --vpp-descale kernel=bicubic,width=1280,height=720,b=0,c=0.5
+    --vpp-descale auto=true,detect_frames=8
+    ```
+
 
 ### --vpp-resize &lt;string&gt;
 リサイズのアルゴリズムを指定する。
@@ -3145,6 +3225,12 @@ image stabilizerのモードの指定。
       | lanczos3      | 6x6 lanczos補間                            |
       | lanczos4      | 8x8 lanczos補間                            |
       | gauss         | ガウス補間 (p=2.0)                         |
+      | fsr1          | AMD FidelityFX Super Resolution 1.0 (EASU + RCAS) |
+
+      - fsr1 の追加パラメータ
+
+        - sharpness=&lt;float&gt;  
+          RCASのシャープネス。(0.0 - 1.0、デフォルト = 0.5)
 
     - [libplacebo](https://code.videolan.org/videolan/libplacebo)ライブラリのリサイズフィルタ
     
@@ -3214,6 +3300,9 @@ image stabilizerのモードの指定。
   
   例: mfx_ai_superresを使用する
   --vpp-resize algo=mfx_ai_superres,superres-mode=sharpen,superres-algo=2
+
+  例: fsr1を使用する
+  --vpp-resize algo=fsr1,sharpness=0.8
   ```
 
 ### --vpp-resize-mode &lt;string&gt;
@@ -3243,6 +3332,34 @@ unsharpフィルタ。輪郭・ディテール強調用のフィルタ。
   ```
   例: やや強め
   --vpp-unsharp weight=1.0
+  ```
+
+### --vpp-vinverse [&lt;param1&gt;=&lt;value1&gt;[,&lt;param2&gt;=&lt;value2&gt;]...]
+インタレ解除後に残った縞状の残留を軽減するフィルタ。
+
+- **パラメータ**
+  - mode=&lt;vinverse|vinverse2&gt; (default=vinverse)
+    フィルタの動作モード。
+
+  - sstr=&lt;float&gt; (default=2.7, 0.0 - 8.0)
+    contra reference の強度。
+
+  - amnt=&lt;float&gt; (default=255.0, 0.0 - 255.0)
+    8bit スケールでの画素ごとの最大変化量。255.0 で制限なし。
+
+  - scl=&lt;float&gt; (default=0.25, 0.0 - 4.0)
+    残留と参照差分の符号が逆の場合のソフトクリップ係数。
+
+  - thr=&lt;float&gt; (default=0.0, 0.0 - 255.0)
+    8bit スケールでの残留判定閾値。これ未満の画素は変更しない。
+
+  - chroma=&lt;bool&gt; (default=true)
+    色差プレーンにも処理を適用する。
+
+- 使用例
+  ```
+  --vpp-vinverse
+  --vpp-vinverse mode=vinverse2,sstr=2.0,amnt=160,thr=4,chroma=false
   ```
 
 ### --vpp-chromashift [&lt;param1&gt;=&lt;value1&gt;[,&lt;param2&gt;=&lt;value2&gt;]...]
@@ -3322,6 +3439,32 @@ H.264のnon-strong style相当の空間デブロックフィルタ。エンコ�
   ```
   --vpp-deflicker
   --vpp-deflicker strength=0.8,damping=0.9,frames=60,predictor=false,chroma=true
+  ```
+
+### --vpp-stab [&lt;param1&gt;=&lt;value1&gt;[,&lt;param2&gt;=&lt;value2&gt;]...]
+連続フレームの輝度プレーンから位相相関で平行移動量を推定し、手ぶれを補正するOpenCLフィルタ。
+MFXの `--vpp-image-stab` とは別のフィルタ。
+
+- **パラメータ**
+  - strength=&lt;float&gt; (default=1.0, 0.0-1.0)
+    補正の強度。0.0で補正なし、1.0で推定した移動量をそのまま適用する。
+
+  - damping=&lt;float&gt; (default=0.9, 0.0-1.0)
+    推定した移動量の時間方向スムージング。大きいほど変化が緩やかになる。
+
+  - trust=&lt;float&gt; (default=0.3, 0.0-1.0)
+    相関ピークの信頼度しきい値。しきい値未満のフレームでは直前の信頼できる補正量を維持する。
+
+  - max_shift=&lt;float&gt; (default=32.0, 1.0-256.0)
+    1フレームあたりの最大補正量を輝度ピクセル単位で制限する。
+
+  - border=&lt;black|clamp|mirror&gt; (default=black)
+    補正後にフレーム外を参照する画素の埋め方。
+
+- 使用例
+  ```
+  --vpp-stab
+  --vpp-stab strength=0.8,damping=0.95,trust=0.25,max_shift=48,border=mirror
   ```
 
 ### --vpp-colorfix [&lt;param1&gt;=&lt;value1&gt;[,&lt;param2&gt;=&lt;value2&gt;]...]
@@ -3502,11 +3645,14 @@ DCTリンギング低減フィルタ。輝度成分に補正を適用し、色�
   - threshold=&lt;float&gt;  (default=15.0, 0.0 - 255.0)  
     エッジ検出の閾値。
 
-  - slope=&lt;float&gt; (default=0.0, 0.0 disables)
-    sigmoid によるソフトマスクを有効化する。値を大きくするとエッジ判定の遷移が急になる。
+  - slope=&lt;float&gt; (default=0.0, 0.0 -)
+    シグモイドによるソフトマスクの傾き。0.0では従来の二値マスクを使用する。
 
-  - luma_limit=&lt;float&gt; (default=0.0, 0.0 disables)
-    指定した 8bit 輝度値より暗い領域でシャープニングを抑制する。
+  - luma_limit=&lt;float&gt; (default=0.0, 0.0 - 255.0)
+    指定値より暗い輝度領域でシャープ化を弱める。0.0では無効。
+
+  - block_protect=&lt;float&gt; (default=0.0, 0.0 - 1.0)
+    検出されたDCTブロック境界付近でシャープ化を弱める。0.0では無効。
   
   - highq=&lt;bool&gt;  (default=true)  
     trueの場合、4方向(対角+水平垂直)でエッジ検出を行う。falseの場合は対角2方向のみ。
@@ -3522,8 +3668,30 @@ DCTリンギング低減フィルタ。輝度成分に補正を適用し、色�
   例: やや弱め
   --vpp-msharpen strength=0.5,threshold=20.0
 
-  例: ソフトマスクと暗部抑制を使用
-  --vpp-msharpen strength=0.8,threshold=18.0,slope=8.0,luma_limit=32.0
+  例: ソフトマスク、暗部抑制、ブロック保護を使用
+  --vpp-msharpen strength=0.8,threshold=18.0,slope=8.0,luma_limit=32.0,block_protect=0.5
+  ```
+
+### --vpp-cas [&lt;param1&gt;=&lt;value1&gt;[,&lt;param2&gt;=&lt;value2&gt;]...]
+輝度のみを処理するContrast Adaptive Sharpeningフィルタ。CASを輝度に適用し、色差はそのままコピーする。
+
+- **パラメータ**
+  - sharpness=&lt;float&gt; (default=0.4, 0.0 - 1.0)
+    シャープニングの強度。内部ではCASのpeak値に変換される。
+
+  - hdr=&lt;bool&gt; (default=false)
+    SDR向けのgamma 2.0輝度近似をスキップする。PQやHLGなどのHDR素材で有効にする。
+
+- 使用例
+  ```
+  例: デフォルト設定
+  --vpp-cas
+
+  例: 強め
+  --vpp-cas sharpness=0.7
+
+  例: HDR素材
+  --vpp-cas sharpness=0.5,hdr=true
   ```
 
 ### --vpp-warpsharp [&lt;param1&gt;=&lt;value1&gt;[,&lt;param2&gt;=&lt;value2&gt;]...]

@@ -294,6 +294,9 @@
     <ClCompile Include="rgy_filter_degrain_mv.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
+    <ClCompile Include="rgy_filter_cas.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
     <ClCompile Include="rgy_filter_edgelevel.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
@@ -304,6 +307,9 @@
       <Filter>ソース ファイル</Filter>
     </ClCompile>
     <ClCompile Include="rgy_filter_deflicker.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="rgy_filter_stab.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
     <ClCompile Include="rgy_filter_colorfix.cpp">
@@ -328,6 +334,9 @@
       <Filter>ソース ファイル</Filter>
     </ClCompile>
     <ClCompile Include="rgy_filter_unsharp.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="rgy_filter_vinverse.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
     <ClCompile Include="rgy_filter_warpsharp.cpp">
@@ -454,6 +463,12 @@
       <Filter>ソース ファイル</Filter>
     </ClCompile>
     <ClCompile Include="rgy_filter_denoise_fft3d.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="rgy_filter_denoise_hqdn3d.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="rgy_filter_descale.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
     <ClCompile Include="rgy_filter_libplacebo.cpp">
@@ -719,6 +734,9 @@
     <ClInclude Include="rgy_filter_denoise_pmd.h">
       <Filter>ヘッダー ファイル</Filter>
     </ClInclude>
+    <ClInclude Include="rgy_filter_cas.h">
+      <Filter>ヘッダー ファイル</Filter>
+    </ClInclude>
     <ClInclude Include="rgy_filter_edgelevel.h">
       <Filter>ヘッダー ファイル</Filter>
     </ClInclude>
@@ -729,6 +747,9 @@
       <Filter>ヘッダー ファイル</Filter>
     </ClInclude>
     <ClInclude Include="rgy_filter_deflicker.h">
+      <Filter>ヘッダー ファイル</Filter>
+    </ClInclude>
+    <ClInclude Include="rgy_filter_stab.h">
       <Filter>ヘッダー ファイル</Filter>
     </ClInclude>
     <ClInclude Include="rgy_filter_colorfix.h">
@@ -750,6 +771,9 @@
       <Filter>ヘッダー ファイル</Filter>
     </ClInclude>
     <ClInclude Include="rgy_filter_unsharp.h">
+      <Filter>ヘッダー ファイル</Filter>
+    </ClInclude>
+    <ClInclude Include="rgy_filter_vinverse.h">
       <Filter>ヘッダー ファイル</Filter>
     </ClInclude>
     <ClInclude Include="rgy_filter_warpsharp.h">
@@ -861,6 +885,15 @@
       <Filter>ヘッダー ファイル</Filter>
     </ClInclude>
     <ClInclude Include="rgy_filter_denoise_fft3d.h">
+      <Filter>ヘッダー ファイル</Filter>
+    </ClInclude>
+    <ClInclude Include="rgy_filter_denoise_hqdn3d.h">
+      <Filter>ヘッダー ファイル</Filter>
+    </ClInclude>
+    <ClInclude Include="rgy_filter_descale.h">
+      <Filter>ヘッダー ファイル</Filter>
+    </ClInclude>
+    <ClInclude Include="rgy_filter_input_probe.h">
       <Filter>ヘッダー ファイル</Filter>
     </ClInclude>
     <ClInclude Include="rgy_filter_degrain.h">
@@ -1033,6 +1066,9 @@
     <None Include="rgy_filter_rtgmc_mmask.cl">
       <Filter>ソース ファイル</Filter>
     </None>
+    <None Include="rgy_filter_cas.cl">
+      <Filter>ソース ファイル</Filter>
+    </None>
     <None Include="rgy_filter_edgelevel.cl">
       <Filter>ソース ファイル</Filter>
     </None>
@@ -1043,6 +1079,9 @@
       <Filter>ソース ファイル</Filter>
     </None>
     <None Include="rgy_filter_deflicker.cl">
+      <Filter>ソース ファイル</Filter>
+    </None>
+    <None Include="rgy_filter_stab.cl">
       <Filter>ソース ファイル</Filter>
     </None>
     <None Include="rgy_filter_colorfix.cl">
@@ -1064,6 +1103,9 @@
       <Filter>ソース ファイル</Filter>
     </None>
     <None Include="rgy_filter_unsharp.cl">
+      <Filter>ソース ファイル</Filter>
+    </None>
+    <None Include="rgy_filter_vinverse.cl">
       <Filter>ソース ファイル</Filter>
     </None>
     <None Include="rgy_filter_warpsharp.cl">
@@ -1154,6 +1196,12 @@
       <Filter>ソース ファイル</Filter>
     </None>
     <None Include="rgy_filter_denoise_fft3d.cl">
+      <Filter>ソース ファイル</Filter>
+    </None>
+    <None Include="rgy_filter_denoise_hqdn3d.cl">
+      <Filter>ソース ファイル</Filter>
+    </None>
+    <None Include="rgy_filter_descale.cl">
       <Filter>ソース ファイル</Filter>
     </None>
     <None Include="rgy_filter_ivtc.cl">

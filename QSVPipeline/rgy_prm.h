@@ -55,17 +55,18 @@ static const int RGY_AUDIO_QUALITY_DEFAULT = 0;
 #define ENABLE_VPP_FILTER_COLORSPACE   (ENCODER_QSV                    || ENCODER_VCEENC || ENCODER_MPP || CLFILTERS_AUF)
 #endif
 #define ENABLE_VPP_FILTER_AFS          (ENCODER_QSV   || ENCODER_NVENC || ENCODER_VCEENC || ENCODER_MPP)
-#define ENABLE_VPP_FILTER_NNEDI       (ENCODER_QSV)
+#define ENABLE_VPP_FILTER_NNEDI       (ENCODER_QSV                    || ENCODER_VCEENC || ENCODER_MPP)
 #define ENABLE_VPP_FILTER_BWDIF        (ENCODER_QSV   || ENCODER_NVENC || ENCODER_VCEENC || ENCODER_MPP)
 #define ENABLE_VPP_FILTER_MAA          (ENCODER_QSV   || ENCODER_NVENC || ENCODER_VCEENC || ENCODER_MPP)
-#define ENABLE_VPP_FILTER_RTGMC        (ENCODER_QSV)
-#define ENABLE_VPP_FILTER_RTGMC_BOB    (ENCODER_QSV   || CLFILTERS_AUF)
-#define ENABLE_VPP_FILTER_RTGMC_SEARCH_PREFILTER (ENCODER_QSV)
-#define ENABLE_VPP_FILTER_RTGMC_EDI    (ENCODER_QSV)
-#define ENABLE_VPP_FILTER_RTGMC_RETOUCH (ENCODER_QSV)
-#define ENABLE_VPP_FILTER_RTGMC_SHIMMER_REPAIR (ENCODER_QSV)
-#define ENABLE_VPP_FILTER_RTGMC_PRIMITIVE (ENCODER_QSV)
-#define ENABLE_VPP_FILTER_KFM          (ENCODER_QSV)
+#define ENABLE_VPP_FILTER_RTGMC        (ENCODER_QSV                    || ENCODER_VCEENC || ENCODER_MPP)
+#define ENABLE_VPP_FILTER_RTGMC_BOB    (ENCODER_QSV                    || ENCODER_VCEENC || ENCODER_MPP || CLFILTERS_AUF)
+#define ENABLE_VPP_FILTER_RTGMC_SEARCH_PREFILTER (ENCODER_QSV          || ENCODER_VCEENC || ENCODER_MPP)
+#define ENABLE_VPP_FILTER_RTGMC_EDI    (ENCODER_QSV                    || ENCODER_VCEENC || ENCODER_MPP)
+#define ENABLE_VPP_FILTER_RTGMC_RETOUCH (ENCODER_QSV                   || ENCODER_VCEENC || ENCODER_MPP)
+#define ENABLE_VPP_FILTER_RTGMC_SHIMMER_REPAIR (ENCODER_QSV            || ENCODER_VCEENC || ENCODER_MPP)
+#define ENABLE_VPP_FILTER_RTGMC_PRIMITIVE (ENCODER_QSV                 || ENCODER_VCEENC || ENCODER_MPP)
+#define ENABLE_VPP_FILTER_KFM          (ENCODER_QSV                    || ENCODER_VCEENC || ENCODER_MPP)
+#define ENABLE_VPP_FILTER_VINVERSE     (ENCODER_QSV                    || ENCODER_VCEENC || ENCODER_MPP)
 #define ENABLE_VPP_FILTER_YADIF        (ENCODER_QSV   || ENCODER_NVENC || ENCODER_VCEENC || ENCODER_MPP)
 #define ENABLE_VPP_FILTER_DECOMB       (ENCODER_QSV   || ENCODER_NVENC || ENCODER_VCEENC || ENCODER_MPP)
 #define ENABLE_VPP_FILTER_IVTC         (ENCODER_QSV   || ENCODER_NVENC || ENCODER_VCEENC || ENCODER_MPP)
@@ -74,26 +75,30 @@ static const int RGY_AUDIO_QUALITY_DEFAULT = 0;
 #define ENABLE_VPP_FILTER_SELECT_EVERY (ENCODER_NVENC)
 #define ENABLE_VPP_FILTER_DECIMATE     (ENCODER_QSV   || ENCODER_NVENC || ENCODER_VCEENC || ENCODER_MPP)
 #define ENABLE_VPP_FILTER_MPDECIMATE   (ENCODER_QSV   || ENCODER_NVENC || ENCODER_VCEENC || ENCODER_MPP)
-#define ENABLE_VPP_FILTER_DEGRAIN    (ENCODER_QSV)
+#define ENABLE_VPP_FILTER_DEGRAIN    (ENCODER_QSV                      || ENCODER_VCEENC || ENCODER_MPP)
 #define ENABLE_VPP_FILTER_PAD          (ENCODER_QSV   || ENCODER_NVENC || ENCODER_VCEENC || ENCODER_MPP || CLFILTERS_AUF)
 #define ENABLE_VPP_FILTER_NLMEANS      (ENCODER_QSV   || ENCODER_NVENC || ENCODER_VCEENC || ENCODER_MPP || CLFILTERS_AUF)
 #define ENABLE_VPP_FILTER_PMD          (ENCODER_QSV   || ENCODER_NVENC || ENCODER_VCEENC || ENCODER_MPP || CLFILTERS_AUF)
+#define ENABLE_VPP_FILTER_HQDN3D       (ENCODER_QSV   || ENCODER_VCEENC || ENCODER_MPP)
+#define ENABLE_VPP_FILTER_DESCALE      (ENCODER_QSV   || ENCODER_VCEENC || ENCODER_MPP)
 #define ENABLE_VPP_FILTER_DENOISE_DCT  (ENCODER_QSV   || ENCODER_NVENC || ENCODER_VCEENC || ENCODER_MPP || CLFILTERS_AUF)
 #define ENABLE_VPP_FILTER_SMOOTH       (ENCODER_QSV   || ENCODER_NVENC || ENCODER_VCEENC || ENCODER_MPP || CLFILTERS_AUF)
 #define ENABLE_VPP_FILTER_FFT3D        (ENCODER_QSV   || ENCODER_NVENC || ENCODER_VCEENC || ENCODER_MPP)
 #define ENABLE_VPP_FILTER_MSMOOTH      (ENCODER_QSV   || ENCODER_NVENC || ENCODER_VCEENC || ENCODER_MPP || CLFILTERS_AUF)
 #define ENABLE_VPP_FILTER_CONVOLUTION3D (ENCODER_QSV  || ENCODER_NVENC || ENCODER_VCEENC || ENCODER_MPP)
 #define ENABLE_VPP_FILTER_UNSHARP      (ENCODER_QSV   || ENCODER_NVENC || ENCODER_VCEENC || ENCODER_MPP || CLFILTERS_AUF)
-#define ENABLE_VPP_FILTER_CHROMASHIFT  (ENCODER_QSV)
-#define ENABLE_VPP_FILTER_DEBLOCK      (ENCODER_QSV)
-#define ENABLE_VPP_FILTER_DEFLICKER    (ENCODER_QSV)
-#define ENABLE_VPP_FILTER_COLORFIX     (ENCODER_QSV)
-#define ENABLE_VPP_FILTER_DEHALO       (ENCODER_QSV)
-#define ENABLE_VPP_FILTER_FINEDEHALO   (ENCODER_QSV)
-#define ENABLE_VPP_FILTER_HQDERING     (ENCODER_QSV)
+#define ENABLE_VPP_FILTER_CHROMASHIFT  (ENCODER_QSV   || ENCODER_NVENC || ENCODER_VCEENC || ENCODER_MPP || CLFILTERS_AUF)
+#define ENABLE_VPP_FILTER_DEBLOCK      (ENCODER_QSV   || ENCODER_NVENC || ENCODER_VCEENC || ENCODER_MPP || CLFILTERS_AUF)
+#define ENABLE_VPP_FILTER_DEFLICKER    (ENCODER_QSV   || ENCODER_NVENC || ENCODER_VCEENC || ENCODER_MPP || CLFILTERS_AUF)
+#define ENABLE_VPP_FILTER_STAB         (ENCODER_QSV                    || ENCODER_VCEENC || ENCODER_MPP)
+#define ENABLE_VPP_FILTER_COLORFIX     (ENCODER_QSV   || ENCODER_NVENC || ENCODER_VCEENC || ENCODER_MPP || CLFILTERS_AUF)
+#define ENABLE_VPP_FILTER_DEHALO       (ENCODER_QSV   || ENCODER_NVENC || ENCODER_VCEENC || ENCODER_MPP || CLFILTERS_AUF)
+#define ENABLE_VPP_FILTER_FINEDEHALO   (ENCODER_QSV   || ENCODER_NVENC || ENCODER_VCEENC || ENCODER_MPP || CLFILTERS_AUF)
+#define ENABLE_VPP_FILTER_HQDERING     (ENCODER_QSV                    || ENCODER_VCEENC || ENCODER_MPP)
 #define ENABLE_VPP_FILTER_WARPSHARP    (ENCODER_QSV   || ENCODER_NVENC || ENCODER_VCEENC || ENCODER_MPP || CLFILTERS_AUF)
 #define ENABLE_VPP_FILTER_EDGELEVEL    (ENCODER_QSV   || ENCODER_NVENC || ENCODER_VCEENC || ENCODER_MPP || CLFILTERS_AUF)
 #define ENABLE_VPP_FILTER_MSHARPEN     (ENCODER_QSV   || ENCODER_NVENC || ENCODER_VCEENC || ENCODER_MPP || CLFILTERS_AUF)
+#define ENABLE_VPP_FILTER_CAS          (ENCODER_QSV                    || ENCODER_VCEENC || ENCODER_MPP)
 #define ENABLE_VPP_FILTER_CURVES       (ENCODER_QSV   || ENCODER_NVENC || ENCODER_VCEENC || ENCODER_MPP)
 #define ENABLE_VPP_FILTER_TWEAK        (ENCODER_QSV   || ENCODER_NVENC || ENCODER_VCEENC || ENCODER_MPP || CLFILTERS_AUF)
 #define ENABLE_VPP_FILTER_OVERLAY      (ENCODER_QSV   || ENCODER_NVENC || ENCODER_VCEENC || ENCODER_MPP)
@@ -186,6 +191,8 @@ enum class VppType : int {
     CL_DENOISE_KNN,
     CL_DENOISE_NLMEANS,
     CL_DENOISE_PMD,
+    CL_DENOISE_HQDN3D,
+    CL_DESCALE,
     CL_DENOISE_DCT,
     CL_DENOISE_SMOOTH,
     CL_DENOISE_FFT3D,
@@ -198,6 +205,7 @@ enum class VppType : int {
     CL_RTGMC_SHIMMER_REPAIR_REP1,
     CL_RTGMC_SHIMMER_REPAIR_REP2,
     CL_RTGMC_PRIMITIVE,
+    CL_VINVERSE,
     CL_MSMOOTH,
 
     CL_LIBPLACEBO_SHADER,
@@ -210,6 +218,7 @@ enum class VppType : int {
     CL_CHROMASHIFT,
     CL_DEBLOCK,
     CL_DEFLICKER,
+    CL_STAB,
     CL_COLORFIX,
     CL_DEHALO,
     CL_FINEDEHALO,
@@ -217,6 +226,7 @@ enum class VppType : int {
     CL_EDGELEVEL,
     CL_MSHARPEN,
     CL_WARPSHARP,
+    CL_CAS,
     CL_MAA,
 
     CL_CURVES,
@@ -439,11 +449,28 @@ static const float FILTER_DEFAULT_NLMEANS_FILTER_SIGMA = 0.005f;
 static const int   FILTER_DEFAULT_NLMEANS_PATCH_SIZE = 5;
 static const int   FILTER_DEFAULT_NLMEANS_SEARCH_SIZE = 11;
 static const float FILTER_DEFAULT_NLMEANS_H = 0.05f;
+static const int   FILTER_DEFAULT_NLMEANS_D = 0;
+static const int   FILTER_NLMEANS_D_MAX = 5;
 
 static const float FILTER_DEFAULT_PMD_STRENGTH = 100.0f;
 static const float FILTER_DEFAULT_PMD_THRESHOLD = 100.0f;
 static const int   FILTER_DEFAULT_PMD_APPLY_COUNT = 2;
 static const bool  FILTER_DEFAULT_PMD_USE_EXP = true;
+
+static const float FILTER_DEFAULT_HQDN3D_LUMA_SPATIAL = 4.0f;
+static const float FILTER_DEFAULT_HQDN3D_CHROMA_SPATIAL = 3.0f;
+static const float FILTER_DEFAULT_HQDN3D_LUMA_TEMPORAL = 6.0f;
+static const float FILTER_DEFAULT_HQDN3D_CHROMA_TEMPORAL = 4.5f;
+
+// Descale: inverse-kernel solver to recover a native lower-resolution
+// image from an upscaled distribution. The forward upscale is a sparse
+// linear system; descale solves it via LDLT decomposition.
+static const float FILTER_DEFAULT_DESCALE_BICUBIC_B    = 0.0f;
+static const float FILTER_DEFAULT_DESCALE_BICUBIC_C    = 0.5f;
+static const float FILTER_DEFAULT_DESCALE_SRC_LEFT     = 0.0f;
+static const float FILTER_DEFAULT_DESCALE_SRC_TOP      = 0.0f;
+static const int   FILTER_DEFAULT_DESCALE_SEARCH_STEP  = 1;
+static const int   FILTER_DEFAULT_DESCALE_DETECT_FRAMES = 10;
 
 static const int   FILTER_DEFAULT_SMOOTH_QUALITY = 3;
 static const int   FILTER_DEFAULT_SMOOTH_QP = 12;
@@ -527,8 +554,11 @@ static const float FILTER_DEFAULT_MSHARPEN_STRENGTH = 1.0f;
 static const float FILTER_DEFAULT_MSHARPEN_THRESHOLD = 15.0f;
 static const float FILTER_DEFAULT_MSHARPEN_SLOPE = 0.0f;
 static const float FILTER_DEFAULT_MSHARPEN_LUMA_LIMIT = 0.0f;
+static const float FILTER_DEFAULT_MSHARPEN_BLOCK_PROTECT = 0.0f;
 static const bool  FILTER_DEFAULT_MSHARPEN_HIGHQ = true;
 static const bool  FILTER_DEFAULT_MSHARPEN_MASK = false;
+static const float FILTER_DEFAULT_CAS_SHARPNESS = 0.4f;
+static const bool  FILTER_DEFAULT_CAS_HDR = false;
 
 static const TCHAR *FILTER_DEFAULT_LIBPLACEBO_SHADER_RESAMPLER_NAME = _T("libplacebo-ewa-lanczos");
 static const int   FILTER_DEFAULT_LIBPLACEBO_SHADER_CSP = 0;
@@ -546,11 +576,16 @@ static const bool  FILTER_DEFAULT_LIBPLACEBO_SHADER_SIGMOID = false;
 static const int   FILTER_DEFAULT_UNSHARP_RADIUS = 3;
 static const float FILTER_DEFAULT_UNSHARP_WEIGHT = 0.5f;
 static const float FILTER_DEFAULT_UNSHARP_THRESHOLD = 10.0f;
+static const float FILTER_DEFAULT_VINVERSE_SSTR = 2.7f;
+static const float FILTER_DEFAULT_VINVERSE_AMNT = 255.0f;
+static const float FILTER_DEFAULT_VINVERSE_SCL = 0.25f;
+static const float FILTER_DEFAULT_VINVERSE_THR = 0.0f;
+static const bool  FILTER_DEFAULT_VINVERSE_CHROMA = true;
 static const float FILTER_DEFAULT_CHROMASHIFT_X = 0.0f;
 static const float FILTER_DEFAULT_CHROMASHIFT_Y = 0.0f;
 static const int   FILTER_DEFAULT_CHROMASHIFT_SHOW = 0;
 static const bool  FILTER_DEFAULT_CHROMASHIFT_AUTO = false;
-static const int   FILTER_DEFAULT_CHROMASHIFT_AUTO_FRAMES = 5;
+static const int   FILTER_DEFAULT_CHROMASHIFT_AUTO_FRAMES = 30;
 static const int   FILTER_DEFAULT_CHROMASHIFT_AUTO_MIN_PAIRS = 200;
 static const int   FILTER_DEFAULT_DEBLOCK_QP = 24;
 static const int   FILTER_DEFAULT_DEBLOCK_ALPHA = 0;
@@ -562,6 +597,16 @@ static const float FILTER_DEFAULT_DEFLICKER_SCENE_THRESHOLD = 2.0f;
 static const int   FILTER_DEFAULT_DEFLICKER_FRAMES = 30;
 static const bool  FILTER_DEFAULT_DEFLICKER_PREDICTOR = true;
 static const bool  FILTER_DEFAULT_DEFLICKER_CHROMA = false;
+static const float FILTER_DEFAULT_STAB_STRENGTH = 1.0f;
+static const float FILTER_DEFAULT_STAB_DAMPING = 0.9f;
+static const float FILTER_DEFAULT_STAB_TRUST_THRESHOLD = 0.3f;
+static const float FILTER_DEFAULT_STAB_MAX_SHIFT = 32.0f;
+enum VppStabBorder {
+    VPP_STAB_BORDER_BLACK  = 0,
+    VPP_STAB_BORDER_CLAMP  = 1,
+    VPP_STAB_BORDER_MIRROR = 2,
+};
+static const int FILTER_DEFAULT_STAB_BORDER = VPP_STAB_BORDER_BLACK;
 static const int   FILTER_DEFAULT_COLORFIX_MODE = 0;
 static const int   FILTER_DEFAULT_COLORFIX_SPACE = 0;
 static const int   FILTER_DEFAULT_COLORFIX_MATRIX = 0;
@@ -646,6 +691,7 @@ const CX_DESC list_vpp_denoise[] = {
     { _T("knn"),     1 },
     { _T("nlmeans"), 9 },
     { _T("pmd"),     2 },
+    { _T("hqdn3d"), 13 },
     { _T("denoise-dct"), 8 },
     { _T("smooth"),  3 },
     { _T("fft3d"), 10 },
@@ -674,6 +720,7 @@ const CX_DESC list_vpp_detail_enahance[] = {
     { _T("warpsharp"),  3 },
 #if ENCODER_QSV
     { _T("msharpen"),   5 },
+    { _T("cas"),        6 },
 #endif
     { NULL, 0 }
 };
@@ -725,6 +772,7 @@ enum RGY_VPP_RESIZE_ALGO {
     RGY_VPP_RESIZE_LANCZOS3,
     RGY_VPP_RESIZE_LANCZOS4,
     RGY_VPP_RESIZE_GAUSS,
+    RGY_VPP_RESIZE_FSR1,
     RGY_VPP_RESIZE_OPENCL_CUDA_MAX,
 #if ENCODER_QSV
     RGY_VPP_RESIZE_MFX_NEAREST_NEIGHBOR,
@@ -896,6 +944,7 @@ const CX_DESC list_vpp_resize[] = {
     { _T("lanczos3"), RGY_VPP_RESIZE_LANCZOS3 },
     { _T("lanczos4"), RGY_VPP_RESIZE_LANCZOS4 },
     { _T("gauss"),    RGY_VPP_RESIZE_GAUSS },
+    { _T("fsr1"),     RGY_VPP_RESIZE_FSR1 },
 #if ENCODER_QSV
   #if !FOR_AUO
     { _T("bilinear"), RGY_VPP_RESIZE_MFX_BILINEAR },
@@ -983,6 +1032,7 @@ const CX_DESC list_vpp_resize_help[] = {
     { _T("lanczos3"), RGY_VPP_RESIZE_LANCZOS3 },
     { _T("lanczos4"), RGY_VPP_RESIZE_LANCZOS4 },
     { _T("gauss"),    RGY_VPP_RESIZE_GAUSS },
+    { _T("fsr1"),     RGY_VPP_RESIZE_FSR1 },
 #if ENCODER_QSV
     { _T("bilinear"), RGY_VPP_RESIZE_MFX_BILINEAR },
     { _T("advanced"), RGY_VPP_RESIZE_MFX_ADVANCED },
@@ -1056,6 +1106,18 @@ const CX_DESC list_vpp_resize_help[] = {
 static const char *paramsResizeLibPlacebo[] = { "algo", "pl-radius", "pl-clamp", "pl-taper", "pl-blur", "pl-antiring"/*, "pl-cplace"*/ };
 static const char *paramsResizeNVEnc[] = { "superres-mode", "superres-strength", "vsr-quality" };
 static const char *paramsResizeQSVEnc[] = { "superres-mode", "superres-algo" };
+static const char *paramsResizeFsr1[] = { "sharpness" };
+
+static const float FILTER_DEFAULT_RESIZE_FSR1_SHARPNESS = 0.5f;
+
+struct VppResizeFsr1 {
+    float sharpness;
+
+    VppResizeFsr1();
+    bool operator==(const VppResizeFsr1 &x) const;
+    bool operator!=(const VppResizeFsr1 &x) const;
+    tstring print() const;
+};
 
 const CX_DESC list_vpp_resize_res_mode[] = {
     { _T("normal"),   (int)RGYResizeResMode::Normal },
@@ -2502,6 +2564,8 @@ struct VppNLMeans {
     int   patchSize;
     int   searchSize;
     float h;
+    int   d;
+    int   searchSizeT;
     VppNLMeansFP16Opt fp16;
     bool sharedMem;
     bool processChroma;
@@ -2522,6 +2586,19 @@ struct VppPmd {
     VppPmd();
     bool operator==(const VppPmd &x) const;
     bool operator!=(const VppPmd &x) const;
+    tstring print() const;
+};
+
+struct VppHqdn3d {
+    bool enable;
+    float luma_spatial;
+    float chroma_spatial;
+    float luma_temporal;
+    float chroma_temporal;
+
+    VppHqdn3d();
+    bool operator==(const VppHqdn3d &x) const;
+    bool operator!=(const VppHqdn3d &x) const;
     tstring print() const;
 };
 
@@ -2808,6 +2885,32 @@ struct VppUnsharp {
     tstring print() const;
 };
 
+enum class VppVinverseMode {
+    Vinverse = 0,
+    Vinverse2,
+};
+
+const CX_DESC list_vpp_vinverse_mode[] = {
+    { _T("vinverse"),  (int)VppVinverseMode::Vinverse  },
+    { _T("vinverse2"), (int)VppVinverseMode::Vinverse2 },
+    { NULL, 0 }
+};
+
+struct VppVinverse {
+    bool enable;
+    VppVinverseMode mode;
+    float sstr;
+    float amnt;
+    float scl;
+    float thr;
+    bool chroma;
+
+    VppVinverse();
+    bool operator==(const VppVinverse &x) const;
+    bool operator!=(const VppVinverse &x) const;
+    tstring print() const;
+};
+
 struct VppChromaShift {
     bool  enable;
     float x;
@@ -2848,6 +2951,20 @@ struct VppDeflicker {
     VppDeflicker();
     bool operator==(const VppDeflicker &x) const;
     bool operator!=(const VppDeflicker &x) const;
+    tstring print() const;
+};
+
+struct VppStab {
+    bool  enable;
+    float strength;
+    float damping;
+    float trust_threshold;
+    float max_shift;
+    int   border;
+
+    VppStab();
+    bool operator==(const VppStab &x) const;
+    bool operator!=(const VppStab &x) const;
     tstring print() const;
 };
 
@@ -2963,6 +3080,7 @@ struct VppMsharpen {
     float threshold;
     float slope;
     float luma_limit;
+    float block_protect;
     bool  highq;
     bool  mask;
 
@@ -2990,6 +3108,17 @@ struct VppWarpsharp {
     tstring print() const;
 };
 
+struct VppCas {
+    bool enable;
+    float sharpness;
+    bool hdr;
+
+    VppCas();
+    bool operator==(const VppCas& x) const;
+    bool operator!=(const VppCas& x) const;
+    tstring print() const;
+};
+
 struct VppMaa {
     bool enable;
     float ss;       // supersample factor; 1.0..4.0
@@ -3004,6 +3133,67 @@ struct VppMaa {
     VppMaa();
     bool operator==(const VppMaa &x) const;
     bool operator!=(const VppMaa &x) const;
+    tstring print() const;
+};
+
+enum class VppDescaleKernel {
+    Bilinear,
+    Bicubic,
+    Spline16,
+    Spline36,
+    Spline64,
+    Lanczos2,
+    Lanczos3,
+    Lanczos4,
+    Auto,
+};
+
+enum class VppDescaleBorder {
+    Mirror,
+    Zero,
+    Repeat,
+};
+
+const CX_DESC list_vpp_descale_kernel[] = {
+    { _T("bilinear"), (int)VppDescaleKernel::Bilinear },
+    { _T("bicubic"),  (int)VppDescaleKernel::Bicubic  },
+    { _T("spline16"), (int)VppDescaleKernel::Spline16 },
+    { _T("spline36"), (int)VppDescaleKernel::Spline36 },
+    { _T("spline64"), (int)VppDescaleKernel::Spline64 },
+    { _T("lanczos2"), (int)VppDescaleKernel::Lanczos2 },
+    { _T("lanczos3"), (int)VppDescaleKernel::Lanczos3 },
+    { _T("lanczos4"), (int)VppDescaleKernel::Lanczos4 },
+    { _T("auto"),     (int)VppDescaleKernel::Auto     },
+    { NULL, 0 }
+};
+
+const CX_DESC list_vpp_descale_border[] = {
+    { _T("mirror"), (int)VppDescaleBorder::Mirror },
+    { _T("zero"),   (int)VppDescaleBorder::Zero   },
+    { _T("repeat"), (int)VppDescaleBorder::Repeat },
+    { NULL, 0 }
+};
+
+struct VppDescale {
+    bool enable;
+    VppDescaleKernel kernel;
+    int width;
+    int height;
+    float b;
+    float c;
+    float src_left;
+    float src_top;
+    VppDescaleBorder border;
+    bool autoDetect;
+    int search_min;
+    int search_max;
+    int search_step;
+    int detect_frames;
+    bool show_scores;
+
+    VppDescale();
+    bool operator==(const VppDescale &x) const;
+    bool operator!=(const VppDescale &x) const;
     tstring print() const;
 };
 
@@ -3195,6 +3385,7 @@ struct RGYParamVpp {
     RGY_VPP_RESIZE_MODE resize_mode;
     VppDeintCsp deintCsp;
     VppLibplaceboResample resize_libplacebo;
+    VppResizeFsr1 resize_fsr1;
     VppColorspace colorspace;
     VppLibplaceboToneMapping libplacebo_tonemapping;
     VppDelogo delogo;
@@ -3218,6 +3409,8 @@ struct RGYParamVpp {
     VppKnn knn;
     VppNLMeans nlmeans;
     VppPmd pmd;
+    VppHqdn3d hqdn3d;
+    VppDescale descale;
     VppDenoiseDct dct;
     VppSmooth smooth;
     VppDenoiseFFT3D fft3d;
@@ -3234,9 +3427,11 @@ struct RGYParamVpp {
     std::vector<VppSubburn> subburn;
     std::vector<VppLibplaceboShader> libplacebo_shader;
     VppUnsharp unsharp;
+    VppVinverse vinverse;
     VppChromaShift chromashift;
     VppDeblock deblock;
     VppDeflicker deflicker;
+    VppStab stab;
     VppColorFix colorfix;
     VppDehalo dehalo;
     VppFineDehalo finedehalo;
@@ -3244,6 +3439,7 @@ struct RGYParamVpp {
     VppEdgelevel edgelevel;
     VppMsharpen msharpen;
     VppWarpsharp warpsharp;
+    VppCas cas;
     VppMaa maa;
     VppCurves curves;
     VppTweak tweak;
