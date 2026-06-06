@@ -116,6 +116,9 @@ namespace AUO_NAME_R {
     private: System::Windows::Forms::Label^  fosLBLogOut;
     private: System::Windows::Forms::CheckBox^  fosCBPerfMonitor;
     private: System::Windows::Forms::CheckBox^  fosCBOutputMoreLog;
+    private: System::Windows::Forms::TextBox^  fosTXAutoSaveLog;
+    private: System::Windows::Forms::CheckBox^  fosCBAutoSaveLog;
+    private: System::Windows::Forms::ComboBox^  fosCXAutoSaveLog;
 
 
 
@@ -168,6 +171,9 @@ namespace AUO_NAME_R {
             this->fosCXDefaultOutExt = (gcnew System::Windows::Forms::ComboBox());
             this->fosLBDefaultOutExt = (gcnew System::Windows::Forms::Label());
             this->fostabPageGUI = (gcnew System::Windows::Forms::TabPage());
+            this->fosTXAutoSaveLog = (gcnew System::Windows::Forms::TextBox());
+            this->fosCBAutoSaveLog = (gcnew System::Windows::Forms::CheckBox());
+            this->fosCXAutoSaveLog = (gcnew System::Windows::Forms::ComboBox());
             this->fosCBOutputMoreLog = (gcnew System::Windows::Forms::CheckBox());
             this->fosCXLogLevel = (gcnew System::Windows::Forms::ComboBox());
             this->fosLBLogOut = (gcnew System::Windows::Forms::Label());
@@ -244,7 +250,7 @@ namespace AUO_NAME_R {
             this->fostabPageGeneral->Controls->Add(this->fosLBDefaultOutExt);
             this->fostabPageGeneral->Location = System::Drawing::Point(4, 24);
             this->fostabPageGeneral->Name = L"fostabPageGeneral";
-            this->fostabPageGeneral->Padding = System::Windows::Forms::Padding(3);
+            this->fostabPageGeneral->Padding = System::Windows::Forms::Padding(3, 3, 3, 3);
             this->fostabPageGeneral->Size = System::Drawing::Size(383, 386);
             this->fostabPageGeneral->TabIndex = 0;
             this->fostabPageGeneral->Text = L"エンコード設定";
@@ -349,6 +355,9 @@ namespace AUO_NAME_R {
             // 
             // fostabPageGUI
             // 
+            this->fostabPageGUI->Controls->Add(this->fosTXAutoSaveLog);
+            this->fostabPageGUI->Controls->Add(this->fosCBAutoSaveLog);
+            this->fostabPageGUI->Controls->Add(this->fosCXAutoSaveLog);
             this->fostabPageGUI->Controls->Add(this->fosCBOutputMoreLog);
             this->fostabPageGUI->Controls->Add(this->fosCXLogLevel);
             this->fostabPageGUI->Controls->Add(this->fosLBLogOut);
@@ -365,17 +374,55 @@ namespace AUO_NAME_R {
             this->fostabPageGUI->Controls->Add(this->fosTXStgDir);
             this->fostabPageGUI->Location = System::Drawing::Point(4, 24);
             this->fostabPageGUI->Name = L"fostabPageGUI";
-            this->fostabPageGUI->Padding = System::Windows::Forms::Padding(3);
+            this->fostabPageGUI->Padding = System::Windows::Forms::Padding(3, 3, 3, 3);
             this->fostabPageGUI->Size = System::Drawing::Size(383, 386);
             this->fostabPageGUI->TabIndex = 1;
             this->fostabPageGUI->Text = L"ログ・設定画面";
             this->fostabPageGUI->UseVisualStyleBackColor = true;
             // 
+            // fosTXAutoSaveLog
+            // 
+            this->fosTXAutoSaveLog->Location = System::Drawing::Point(34, 353);
+            this->fosTXAutoSaveLog->Name = L"fosTXAutoSaveLog";
+            this->fosTXAutoSaveLog->Size = System::Drawing::Size(290, 23);
+            this->fosTXAutoSaveLog->TabIndex = 34;
+            // 
+            // fosCBAutoSaveLog
+            // 
+            this->fosCBAutoSaveLog->AutoSize = true;
+            this->fosCBAutoSaveLog->Location = System::Drawing::Point(11, 331);
+            this->fosCBAutoSaveLog->Name = L"fosCBAutoSaveLog";
+            this->fosCBAutoSaveLog->Size = System::Drawing::Size(92, 19);
+            this->fosCBAutoSaveLog->TabIndex = 33;
+            this->fosCBAutoSaveLog->Text = L"ログ自動保存";
+            this->fosCBAutoSaveLog->UseVisualStyleBackColor = true;
+            this->fosCBAutoSaveLog->CheckedChanged += gcnew System::EventHandler(this, &frmOtherSettings::fosCBAutoSaveLog_CheckedChanged);
+            // 
+            // fosCXAutoSaveLog
+            // 
+            this->fosCXAutoSaveLog->DropDownStyle = System::Windows::Forms::ComboBoxStyle::DropDownList;
+            this->fosCXAutoSaveLog->FormattingEnabled = true;
+            this->fosCXAutoSaveLog->Location = System::Drawing::Point(109, 327);
+            this->fosCXAutoSaveLog->Name = L"fosCXAutoSaveLog";
+            this->fosCXAutoSaveLog->Size = System::Drawing::Size(140, 23);
+            this->fosCXAutoSaveLog->TabIndex = 32;
+            this->fosCXAutoSaveLog->SelectedIndexChanged += gcnew System::EventHandler(this, &frmOtherSettings::fosCXAutoSaveLog_SelectedIndexChanged);
+            // 
+            // fosCBOutputMoreLog
+            // 
+            this->fosCBOutputMoreLog->AutoSize = true;
+            this->fosCBOutputMoreLog->Location = System::Drawing::Point(11, 307);
+            this->fosCBOutputMoreLog->Name = L"fosCBOutputMoreLog";
+            this->fosCBOutputMoreLog->Size = System::Drawing::Size(143, 19);
+            this->fosCBOutputMoreLog->TabIndex = 29;
+            this->fosCBOutputMoreLog->Text = L"音声・muxのログも表示";
+            this->fosCBOutputMoreLog->UseVisualStyleBackColor = true;
+            // 
             // fosCXLogLevel
             // 
             this->fosCXLogLevel->DropDownStyle = System::Windows::Forms::ComboBoxStyle::DropDownList;
             this->fosCXLogLevel->FormattingEnabled = true;
-            this->fosCXLogLevel->Location = System::Drawing::Point(35, 99);
+            this->fosCXLogLevel->Location = System::Drawing::Point(35, 87);
             this->fosCXLogLevel->Name = L"fosCXLogLevel";
             this->fosCXLogLevel->Size = System::Drawing::Size(234, 23);
             this->fosCXLogLevel->TabIndex = 28;
@@ -383,7 +430,7 @@ namespace AUO_NAME_R {
             // fosLBLogOut
             // 
             this->fosLBLogOut->AutoSize = true;
-            this->fosLBLogOut->Location = System::Drawing::Point(8, 79);
+            this->fosLBLogOut->Location = System::Drawing::Point(8, 67);
             this->fosLBLogOut->Name = L"fosLBLogOut";
             this->fosLBLogOut->Size = System::Drawing::Size(49, 15);
             this->fosLBLogOut->TabIndex = 27;
@@ -391,7 +438,7 @@ namespace AUO_NAME_R {
             // 
             // fosBTSetFont
             // 
-            this->fosBTSetFont->Location = System::Drawing::Point(246, 305);
+            this->fosBTSetFont->Location = System::Drawing::Point(246, 283);
             this->fosBTSetFont->Name = L"fosBTSetFont";
             this->fosBTSetFont->Size = System::Drawing::Size(124, 27);
             this->fosBTSetFont->TabIndex = 25;
@@ -402,7 +449,7 @@ namespace AUO_NAME_R {
             // fosCBGetRelativePath
             // 
             this->fosCBGetRelativePath->AutoSize = true;
-            this->fosCBGetRelativePath->Location = System::Drawing::Point(11, 305);
+            this->fosCBGetRelativePath->Location = System::Drawing::Point(11, 283);
             this->fosCBGetRelativePath->Name = L"fosCBGetRelativePath";
             this->fosCBGetRelativePath->Size = System::Drawing::Size(185, 19);
             this->fosCBGetRelativePath->TabIndex = 24;
@@ -412,7 +459,7 @@ namespace AUO_NAME_R {
             // fosCBStgEscKey
             // 
             this->fosCBStgEscKey->AutoSize = true;
-            this->fosCBStgEscKey->Location = System::Drawing::Point(11, 276);
+            this->fosCBStgEscKey->Location = System::Drawing::Point(11, 253);
             this->fosCBStgEscKey->Name = L"fosCBStgEscKey";
             this->fosCBStgEscKey->Size = System::Drawing::Size(168, 19);
             this->fosCBStgEscKey->TabIndex = 23;
@@ -422,7 +469,7 @@ namespace AUO_NAME_R {
             // fosCBLogDisableTransparency
             // 
             this->fosCBLogDisableTransparency->AutoSize = true;
-            this->fosCBLogDisableTransparency->Location = System::Drawing::Point(11, 247);
+            this->fosCBLogDisableTransparency->Location = System::Drawing::Point(11, 224);
             this->fosCBLogDisableTransparency->Name = L"fosCBLogDisableTransparency";
             this->fosCBLogDisableTransparency->Size = System::Drawing::Size(174, 19);
             this->fosCBLogDisableTransparency->TabIndex = 22;
@@ -432,7 +479,7 @@ namespace AUO_NAME_R {
             // fosCBLogStartMinimized
             // 
             this->fosCBLogStartMinimized->AutoSize = true;
-            this->fosCBLogStartMinimized->Location = System::Drawing::Point(11, 217);
+            this->fosCBLogStartMinimized->Location = System::Drawing::Point(11, 195);
             this->fosCBLogStartMinimized->Name = L"fosCBLogStartMinimized";
             this->fosCBLogStartMinimized->Size = System::Drawing::Size(184, 19);
             this->fosCBLogStartMinimized->TabIndex = 21;
@@ -445,7 +492,7 @@ namespace AUO_NAME_R {
             this->fosLBDisableVisualStyles->Font = (gcnew System::Drawing::Font(L"Meiryo UI", 8.25F, System::Drawing::FontStyle::Regular, System::Drawing::GraphicsUnit::Point,
                 static_cast<System::Byte>(128)));
             this->fosLBDisableVisualStyles->ForeColor = System::Drawing::Color::OrangeRed;
-            this->fosLBDisableVisualStyles->Location = System::Drawing::Point(32, 187);
+            this->fosLBDisableVisualStyles->Location = System::Drawing::Point(32, 164);
             this->fosLBDisableVisualStyles->Name = L"fosLBDisableVisualStyles";
             this->fosLBDisableVisualStyles->Size = System::Drawing::Size(161, 14);
             this->fosLBDisableVisualStyles->TabIndex = 20;
@@ -454,7 +501,7 @@ namespace AUO_NAME_R {
             // fosCBDisableVisualStyles
             // 
             this->fosCBDisableVisualStyles->AutoSize = true;
-            this->fosCBDisableVisualStyles->Location = System::Drawing::Point(11, 168);
+            this->fosCBDisableVisualStyles->Location = System::Drawing::Point(11, 145);
             this->fosCBDisableVisualStyles->Name = L"fosCBDisableVisualStyles";
             this->fosCBDisableVisualStyles->Size = System::Drawing::Size(128, 19);
             this->fosCBDisableVisualStyles->TabIndex = 19;
@@ -464,7 +511,7 @@ namespace AUO_NAME_R {
             // fosCBDisableToolTip
             // 
             this->fosCBDisableToolTip->AutoSize = true;
-            this->fosCBDisableToolTip->Location = System::Drawing::Point(11, 138);
+            this->fosCBDisableToolTip->Location = System::Drawing::Point(11, 115);
             this->fosCBDisableToolTip->Name = L"fosCBDisableToolTip";
             this->fosCBDisableToolTip->Size = System::Drawing::Size(158, 19);
             this->fosCBDisableToolTip->TabIndex = 18;
@@ -473,7 +520,7 @@ namespace AUO_NAME_R {
             // 
             // fosBTStgDir
             // 
-            this->fosBTStgDir->Location = System::Drawing::Point(335, 41);
+            this->fosBTStgDir->Location = System::Drawing::Point(335, 29);
             this->fosBTStgDir->Name = L"fosBTStgDir";
             this->fosBTStgDir->Size = System::Drawing::Size(35, 23);
             this->fosBTStgDir->TabIndex = 8;
@@ -484,7 +531,7 @@ namespace AUO_NAME_R {
             // fosLBStgDir
             // 
             this->fosLBStgDir->AutoSize = true;
-            this->fosLBStgDir->Location = System::Drawing::Point(8, 21);
+            this->fosLBStgDir->Location = System::Drawing::Point(8, 9);
             this->fosLBStgDir->Name = L"fosLBStgDir";
             this->fosLBStgDir->Size = System::Drawing::Size(123, 15);
             this->fosLBStgDir->TabIndex = 7;
@@ -492,20 +539,10 @@ namespace AUO_NAME_R {
             // 
             // fosTXStgDir
             // 
-            this->fosTXStgDir->Location = System::Drawing::Point(35, 41);
+            this->fosTXStgDir->Location = System::Drawing::Point(35, 29);
             this->fosTXStgDir->Name = L"fosTXStgDir";
             this->fosTXStgDir->Size = System::Drawing::Size(294, 23);
             this->fosTXStgDir->TabIndex = 6;
-            // 
-            // fosCBOutputMoreLog
-            // 
-            this->fosCBOutputMoreLog->AutoSize = true;
-            this->fosCBOutputMoreLog->Location = System::Drawing::Point(11, 330);
-            this->fosCBOutputMoreLog->Name = L"fosCBOutputMoreLog";
-            this->fosCBOutputMoreLog->Size = System::Drawing::Size(143, 19);
-            this->fosCBOutputMoreLog->TabIndex = 29;
-            this->fosCBOutputMoreLog->Text = L"音声・muxのログも表示";
-            this->fosCBOutputMoreLog->UseVisualStyleBackColor = true;
             // 
             // frmOtherSettings
             // 
@@ -563,6 +600,7 @@ namespace AUO_NAME_R {
             LOAD_CLI_TEXT(fosCBLogDisableTransparency);
             LOAD_CLI_TEXT(fosLBDisableVisualStyles);
             LOAD_CLI_TEXT(fosCBLogStartMinimized);
+            LOAD_CLI_TEXT(fosCBAutoSaveLog);
             LOAD_CLI_TEXT(fosLBStgDir);
             LOAD_CLI_TEXT(fosBTStgDir);
             //LOAD_CLI_TEXT(fostabPageAMP);
@@ -583,8 +621,10 @@ namespace AUO_NAME_R {
             //LOAD_CLI_TEXT(fosLBAMPLimitMarginMax);
             //LOAD_CLI_TEXT(fosLBAMPLimitMarginMin);
             //LOAD_CLI_TEXT(fosCBAmpKeepOldFile);
+#if ENCODER_QSV
             LOAD_CLI_TEXT(fosCBPerfMonitor);
             LOAD_CLI_TEXT(fosLBLogOut);
+#endif
             LOAD_CLI_MAIN_TEXT(fosMain);
         }
     private:
@@ -605,6 +645,9 @@ namespace AUO_NAME_R {
             fos_ex_stg->s_log.minimized                   = fosCBLogStartMinimized->Checked;
             fos_ex_stg->s_log.transparent                 = !fosCBLogDisableTransparency->Checked;
             fos_ex_stg->s_log.log_level                   = list_log_level_jp[fosCXLogLevel->SelectedIndex].value;
+            fos_ex_stg->s_log.auto_save_log               = fosCBAutoSaveLog->Checked;
+            fos_ex_stg->s_log.auto_save_log_mode          = fosCXAutoSaveLog->SelectedIndex;
+            GetWCHARfromString(fos_ex_stg->s_log.auto_save_log_path, fosTXAutoSaveLog->Text);
             fos_ex_stg->s_local.get_relative_path         = fosCBGetRelativePath->Checked;
             fos_ex_stg->s_local.default_output_ext        = fosCXDefaultOutExt->SelectedIndex;
             const int default_encoder = fosCXDefaultAudioEncoder->SelectedIndex;
@@ -622,6 +665,27 @@ namespace AUO_NAME_R {
             fos_ex_stg->save_local();
             fos_ex_stg->save_log_win();
             this->Close();
+        }
+    private:
+        System::Void setComboBox(ComboBox^ CX, const AuoMes* list) {
+            const int itemCount = CX->Items->Count;
+            bool textExists = true;
+            for (int i = 0; i < itemCount; i++) {
+                if (list[i] == AUO_MES_UNKNOWN) {
+                    textExists = false;
+                    break;
+                }
+            }
+            if (!textExists) return;
+
+            CX->BeginUpdate();
+            const int prevIdx = CX->SelectedIndex;
+            CX->Items->Clear();
+            for (int i = 0; i < itemCount; i++) {
+                CX->Items->Add(LOAD_CLI_STRING(list[i]));
+            }
+            SetCXIndex(CX, prevIdx);
+            CX->EndUpdate();
         }
     private:
         System::Void SetCXIndex(ComboBox^ CX, int index) {
@@ -663,6 +727,14 @@ namespace AUO_NAME_R {
                 fosCXDefaultAudioEncoder->Items->Add(LOAD_CLI_STRING(AUO_OTHER_SETTINGS_AUDIO_ENCODER_EXTERNAL) + L": " + String(fos_ex_stg->s_aud_ext[i].dispname).ToString());
             fosCXDefaultAudioEncoder->ResumeLayout();
 
+            const AuoMes listCXMes[] = { AUO_AUTO_SAVE_LOG_SAME_AS_OUTPUT, AUO_AUTO_SAVE_LOG_CUSTOM };
+            fosCXAutoSaveLog->SuspendLayout();
+            fosCXAutoSaveLog->Items->Clear();
+            for (int i = 0; i < _countof(listCXMes); i++) {
+                fosCXAutoSaveLog->Items->Add(LOAD_CLI_STRING(listCXMes[i]));
+            }
+            fosCXAutoSaveLog->ResumeLayout();
+
             setComboBox(fosCXLogLevel, list_log_level_jp);
         }
     private:
@@ -683,6 +755,9 @@ namespace AUO_NAME_R {
             fosCBLogStartMinimized->Checked      = fos_ex_stg->s_log.minimized != 0;
             fosCBLogDisableTransparency->Checked = fos_ex_stg->s_log.transparent == 0;
             fosCXLogLevel->SelectedIndex         = get_cx_index(list_log_level_jp, fos_ex_stg->s_log.log_level);
+            fosCBAutoSaveLog->Checked            = fos_ex_stg->s_log.auto_save_log;
+            SetCXIndex(fosCXAutoSaveLog,           fos_ex_stg->s_log.auto_save_log_mode);
+            fosTXAutoSaveLog->Text               = String(fos_ex_stg->s_log.auto_save_log_path).ToString();
             fosCBGetRelativePath->Checked        = fos_ex_stg->s_local.get_relative_path != 0;
             fosCXDefaultOutExt->SelectedIndex    = fos_ex_stg->s_local.default_output_ext;
             fosCBRunBatMinimized->Checked        = fos_ex_stg->s_local.run_bat_minimized != 0;
@@ -695,7 +770,6 @@ namespace AUO_NAME_R {
             fosCBPerfMonitor->Checked               = fos_ex_stg->s_local.perf_monitor != 0;
 #else
             fosCBPerfMonitor->Visible = false;
-            fosCBPerfMonitorPlot->Visible = false;
 #endif
             if (str_has_char(fos_ex_stg->s_local.conf_font.name))
                 SetFontFamilyToForm(this, gcnew FontFamily(String(fos_ex_stg->s_local.conf_font.name).ToString()), this->Font->FontFamily);
@@ -774,6 +848,15 @@ namespace AUO_NAME_R {
             for (int i = 0; i < top->Controls->Count; i++) {
                 SetAllMouseMove(top->Controls[i], themeTo);
             }
+        }
+    private:
+        System::Void fosCBAutoSaveLog_CheckedChanged(System::Object^  sender, System::EventArgs^  e) {
+            fosCXAutoSaveLog->Enabled = fosCBAutoSaveLog->Checked;
+            fosTXAutoSaveLog->Visible = fosCBAutoSaveLog->Checked && (fosCXAutoSaveLog->SelectedIndex == AUO_AUTO_SAVE_LOG_CUSTOM);
+        }
+    private:
+        System::Void fosCXAutoSaveLog_SelectedIndexChanged(System::Object^  sender, System::EventArgs^  e) {
+            fosTXAutoSaveLog->Visible = fosCBAutoSaveLog->Checked && (fosCXAutoSaveLog->SelectedIndex == AUO_AUTO_SAVE_LOG_CUSTOM);
         }
 };
 }

@@ -89,6 +89,54 @@ static bool format_is_y4m(const AVFormatContext *formatCtx) {
     return _stricmp(formatCtx->oformat->name, "yuv4mpegpipe") == 0;
 }
 
+struct AudioLayoutResolveResult {
+    uniuqeRGYChannelLayout layout;
+    int channels;
+    bool fallbackToDefault;
+    bool resolved;
+
+    AudioLayoutResolveResult() :
+        layout(createChannelLayoutEmpty()),
+        channels(0),
+        fallbackToDefault(false),
+        resolved(false) {
+    }
+};
+
+static AudioLayoutResolveResult resolveAudioChannelLayoutStrict(const int channels, const RGYChannelLayout *channel_layout) {
+    AudioLayoutResolveResult result;
+    result.channels = channels;
+    if (channel_layout != nullptr
+        && channelLayoutSet(channel_layout)
+        && !channelLayoutOrderUnspec(channel_layout)) {
+        result.layout = createChannelLayoutCopy(channel_layout);
+        result.resolved = true;
+        return result;
+    }
+    if (channels <= 2) {
+        result.layout = getDefaultChannelLayout(channels);
+        result.fallbackToDefault = true;
+        result.resolved = true;
+    }
+    return result;
+}
+
+static AudioLayoutResolveResult resolveAudioChannelLayoutStrict(const AVCodecContext *ctx) {
+#if AV_CHANNEL_LAYOUT_STRUCT_AVAIL
+    return resolveAudioChannelLayoutStrict(getChannelCount(ctx), &ctx->ch_layout);
+#else
+    return resolveAudioChannelLayoutStrict(ctx->channels, &ctx->channel_layout);
+#endif
+}
+
+static AudioLayoutResolveResult resolveAudioChannelLayoutStrict(const AVFrame *frame) {
+#if AV_CHANNEL_LAYOUT_STRUCT_AVAIL
+    return resolveAudioChannelLayoutStrict(getChannelCount(&frame->ch_layout), &frame->ch_layout);
+#else
+    return resolveAudioChannelLayoutStrict(frame->channels, &frame->channel_layout);
+#endif
+}
+
 #if ENABLE_AVSW_READER
 #if USE_CUSTOM_IO
 static int funcReadPacket(void *opaque, uint8_t *buf, int buf_size) {
@@ -109,6 +157,7 @@ AVMuxFormat::AVMuxFormat() :
     filename(nullptr),
     formatCtx(nullptr),
     metadataStr(),
+    muxerCmdline(),
     outputFmt(nullptr),
 #if USE_CUSTOM_IO
     AVOutBuffer(nullptr),
@@ -675,6 +724,27 @@ uniuqeRGYChannelLayout RGYOutputAvcodec::AutoSelectChannelLayout(const AVCodec *
         return createChannelLayoutCopy(&channelLayout[selectIdx]);
     }
     return createChannelLayoutCopy(&channelLayout[0]);
+}
+
+int RGYOutputAvcodec::AudioGetBitrate(const std::vector<AudioBitrate> &encodeBitrate, const RGYChannelLayout *channelLayout) const {
+    const auto targetChannleLayoutStr = getChannelLayoutChar(channelLayout);
+    for (const auto& bitrate : encodeBitrate) {
+        if (targetChannleLayoutStr == bitrate.channel) {
+            return bitrate.bitrate;
+        }
+    }
+    const int targetChannelCount = getChannelCount(channelLayout);
+    for (const auto& bitrate : encodeBitrate) {
+        auto channel = getChannelLayoutFromString(bitrate.channel);
+        if (targetChannelCount == getChannelCount(channel.get())) {
+            return bitrate.bitrate;
+        }
+    }
+    auto defaultBitrate = std::find_if(encodeBitrate.begin(), encodeBitrate.end(), [](const AudioBitrate &bitrate) { return bitrate.channel.empty(); });
+    if (defaultBitrate != encodeBitrate.end()) {
+        return defaultBitrate->bitrate;
+    }
+    return 0;
 }
 
 int RGYOutputAvcodec::AutoSelectSamplingRate(const int *samplingRateList, int srcSamplingRate) {
@@ -1364,8 +1434,14 @@ RGY_ERR RGYOutputAvcodec::InitVideo(const VideoInfo *videoOutputInfo, const Avco
 
 //音声フィルタの初期化
 RGY_ERR RGYOutputAvcodec::InitAudioFilter(AVMuxAudio *muxAudio, int channels, const RGYChannelLayout *channel_layout, int sample_rate, AVSampleFormat sample_fmt, const std::string resamplerPrm) {
-    //時折channel_layoutが設定されていない場合や、OrderがUnspecの場合がある
-    auto channel_layout_next = (channelLayoutSet(channel_layout) && !channelLayoutOrderUnspec(channel_layout)) ? createChannelLayoutCopy(channel_layout) : getDefaultChannelLayout(channels);
+    // multichannel では不明なchannel layoutを推測せず、誤マッピングを避けるためエラーにする
+    auto resolved_input_layout = resolveAudioChannelLayoutStrict(channels, channel_layout);
+    if (!resolved_input_layout.resolved) {
+        AddMessage(RGY_LOG_ERROR, _T("Audio track %d.%d has unknown channel layout for %d channels. Refusing multichannel audio processing to avoid wrong channel mapping.\n"),
+            trackID(muxAudio->inTrackId), muxAudio->inSubStream, channels);
+        return RGY_ERR_INCOMPATIBLE_AUDIO_PARAM;
+    }
+    auto channel_layout_next = std::move(resolved_input_layout.layout);
     //filterを初期化
     //channelやsamplerate等の条件でfilterが必要なくとも、
     //frame_size等のずれで必要になる場合があるため、素通りするのだとしても常に有効化する
@@ -1406,7 +1482,7 @@ RGY_ERR RGYOutputAvcodec::InitAudioFilter(AVMuxAudio *muxAudio, int channels, co
             for (int inChannel = 0; inChannel < _countof(muxAudio->channelMapping); inChannel++) {
                 muxAudio->channelMapping[inChannel] = -1;
             }
-            const auto channelLayoutDec = getChannelLayout(muxAudio->outCodecDecodeCtx);
+            const auto channelLayoutDec = createChannelLayoutCopy(muxAudio->filterInChannelLayout.get());
             //オプションによって指定されている、入力音声から抽出するべき音声レイアウト
             const int select_channel_count = getChannelCount(select_channel_layout.get());
             std::string channel_map = "pan=" + getChannelLayoutChar(getDefaultChannelLayout(select_channel_count).get());
@@ -1553,7 +1629,7 @@ AVBSFContext *RGYOutputAvcodec::InitStreamBsf(const tstring& bsfName, const AVSt
     return bsfc;
 }
 
-RGY_ERR RGYOutputAvcodec::InitAudio(AVMuxAudio *muxAudio, AVOutputStreamPrm *inputAudio, uint32_t audioIgnoreDecodeError, bool audioDispositionSet, const tstring& muxTsLogFileBase) {
+RGY_ERR RGYOutputAvcodec::InitAudio(AVMuxAudio *muxAudio, AVOutputStreamPrm *inputAudio, uint32_t audioIgnoreDecodeError, bool audioDispositionSet, bool audioEncodeOtherCodecOnly, const tstring& muxTsLogFileBase) {
     muxAudio->streamIn = inputAudio->src.stream;
     AddMessage(RGY_LOG_DEBUG, _T("start initializing audio ouput...\n"));
     AddMessage(RGY_LOG_DEBUG, _T("output stream index %d, trackId %d.%d\n"), inputAudio->src.index, trackID(inputAudio->src.trackId), inputAudio->src.subStreamId);
@@ -1578,6 +1654,19 @@ RGY_ERR RGYOutputAvcodec::InitAudio(AVMuxAudio *muxAudio, AVOutputStreamPrm *inp
         muxAudio->bsfc = InitStreamBsf(inputAudio->bsf, muxAudio->streamIn);
         if (muxAudio->bsfc == nullptr) {
             return RGY_ERR_UNKNOWN;
+        }
+    }
+
+    if (audioEncodeOtherCodecOnly) {
+        auto outCodecEncode = avcodec_find_encoder_by_name(tchar_to_string(inputAudio->encodeCodec).c_str());
+        if (outCodecEncode == nullptr) {
+            AddMessage(RGY_LOG_ERROR, _T("failed to find encoder for codec %s\n"), inputAudio->encodeCodec.c_str());
+            AddMessage(RGY_LOG_ERROR, _T("Please use --check-encoders to find available encoder.\n"));
+            return RGY_ERR_INVALID_CODEC;
+        }
+        if (outCodecEncode->id == muxAudio->streamIn->codecpar->codec_id) {
+            // コーデックが一致していたら、コピーするよう変更する
+            inputAudio->encodeCodec = RGY_AVCODEC_COPY;
         }
     }
 
@@ -1676,17 +1765,60 @@ RGY_ERR RGYOutputAvcodec::InitAudio(AVMuxAudio *muxAudio, AVOutputStreamPrm *inp
             return RGY_ERR_NULL_PTR;
         }
 
-        auto enc_channel_layout = AutoSelectChannelLayout(muxAudio->outCodecEncode, muxAudio->outCodecDecodeCtx);
+        const auto decoded_layout = resolveAudioChannelLayoutStrict(muxAudio->outCodecDecodeCtx);
+        if (!decoded_layout.resolved) {
+            AddMessage(RGY_LOG_ERROR, _T("Audio track %d.%d has unknown channel layout for %d channels. Refusing multichannel audio encode to avoid wrong channel mapping.\n"),
+                trackID(inputAudio->src.trackId), inputAudio->src.subStreamId, decoded_layout.channels);
+            return RGY_ERR_INCOMPATIBLE_AUDIO_PARAM;
+        }
+
+        auto enc_channel_layout = createChannelLayoutCopy(decoded_layout.layout.get());
         //もしチャンネルの分離・変更があれば、それを反映してエンコーダの入力とする
         if (bSplitChannelsEnabled<MAX_SPLIT_CHANNELS>(muxAudio->streamChannelOut)) {
             enc_channel_layout = getChannelLayoutFromString(muxAudio->streamChannelOut[muxAudio->inSubStream]);
             if (muxAudio->streamChannelOut[muxAudio->inSubStream] == RGY_CHANNEL_AUTO) {
                 //チャンネル選択の自動設定を反映
-                uniuqeRGYChannelLayout channelSelect = (muxAudio->streamChannelSelect[muxAudio->inSubStream] == RGY_CHANNEL_AUTO) ? getChannelLayout(muxAudio->outCodecDecodeCtx) : getChannelLayoutFromString(muxAudio->streamChannelSelect[muxAudio->inSubStream]);
-                if (ChannelLayoutExists(channelSelect.get(), muxAudio->outCodecEncode)) {
-                    enc_channel_layout = std::move(channelSelect);
+                uniuqeRGYChannelLayout channelSelect = (muxAudio->streamChannelSelect[muxAudio->inSubStream] == RGY_CHANNEL_AUTO) ? createChannelLayoutCopy(decoded_layout.layout.get()) : getChannelLayoutFromString(muxAudio->streamChannelSelect[muxAudio->inSubStream]);
+                enc_channel_layout = std::move(channelSelect);
+            }
+        }
+        const auto enc_channel_layout_exact_requested = createChannelLayoutCopy(enc_channel_layout.get());
+        const bool enc_channel_layout_advertised = ChannelLayoutExists(enc_channel_layout.get(), muxAudio->outCodecEncode);
+        const bool codec_has_layout_list = !getChannelLayoutSupportedCodec(muxAudio->outCodecEncode).empty();
+        if (!enc_channel_layout_advertised) {
+            if (getChannelCount(enc_channel_layout.get()) <= 2) {
+                enc_channel_layout = getDefaultChannelLayout(getChannelCount(enc_channel_layout.get()));
+            } else {
+                // For multi-channel audio, try standard channel layouts
+                // Some codecs (like libopus) don't advertise channel layouts but support standard ones
+                uniuqeRGYChannelLayout enc_channel_layout_standard(nullptr, nullptr);
+                int std_channels = getChannelCount(enc_channel_layout.get());
+                if (std_channels == 4) {
+                    enc_channel_layout_standard = getChannelLayoutFromString("quad");
+                } else if (std_channels == 5) {
+                    enc_channel_layout_standard = getChannelLayoutFromString("5.0");
+                } else if (std_channels == 6) {
+                    enc_channel_layout_standard = getChannelLayoutFromString("5.1");
+                } else if (std_channels == 7) {
+                    enc_channel_layout_standard = getChannelLayoutFromString("7.1");
+                } else if (std_channels == 8) {
+                    enc_channel_layout_standard = getChannelLayoutFromString("7.1");
+                }
+                if (enc_channel_layout_standard) {
+                    if (!codec_has_layout_list || ChannelLayoutExists(enc_channel_layout_standard.get(), muxAudio->outCodecEncode)) {
+                        AddMessage(RGY_LOG_DEBUG, _T("Encoder %s does not advertise exact channel layout %s for audio track %d.%d, using standard layout %s.\n"),
+                            char_to_tstring(muxAudio->outCodecEncode->name).c_str(), getChannelLayoutString(enc_channel_layout.get()).c_str(),
+                            trackID(inputAudio->src.trackId), inputAudio->src.subStreamId, getChannelLayoutString(enc_channel_layout_standard.get()).c_str());
+                        enc_channel_layout = std::move(enc_channel_layout_standard);
+                    } else {
+                        AddMessage(RGY_LOG_DEBUG, _T("Encoder %s does not advertise exact channel layout %s for audio track %d.%d, will try exact layout without implicit remap.\n"),
+                            char_to_tstring(muxAudio->outCodecEncode->name).c_str(), getChannelLayoutString(enc_channel_layout.get()).c_str(),
+                            trackID(inputAudio->src.trackId), inputAudio->src.subStreamId);
+                    }
                 } else {
-                    enc_channel_layout = getDefaultChannelLayout(getChannelCount(channelSelect.get()));
+                    AddMessage(RGY_LOG_DEBUG, _T("Encoder %s does not advertise exact channel layout %s for audio track %d.%d, will try exact layout without implicit remap.\n"),
+                        char_to_tstring(muxAudio->outCodecEncode->name).c_str(), getChannelLayoutString(enc_channel_layout.get()).c_str(),
+                        trackID(inputAudio->src.trackId), inputAudio->src.subStreamId);
                 }
             }
         }
@@ -1706,11 +1838,13 @@ RGY_ERR RGYOutputAvcodec::InitAudio(AVMuxAudio *muxAudio, AVOutputStreamPrm *inp
             if (inputAudio->quality.first) {
                 muxAudio->outCodecEncodeCtx->flags |= AV_CODEC_FLAG_QSCALE;
                 muxAudio->outCodecEncodeCtx->global_quality = inputAudio->quality.second * FF_QP2LAMBDA;
-                if (inputAudio->bitrate) {
-                    muxAudio->outCodecEncodeCtx->bit_rate = ((inputAudio->bitrate >= 0) ? inputAudio->bitrate : AVQSV_DEFAULT_AUDIO_BITRATE) * 1000;
+                if (inputAudio->encodeBitrate.size() > 0) {
+                    const int bitrate = AudioGetBitrate(inputAudio->encodeBitrate, enc_channel_layout.get());
+                    muxAudio->outCodecEncodeCtx->bit_rate = (bitrate >= 0) ? bitrate * 1000 : AVQSV_DEFAULT_AUDIO_BITRATE * 1000;
                 }
-            } else if (inputAudio->bitrate) {
-                muxAudio->outCodecEncodeCtx->bit_rate = ((inputAudio->bitrate >= 0) ? inputAudio->bitrate : AVQSV_DEFAULT_AUDIO_BITRATE) * 1000;
+            } else if (inputAudio->encodeBitrate.size() > 0) {
+                const int bitrate = AudioGetBitrate(inputAudio->encodeBitrate, enc_channel_layout.get());
+                muxAudio->outCodecEncodeCtx->bit_rate = (bitrate >= 0) ? bitrate * 1000 : AVQSV_DEFAULT_AUDIO_BITRATE * 1000;
             }
         }
         if (m_Mux.format.outputFmt->flags & AVFMT_GLOBALHEADER) {
@@ -1776,9 +1910,23 @@ RGY_ERR RGYOutputAvcodec::InitAudio(AVMuxAudio *muxAudio, AVOutputStreamPrm *inp
         }
         int ret = avcodec_open2(muxAudio->outCodecEncodeCtx, muxAudio->outCodecEncode, &codecPrmDict);
         if (ret < 0) {
+            if (!enc_channel_layout_advertised && getChannelCount(enc_channel_layout_exact_requested.get()) > 2) {
+                AddMessage(RGY_LOG_ERROR, _T("failed to open encoder(%s) with exact channel layout %s for audio track %d.%d: %s\n"),
+                    char_to_tstring(muxAudio->outCodecEncode->name).c_str(),
+                    getChannelLayoutString(enc_channel_layout_exact_requested.get()).c_str(),
+                    trackID(inputAudio->src.trackId), inputAudio->src.subStreamId, qsv_av_err2str(ret).c_str());
+                AddMessage(RGY_LOG_ERROR, _T("Refusing implicit remap for multichannel audio.\n"));
+                return RGY_ERR_INCOMPATIBLE_AUDIO_PARAM;
+            }
             AddMessage(RGY_LOG_ERROR, _T("failed to open encoder(%s) for audio track %d: %s\n"),
                 char_to_tstring(muxAudio->outCodecEncode->name).c_str(), trackID(inputAudio->src.trackId), qsv_av_err2str(ret).c_str());
             return RGY_ERR_NULL_PTR;
+        }
+        if (!enc_channel_layout_advertised && getChannelCount(enc_channel_layout_exact_requested.get()) > 2) {
+            AddMessage(RGY_LOG_DEBUG, _T("Encoder %s accepted exact channel layout %s for audio track %d.%d.\n"),
+                char_to_tstring(muxAudio->outCodecEncode->name).c_str(),
+                getChannelLayoutString(enc_channel_layout_exact_requested.get()).c_str(),
+                trackID(inputAudio->src.trackId), inputAudio->src.subStreamId);
         }
         if (codecPrmDict) {
             for (const AVDictionaryEntry *t = nullptr; (t = av_dict_get(codecPrmDict, "", t, AV_DICT_IGNORE_SUFFIX)) != nullptr;) {
@@ -1794,10 +1942,9 @@ RGY_ERR RGYOutputAvcodec::InitAudio(AVMuxAudio *muxAudio, AVOutputStreamPrm *inp
         muxAudio->filterInChannelLayout = getChannelLayout(muxAudio->outCodecEncodeCtx);
         muxAudio->filterInSampleRate    = muxAudio->outCodecEncodeCtx->sample_rate;
         muxAudio->filterInSampleFmt     = muxAudio->outCodecEncodeCtx->sample_fmt;
-        const auto channelLayoutDec     = getChannelLayout(muxAudio->outCodecDecodeCtx);
         auto sts = InitAudioFilter(muxAudio,
-            getChannelCount(channelLayoutDec.get()),
-            channelLayoutDec.get(),
+            getChannelCount(decoded_layout.layout.get()),
+            decoded_layout.layout.get(),
             muxAudio->outCodecDecodeCtx->sample_rate,
             // sample_fmtはデコーダのavcodec_open2時には設定されていないばあがある
             // そのときにはとりあえずAV_SAMPLE_FMT_S16で適当にフィルタを初期化しておく
@@ -2313,6 +2460,7 @@ RGY_ERR RGYOutputAvcodec::Init(const TCHAR *strFileName, const VideoInfo *videoO
     m_Mux.format.offsetVideoDtsAdvance = prm->offsetVideoDtsAdvance;
     m_Mux.format.allowOtherNegativePts = prm->allowOtherNegativePts;
     m_Mux.format.timestampPassThrough = prm->timestampPassThrough;
+    m_Mux.format.muxerCmdline = tchar_to_string(prm->muxerCmdline);
 
 #if USE_CUSTOM_IO
     if (m_Mux.format.isPipe || usingAVProtocols(filename, 1) || (m_Mux.format.formatCtx->oformat->flags & (AVFMT_NEEDNUMBER | AVFMT_NOFILE))) {
@@ -2422,7 +2570,7 @@ RGY_ERR RGYOutputAvcodec::Init(const TCHAR *strFileName, const VideoInfo *videoO
                         return RGY_ERR_UNDEFINED_BEHAVIOR;
                     }
                 }
-                RGY_ERR sts = InitAudio(&m_Mux.audio[iAudioIdx], &prm->inputStreamList[iStream], prm->audioIgnoreDecodeError, audioDispositionSet, prm->muxVidTsLogFile);
+                RGY_ERR sts = InitAudio(&m_Mux.audio[iAudioIdx], &prm->inputStreamList[iStream], prm->audioIgnoreDecodeError, audioDispositionSet, prm->audioEncodeOtherCodecOnly, prm->muxVidTsLogFile);
                 if (sts != RGY_ERR_NONE) {
                     return sts;
                 }
@@ -2512,11 +2660,11 @@ RGY_ERR RGYOutputAvcodec::Init(const TCHAR *strFileName, const VideoInfo *videoO
     m_Mux.thread.queueInfo = prm->queueInfo;
     //スレッドの使用数を設定
     if (prm->threadOutput == RGY_OUTPUT_THREAD_AUTO) {
-        prm->threadOutput = 1;
+        prm->threadOutput = (m_Mux.format.lowlatency) ? 0 : 1;
     }
 #if ENABLE_AVCODEC_AUDPROCESS_THREAD
     if (prm->threadAudio == RGY_AUDIO_THREAD_AUTO) {
-        prm->threadAudio = 3;
+        prm->threadAudio = (m_Mux.format.lowlatency) ? 0 : 3;
     }
     m_Mux.thread.enableAudProcessThread = prm->threadOutput > 0 && prm->threadAudio > 0;
     m_Mux.thread.enableAudEncodeThread  = prm->threadOutput > 0 && prm->threadAudio > 1;
@@ -2712,6 +2860,7 @@ RGY_ERR RGYOutputAvcodec::AddHeaderToExtraDataAV1(const RGYBitstream *bitstream)
 }
 
 RGY_ERR RGYOutputAvcodec::WriteFileHeader(const RGYBitstream *bitstream) {
+    AddMessage(RGY_LOG_DEBUG, _T("WriteFileHeader start...\n"));
     if (m_Mux.video.streamOut) {
         if (bitstream) {
             RGY_ERR sts = RGY_ERR_NONE;
@@ -2743,7 +2892,15 @@ RGY_ERR RGYOutputAvcodec::WriteFileHeader(const RGYBitstream *bitstream) {
     //QSVEncCでエンコーダしたことを記録してみる
     //これは直接metadetaにセットする
     sprintf_s(m_Mux.format.metadataStr, ENCODER_NAME " (%s) %s", tchar_to_string(BUILD_ARCH_STR).c_str(), VER_STR_FILEVERSION);
-    av_dict_set(&m_Mux.format.formatCtx->metadata, "encoding_tool", m_Mux.format.metadataStr, 0); //mp4
+    auto encodingTool = std::string(m_Mux.format.metadataStr);
+    if (!m_Mux.format.muxerCmdline.empty()) {
+        auto muxerCmdline = m_Mux.format.muxerCmdline;
+        std::replace(muxerCmdline.begin(), muxerCmdline.end(), '\r', ' ');
+        std::replace(muxerCmdline.begin(), muxerCmdline.end(), '\n', ' ');
+        encodingTool += " ";
+        encodingTool += muxerCmdline;
+    }
+    av_dict_set(&m_Mux.format.formatCtx->metadata, "encoding_tool", encodingTool.c_str(), 0); //mp4
     //encoderではなく、encoding_toolを使用する。mp4はcomment, titleなどは設定可能, mkvではencode_byも可能
 
     //mp4のmajor_brandをisonからmp42に変更
@@ -2833,7 +2990,7 @@ int64_t RGYOutputAvcodec::AdjustTimestampTrimmed(int64_t nTimeIn, AVRational tim
                 nLastFinFrame = vidFrameIdx;
                 break;
             }
-            nLastFinFrame = trim.fin;
+            nLastFinFrame = trim.fin + 1;
         }
         cutFrames += vidFrameIdx - nLastFinFrame;
     }
@@ -3845,11 +4002,14 @@ vector<AVPktMuxData> RGYOutputAvcodec::AudioFilterFrame(vector<AVPktMuxData> inp
             const bool flush = pktData.frame == nullptr;
             if (pktData.frame != nullptr) {
                 //音声入力フォーマットに変更がないか確認し、もしあればresamplerを再初期化する
-#if AV_CHANNEL_LAYOUT_STRUCT_AVAIL
-                auto sts = InitAudioFilter(muxAudio, getChannelCount(&pktData.frame->ch_layout), &pktData.frame->ch_layout, pktData.frame->sample_rate, (AVSampleFormat)pktData.frame->format, muxAudio->audioResamplerPrm);
-#else
-                auto sts = InitAudioFilter(muxAudio, pktData.frame->channels, &pktData.frame->channel_layout, pktData.frame->sample_rate, (AVSampleFormat)pktData.frame->format, muxAudio->audioResamplerPrm);
-#endif
+                const auto resolved_layout = resolveAudioChannelLayoutStrict(pktData.frame);
+                if (!resolved_layout.resolved) {
+                    AddMessage(RGY_LOG_ERROR, _T("Audio track %d.%d has unknown channel layout for %d channels in decoded frame. Refusing multichannel audio processing to avoid wrong channel mapping.\n"),
+                        trackID(muxAudio->inTrackId), muxAudio->inSubStream, resolved_layout.channels);
+                    m_Mux.format.streamError = true;
+                    break;
+                }
+                auto sts = InitAudioFilter(muxAudio, resolved_layout.channels, resolved_layout.layout.get(), pktData.frame->sample_rate, (AVSampleFormat)pktData.frame->format, muxAudio->audioResamplerPrm);
                 if (sts != RGY_ERR_NONE) {
                     m_Mux.format.streamError = true;
                     break;
@@ -4255,41 +4415,30 @@ RGY_ERR RGYOutputAvcodec::AddAudQueue(AVPktMuxData *pktData, int type) {
 //maxDtsToWriteはm_AudPktBufFileHeadにキャッシュしてあるパケットを処理する際に、
 //処理するdtsの上限を決める
 RGY_ERR RGYOutputAvcodec::WriteNextPacketInternal(AVPktMuxData *pktData, int64_t maxDtsToWrite) {
-    if (m_Mux.thread.threadActiveAudio()) {
-        // 音声スレッドがある場合はフレームヘッダが書かれてからここに来るはず
-        if (!m_Mux.format.fileHeaderWritten) {
-            AddMessage(RGY_LOG_ERROR, _T("File header not written, unexpected error!\n"));
-            return RGY_ERR_UNKNOWN;
-        }
-        // 音声スレッドがある場合はm_AudPktBufFileHeadはたまっていないはず
-        if (!m_AudPktBufFileHead.empty()) {
-            AddMessage(RGY_LOG_ERROR, _T("m_AudPktBufFileHead not empty, unexpected error!\n"));
-            return RGY_ERR_UNKNOWN;
-        }
-    } else {
-        if (!m_Mux.format.fileHeaderWritten) {
-            //まだフレームヘッダーが書かれていなければ、パケットをキャッシュして終了
-            m_AudPktBufFileHead.push_back(*pktData);
-            return RGY_ERR_NONE;
-        }
-        //m_AudPktBufFileHeadにキャッシュしてあるパケットかどうかを調べる
-        if (m_AudPktBufFileHead.end() == std::find_if(m_AudPktBufFileHead.begin(), m_AudPktBufFileHead.end(),
-            [pktData](const AVPktMuxData& data) { return pktData->pkt == data.pkt; })) {
-            //キャッシュしてあるパケットでないなら、キャッシュしてあるパケットをまず処理する
-            for (auto bufPkt : m_AudPktBufFileHead) {
-                RGY_ERR sts = WriteNextPacketInternal(&bufPkt, maxDtsToWrite);
-                //処理するdtsの上限を超えたかチェック
-                if (bufPkt.dts > maxDtsToWrite) {
-                    pktData->dts = bufPkt.dts;
-                    return RGY_ERR_NONE;
-                }
-                if (sts != RGY_ERR_NONE) {
-                    return sts;
-                }
+    if (!m_Mux.format.fileHeaderWritten) {
+        // まだフレームヘッダーが書かれていなければ、パケットをキャッシュして終了。
+        // 重い/遅延する映像フィルタでは、音声スレッドが最初の映像フレームより先に
+        // mux へ到達することがある。
+        m_AudPktBufFileHead.push_back(*pktData);
+        return RGY_ERR_NONE;
+    }
+    // m_AudPktBufFileHeadにキャッシュしてあるパケットかどうかを調べる
+    if (m_AudPktBufFileHead.end() == std::find_if(m_AudPktBufFileHead.begin(), m_AudPktBufFileHead.end(),
+        [pktData](const AVPktMuxData& data) { return pktData->pkt == data.pkt; })) {
+        // キャッシュしてあるパケットでないなら、キャッシュしてあるパケットをまず処理する。
+        for (auto bufPkt : m_AudPktBufFileHead) {
+            RGY_ERR sts = WriteNextPacketInternal(&bufPkt, maxDtsToWrite);
+            //処理するdtsの上限を超えたかチェック
+            if (bufPkt.dts > maxDtsToWrite) {
+                pktData->dts = bufPkt.dts;
+                return RGY_ERR_NONE;
             }
-            //キャッシュをすべて書き出したらクリア
-            m_AudPktBufFileHead.clear();
+            if (sts != RGY_ERR_NONE) {
+                return sts;
+            }
         }
+        //キャッシュをすべて書き出したらクリア
+        m_AudPktBufFileHead.clear();
     }
 
     if (pktData->pkt == nullptr) {

@@ -345,6 +345,8 @@ public:
 protected:
     virtual RGY_ERR checkParam(const RGYFilterParam *param) override;
     virtual RGY_ERR setLibplaceboParam(const RGYFilterParam *param) override;
+    bool isResolutionDependentWhenLine(const std::string& line) const;
+    void warnResolutionDependentWhenWithoutRes(const tstring& shaderPath, const std::string& shaderText);
     virtual RGY_ERR procPlane(pl_tex texOut, const RGYFrameInfo *pDstPlane, pl_tex texIn, const RGYFrameInfo *pSrcPlane, const RGY_PLANE planeIdx) override {
         UNREFERENCED_PARAMETER(texOut); UNREFERENCED_PARAMETER(pDstPlane); UNREFERENCED_PARAMETER(texIn); UNREFERENCED_PARAMETER(pSrcPlane); UNREFERENCED_PARAMETER(planeIdx);
         return RGY_ERR_UNSUPPORTED;
@@ -359,6 +361,7 @@ protected:
     pl_color_system m_colorsystem;
     pl_color_transfer m_transfer;
     pl_color_levels m_range;
+    VppLibplaceboInputCSP m_inputCsp;
     pl_chroma_location m_chromaloc;
     std::unique_ptr<pl_sample_filter_params> m_sample_params;
     std::unique_ptr<pl_sigmoid_params> m_sigmoid_params;

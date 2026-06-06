@@ -50,6 +50,10 @@
 #include "auo_runbat.h"
 #include "auo_mes.h"
 
+#if AVIUTL_TARGET_VER == 2
+#include "logger2.h"
+#endif
+
 //---------------------------------------------------------------------
 //        出力プラグイン内部変数
 //---------------------------------------------------------------------
@@ -63,8 +67,27 @@ static aviutlchar g_auo_fullname[1024] = { 0 };
 static aviutlchar g_auo_version_info[1024] = { 0 };
 AuoMessages g_auo_mes;
 
+#if AVIUTL_TARGET_VER == 1
+static std::string aviutlchar_to_string(const aviutlchar *str) { return std::string(str); }
+static std::wstring aviutlchar_to_wstring(const aviutlchar *str) { return char_to_wstring(str, CP_THREAD_ACP); }
+static std::basic_string<aviutlchar> string_to_aviutlchar(const std::string &str) { return str; }
+static std::basic_string<aviutlchar> wstring_to_aviutlchar(const std::wstring &str) { return wstring_to_string(str, CP_THREAD_ACP); }
+#define aviutlcharcpy_s strcpy_s
+#define aviutlcharlen strlen
+#define aviutlchar_PathFindExtension PathFindExtensionA
+#else
+static std::wstring aviutlchar_to_wstring(const aviutlchar *str) { return std::wstring(str); }
+static std::string aviutlchar_to_string(const aviutlchar *str) { return wstring_to_string(str, CP_THREAD_ACP); }
+static std::basic_string<aviutlchar> string_to_aviutlchar(const std::string &str) { return char_to_wstring(str, CP_THREAD_ACP); }
+static std::basic_string<aviutlchar> wstring_to_aviutlchar(const std::wstring &str) { return str; }
+#define aviutlcharcpy_s wcscpy_s
+#define aviutlcharlen wcslen
+#define aviutlchar_PathFindExtension PathFindExtensionW
+#endif
+
 bool func_output2( OUTPUT_INFO *oip );
 bool func_config2(HWND hwnd, HINSTANCE dll_hinst);
+BOOL run_benchmark(OUTPUT_INFO *oip);
 
 static const aviutlchar *func_get_config_text() {
     return g_auo_version_info;
@@ -106,6 +129,12 @@ EXTERN_C OUTPUT_PLUGIN_TABLE __declspec(dllexport) * __stdcall GetOutputPluginTa
     overwrite_aviutl_ini_auo_info();
     return &output_plugin_table;
 }
+
+#if AVIUTL_TARGET_VER == 2
+EXTERN_C void __declspec(dllexport) InitializeLogger(LOG_HANDLE *logger) {
+    set_aviutl2_logger(logger);
+}
+#endif
 
 
 //---------------------------------------------------------------------
@@ -219,6 +248,9 @@ BOOL func_output( OUTPUT_INFO *oip ) {
         }
     }
     conf_out = g_conf;
+    if (conf_out.oth.benchmark_mode) {
+        return run_benchmark(oip);
+    }
 
     init_enc_prm(&conf_out, &pe, oip, &g_sys_dat);
 
@@ -269,17 +301,6 @@ BOOL func_output( OUTPUT_INFO *oip ) {
         ret |= run_bat_file(&conf_out, oip, &pe, &g_sys_dat, RUN_BAT_AFTER_PROCESS);
 
     log_process_events();
-    if (is_aviutl2()) {
-        if (error_or_abort) {
-            MessageBoxA(NULL, "エラーが発生しました。ログウィンドウをご確認ください。\nログウィンドウを閉じると続行します。", AUO_FULL_NAME " 出力エラー", MB_OK);
-            while (!is_log_window_closed()) {
-                Sleep(16);
-                log_process_events();
-            }
-        } else {
-            close_log_window();
-        }
-    }
     // エラーが発生しなかった場合は設定を保存
     if (ret == AUO_RESULT_SUCCESS) {
         memset(default_stg_file, 0, sizeof(default_stg_file));
@@ -298,8 +319,142 @@ BOOL func_output( OUTPUT_INFO *oip ) {
     return (ret & AUO_RESULT_ERROR) ? FALSE : TRUE;
 }
 
+#if AVIUTL_TARGET_VER == 2
+void set_window_title_override(WindowTitleOverride *window_title_override);
+
 bool func_output2( OUTPUT_INFO *oip ) {
-    return func_output(oip) != FALSE;
+    WindowTitleOverride window_title_override;
+    set_window_title_override(&window_title_override);
+
+    struct ScopedCurrentDir {
+        std::basic_string<TCHAR> orig;
+        ScopedCurrentDir() : orig() {
+            if (const DWORD required = GetCurrentDirectory(0, nullptr); required) {
+                std::vector<TCHAR> buf(required+1, 0);
+                const DWORD copied = GetCurrentDirectory((DWORD)buf.size(), buf.data());
+                if (copied && copied < buf.size()) {
+                    orig = buf.data();
+                }
+            }
+            TCHAR aviutl_dir[MAX_PATH_LEN] = { 0 };
+            get_aviutl_dir(aviutl_dir, _countof(aviutl_dir));
+            SetCurrentDirectory(aviutl_dir);
+        }
+        ~ScopedCurrentDir() { if (orig.length() > 0) SetCurrentDirectory(orig.c_str()); }
+    } scoped_current_dir;
+
+    bool ret = false;
+    try {
+        ret = func_output(oip) != FALSE;
+    } catch (...) {
+        ret = false;
+    }
+    set_window_title_override(nullptr);
+    return ret;
+}
+#endif
+
+BOOL run_benchmark(OUTPUT_INFO *oip) {
+    if (oip == nullptr || oip->savefile == nullptr) {
+        return FALSE;
+    }
+
+    const CONF_GUIEX conf_org = g_conf;
+    const auto savefile_org = oip->savefile;
+
+    struct Restore {
+        OUTPUT_INFO *oip_ptr;
+        const CONF_GUIEX conf;
+        decltype(savefile_org) savefile;
+        Restore(OUTPUT_INFO *oip_in, const CONF_GUIEX& c, decltype(savefile_org) s) : oip_ptr(oip_in), conf(c), savefile(s) {}
+        ~Restore() {
+            g_conf = conf;
+            if (oip_ptr) oip_ptr->savefile = savefile;
+        }
+    } restore_all(oip, conf_org, savefile_org);
+
+    TCHAR benchmark_dir[MAX_PATH_LEN] = { 0 };
+    if (!PathCombineLong(benchmark_dir, _countof(benchmark_dir), g_sys_dat.exstg->s_local.stg_dir, _T("benchmark"))) {
+        return FALSE;
+    }
+    if (!PathFileExists(benchmark_dir)) {
+        write_log_auo_line_fmt(LOG_ERROR, _T("Benchmark directory does not exist: %s"), benchmark_dir);
+        return FALSE;
+    }
+
+    // ベンチマークディレクトリ内の *.stg を列挙
+    std::vector<tstring> stg_files;
+    {
+        TCHAR search_pattern[MAX_PATH_LEN] = { 0 };
+        if (!PathCombineLong(search_pattern, _countof(search_pattern), benchmark_dir, _T("*.stg"))) {
+            return FALSE;
+        }
+        WIN32_FIND_DATA find_data = { 0 };
+        const HANDLE hFind = FindFirstFile(search_pattern, &find_data);
+        if (hFind != INVALID_HANDLE_VALUE) {
+            do {
+                if (find_data.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) {
+                    continue;
+                }
+                TCHAR stg_path[MAX_PATH_LEN] = { 0 };
+                if (PathCombineLong(stg_path, _countof(stg_path), benchmark_dir, find_data.cFileName)) {
+                    stg_files.push_back(stg_path);
+                }
+            } while (FindNextFile(hFind, &find_data));
+            FindClose(hFind);
+        }
+    }
+    std::sort(stg_files.begin(), stg_files.end());
+
+    // 各 stg をロードして func_output を実行
+    BOOL result = TRUE;
+    for (const auto& stg_path : stg_files) {
+        const CONF_GUIEX conf_before_each = g_conf;
+        const auto savefile_before_each = oip->savefile;
+        struct RestoreEach {
+            OUTPUT_INFO *oip_ptr;
+            const CONF_GUIEX conf;
+            decltype(savefile_before_each) savefile;
+            RestoreEach(OUTPUT_INFO *oip_in, const CONF_GUIEX& c, decltype(savefile_before_each) s) : oip_ptr(oip_in), conf(c), savefile(s) {}
+            ~RestoreEach() {
+                g_conf = conf;
+                if (oip_ptr) oip_ptr->savefile = savefile;
+            }
+        } restore_each(oip, conf_before_each, savefile_before_each);
+
+        write_log_auo_line_fmt(LOG_INFO, _T("Loading setting file: %s"), stg_path.c_str());
+        if (guiEx_config::load_guiEx_conf(&g_conf, stg_path.c_str()) != CONF_ERROR_NONE) {
+            write_log_auo_line_fmt(LOG_ERROR, _T("Failed to load setting file: %s"), stg_path.c_str());
+            return FALSE;
+        }
+        // 再帰防止
+        g_conf.oth.benchmark_mode = FALSE;
+
+        // 出力ファイル名を (拡張子抜き + stgファイル名 + 拡張子) に変更
+        const auto savefile_org_t = (const TCHAR*)savefile_org;
+        const TCHAR* ext = PathFindExtension(savefile_org_t);
+        if (ext == nullptr) ext = _T("");
+
+        TCHAR stg_base[MAX_PATH_LEN] = { 0 };
+        _tcscpy_s(stg_base, _countof(stg_base), PathFindFileName(stg_path.c_str()));
+        PathRemoveExtension(stg_base);
+
+        TCHAR appendix[MAX_PATH_LEN] = { 0 };
+        _stprintf_s(appendix, _T("%s%s"), stg_base, ext);
+
+        TCHAR savefile_new_buf[MAX_PATH_LEN] = { 0 };
+        apply_appendix(savefile_new_buf, _countof(savefile_new_buf), savefile_org_t, appendix);
+        const auto savefile_aviutlchar = wstring_to_aviutlchar(savefile_new_buf);
+        std::vector<aviutlchar> savefile_new(savefile_aviutlchar.length() + 1, 0);
+        memcpy(savefile_new.data(), savefile_aviutlchar.c_str(), (savefile_aviutlchar.length() + 1) * sizeof(aviutlchar));
+        oip->savefile = savefile_new.data();
+
+        result = func_output(oip);
+        if (!result) {
+            return FALSE;
+        }
+    }
+    return TRUE;
 }
 
 //---------------------------------------------------------------------
@@ -394,11 +549,11 @@ void init_CONF_GUIEX(CONF_GUIEX *conf, BOOL use_highbit) {
 #else
     conf->mux.use_internal = FALSE;
 #endif
-    if (conf->aud.in.encoder < g_sys_dat.exstg->s_aud_int_count) {
+    if (g_sys_dat.exstg->s_aud_int_count > 0 && conf->aud.in.encoder < g_sys_dat.exstg->s_aud_int_count) {
         const AUDIO_SETTINGS *aud_stg_in = &g_sys_dat.exstg->s_aud_int[conf->aud.in.encoder];
         conf->aud.in.bitrate = aud_stg_in->mode[conf->aud.in.enc_mode].bitrate_default;
     }
-    if (conf->aud.ext.encoder < g_sys_dat.exstg->s_aud_ext_count) {
+    if (g_sys_dat.exstg->s_aud_ext_count > 0 && conf->aud.ext.encoder < g_sys_dat.exstg->s_aud_ext_count) {
         const AUDIO_SETTINGS *aud_stg_ext = &g_sys_dat.exstg->s_aud_ext[conf->aud.ext.encoder];
         conf->aud.ext.bitrate = aud_stg_ext->mode[conf->aud.ext.enc_mode].bitrate_default;
     }
@@ -438,22 +593,6 @@ void write_log_auo_enc_time(const wchar_t *mes, DWORD time) {
         (time % (60*1000)) / 1000,
         ((time % 1000)) / 100, g_auo_mes.get(AUO_GUIEX_TIME_SEC));
 }
-
-#if AVIUTL_TARGET_VER == 1
-static std::string aviutlchar_to_string(const aviutlchar *str) { return std::string(str); }
-static std::wstring aviutlchar_to_wstring(const aviutlchar *str) { return char_to_wstring(str, CP_THREAD_ACP); }
-static std::basic_string<aviutlchar> string_to_aviutlchar(const std::string &str) { return str; }
-static std::basic_string<aviutlchar> wstring_to_aviutlchar(const std::wstring &str) { return wstring_to_string(str, CP_THREAD_ACP); }
-#define aviutlcharcpy_s strcpy_s
-#define aviutlcharlen strlen
-#else
-static std::wstring aviutlchar_to_wstring(const aviutlchar *str) { return std::wstring(str); }
-static std::string aviutlchar_to_string(const aviutlchar *str) { return wstring_to_string(str, CP_THREAD_ACP); }
-static std::basic_string<aviutlchar> string_to_aviutlchar(const std::string &str) { return char_to_wstring(str, CP_THREAD_ACP); }
-static std::basic_string<aviutlchar> wstring_to_aviutlchar(const std::wstring &str) { return str; }
-#define aviutlcharcpy_s wcscpy_s
-#define aviutlcharlen wcslen
-#endif
 
 template <size_t size>
 void get_aviutl_ini_file(char(&ini_file)[size]) {

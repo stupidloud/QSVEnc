@@ -53,6 +53,7 @@ RGY_DISABLE_WARNING_POP
 #include "qsv_pipeline_ctrl.h"
 #include "qsv_session.h"
 #include "qsv_query.h"
+#include "qsv_cmd.h"
 #include "rgy_def.h"
 #include "rgy_env.h"
 #include "rgy_device_info_cache.h"
@@ -70,24 +71,53 @@ RGY_DISABLE_WARNING_POP
 #include "rgy_filter_rff.h"
 #include "rgy_filter_afs.h"
 #include "rgy_filter_nnedi.h"
+#include "rgy_filter_bwdif.h"
+#include "rgy_filter_maa.h"
+#include "rgy_filter_rtgmc.h"
+#include "rgy_filter_rtgmc_bob.h"
+#include "rgy_filter_rtgmc_search_prefilter.h"
+#include "rgy_filter_rtgmc_edi.h"
+#include "rgy_filter_kfm.h"
 #include "rgy_filter_yadif.h"
 #include "rgy_filter_mpdecimate.h"
 #include "rgy_filter_decimate.h"
 #include "rgy_filter_decomb.h"
+#include "rgy_filter_ivtc.h"
 #include "rgy_filter_delogo.h"
 #include "rgy_filter_convolution3d.h"
 #include "rgy_filter_denoise_dct.h"
 #include "rgy_filter_smooth.h"
 #include "rgy_filter_denoise_fft3d.h"
+#include "rgy_filter_msmooth.h"
 #include "rgy_filter_denoise_knn.h"
 #include "rgy_filter_denoise_nlmeans.h"
 #include "rgy_filter_denoise_pmd.h"
+#include "rgy_filter_degrain.h"
+#include "rgy_filter_rtgmc_retouch.h"
+#include "rgy_filter_rtgmc_shimmer_repair.h"
+#if defined(__has_include)
+#if __has_include("rgy_filter_rtgmc_primitive.h")
+#include "rgy_filter_rtgmc_primitive.h"
+#define RGY_HAS_RTGMC_PRIMITIVE_FILTER 1
+#endif
+#endif
+#ifndef RGY_HAS_RTGMC_PRIMITIVE_FILTER
+#define RGY_HAS_RTGMC_PRIMITIVE_FILTER 0
+#endif
 #include "rgy_filter_subburn.h"
 #include "rgy_filter_resize.h"
 #include "rgy_filter_libplacebo.h"
 #include "rgy_filter_transform.h"
 #include "rgy_filter_unsharp.h"
+#include "rgy_filter_chromashift.h"
+#include "rgy_filter_deblock.h"
+#include "rgy_filter_deflicker.h"
+#include "rgy_filter_colorfix.h"
+#include "rgy_filter_dehalo.h"
+#include "rgy_filter_finedehalo.h"
+#include "rgy_filter_hqdering.h"
 #include "rgy_filter_edgelevel.h"
+#include "rgy_filter_msharpen.h"
 #include "rgy_filter_warpsharp.h"
 #include "rgy_filter_deband.h"
 #include "rgy_filter_ssim.h"
@@ -125,6 +155,29 @@ RGY_DISABLE_WARNING_POP
 #define RGY_ERR(ret, MES)    {if (RGY_ERR_NONE > (ret)) { PrintMes(RGY_LOG_ERROR, _T("%s : %s\n"), MES, get_err_mes(ret)); return ret;}}
 #define QSV_ERR_MES(sts, MES)    {if (MFX_ERR_NONE > (sts)) { PrintMes(RGY_LOG_ERROR, _T("%s : %s\n"), MES, get_err_mes((int)sts)); return sts;}}
 #define CHECK_RANGE_LIST(value, list, name)    { if (CheckParamList((value), (list), (name)) != RGY_ERR_NONE) { return RGY_ERR_INVALID_VIDEO_PARAM; } }
+
+namespace {
+
+int countVppDeinterlacer(const sInputParams *inputParam, const bool includeIvtc) {
+    int deinterlacer = 0;
+    if (inputParam->vppmfx.deinterlace != MFX_DEINTERLACE_NONE) deinterlacer++;
+    if (inputParam->vpp.afs.enable) deinterlacer++;
+    if (inputParam->vpp.nnedi.enable) deinterlacer++;
+    if (inputParam->vpp.bwdif.enable) deinterlacer++;
+    if (inputParam->vpp.rtgmc.enable) deinterlacer++;
+    if (inputParam->vpp.kfm.enable) deinterlacer++;
+    if (inputParam->vpp.rtgmc_bob.enable) deinterlacer++;
+    if (inputParam->vpp.yadif.enable) deinterlacer++;
+    if (inputParam->vpp.decomb.enable) deinterlacer++;
+    if (includeIvtc && inputParam->vpp.ivtc.enable) deinterlacer++;
+    return deinterlacer;
+}
+
+bool hasVppDeinterlacer(const sInputParams *inputParam, const bool includeIvtc) {
+    return countVppDeinterlacer(inputParam, includeIvtc) > 0;
+}
+
+} // namespace
 
 int CQSVPipeline::clamp_param_int(int value, int low, int high, const TCHAR *param_name) {
     auto value_old = value;
@@ -699,6 +752,16 @@ RGY_ERR CQSVPipeline::InitMfxEncodeParams(sInputParams *pInParams, std::vector<s
         default:             pInParams->GopRefDist = QSV_DEFAULT_H264_GOP_REF_DIST; break;
         }
     }
+#if defined(_WIN32) || defined(_WIN64)
+    // Intel Graphics Driver 32.0.101.8801でHEVC + Bframes + LookaheadDepthがGPU hangする問題の回避。
+    if (pInParams->codec == RGY_CODEC_HEVC
+        && pInParams->GopRefDist > 1 // Bframes > 0
+        && pInParams->nLookaheadDepth > 0) {
+        PrintMes(RGY_LOG_WARN, _T("HEVC encoding with B frames and LookaheadDepth on Windows might cause GPU hang with some Intel graphics drivers.\n"));
+        PrintMes(RGY_LOG_WARN, _T("LookaheadDepth will be disabled. If LookaheadDepth is required, try --bframes 0 and verify the result.\n"));
+        pInParams->nLookaheadDepth = 0;
+    }
+#endif
     //その他機能のチェック
     if (pInParams->bAdaptiveI.value_or(false) && !(availableFeaures & ENC_FEATURE_ADAPTIVE_I)) {
         PrintMes(RGY_LOG_WARN, _T("Adaptve I-frame insert is not supported on current platform, disabled.\n"));
@@ -842,6 +905,10 @@ RGY_ERR CQSVPipeline::InitMfxEncodeParams(sInputParams *pInParams, std::vector<s
         print_feature_warnings(RGY_LOG_WARN, _T("FadeDetect"));
         pInParams->nFadeDetect.reset();
     }
+    if (pInParams->nRepartitionCheck.value_or(false) && !(availableFeaures & ENC_FEATURE_REPARTITION_CHECK)) {
+        print_feature_warnings(RGY_LOG_WARN, _T("RepartitionCheck"));
+        pInParams->nRepartitionCheck.reset();
+    }
     if (pInParams->codec == RGY_CODEC_HEVC) {
         if (pInParams->hevc_ctu > 0 && !(availableFeaures & ENC_FEATURE_HEVC_CTU)) {
             print_feature_warnings(RGY_LOG_WARN, _T("HEVC CTU"));
@@ -910,6 +977,10 @@ RGY_ERR CQSVPipeline::InitMfxEncodeParams(sInputParams *pInParams, std::vector<s
     if (pInParams->bOutputPicStruct && !(availableFeaures & ENC_FEATURE_PIC_STRUCT)) {
         print_feature_warnings(RGY_LOG_WARN, _T("pic-strcut"));
         pInParams->bOutputPicStruct = false;
+    }
+    if (pInParams->aiEncCtrl.enable && !(availableFeaures & ENC_FEATURE_EXT_AI_ENC_CTRL)) {
+        print_feature_warnings(RGY_LOG_WARN, _T("AI Enc Ctrl"));
+        pInParams->aiEncCtrl.enable = false;
     }
 
     //profileを守るための調整
@@ -1220,6 +1291,15 @@ RGY_ERR CQSVPipeline::InitMfxEncodeParams(sInputParams *pInParams, std::vector<s
         m_encParams.addExtParams(&m_encParams.tuneEncQualityPrm);
     }
 
+    if (check_lib_version(m_mfxVer, MFX_LIB_VERSION_2_16)
+        && pInParams->aiEncCtrl.enable
+        && (availableFeaures & ENC_FEATURE_EXT_AI_ENC_CTRL)) {
+        INIT_MFX_EXT_BUFFER(m_encParams.aiEncCtrlPrm, MFX_EXTBUFF_AI_ENC_CTRL);
+        m_encParams.aiEncCtrlPrm.SaliencyEncoder = get_codingopt(pInParams->aiEncCtrl.saliencyEncoder);
+        m_encParams.aiEncCtrlPrm.AdaptiveTargetUsage = get_codingopt(pInParams->aiEncCtrl.adaptiveTargetUsage);
+        m_encParams.addExtParams(&m_encParams.aiEncCtrlPrm);
+        m_encParams.aiEncCtrlEnabled = true;
+    }
     //Bluray互換出力
     if (pInParams->nBluray) {
         if (   m_encParams.videoPrm.mfx.RateControlMethod != MFX_RATECONTROL_CBR
@@ -1444,7 +1524,7 @@ bool CQSVPipeline::CPUGenOpenCLSupported(const QSV_CPU_GEN cpu_gen) {
     return cpu_gen != CPU_GEN_SANDYBRIDGE;
 }
 
-RGY_ERR CQSVPipeline::InitOpenCL(const bool enableOpenCL, const int openCLBuildThreads, const bool checkVppPerformance) {
+RGY_ERR CQSVPipeline::InitOpenCL(const bool enableOpenCL, const int openCLBuildThreads, const bool checkVppPerformance, const tstring& clPerfDumpDir, const double clPerfTimelineSec) {
     if (!enableOpenCL) {
         PrintMes(RGY_LOG_DEBUG, _T("OpenCL disabled.\n"));
         return RGY_ERR_NONE;
@@ -1520,10 +1600,23 @@ RGY_ERR CQSVPipeline::InitOpenCL(const bool enableOpenCL, const int openCLBuildT
     selectedPlatform->setDev(devices[0]);
 
     m_cl = std::make_shared<RGYOpenCLContext>(selectedPlatform, openCLBuildThreads, m_pQSVLog);
-    if (m_cl->createContext((checkVppPerformance) ? CL_QUEUE_PROFILING_ENABLE : 0) != CL_SUCCESS) {
+    // --cl-perf-dump が指定されている場合は profiling を強制 ON
+    const bool enableProfiling = checkVppPerformance || !clPerfDumpDir.empty();
+    if (m_cl->createContext(enableProfiling ? CL_QUEUE_PROFILING_ENABLE : 0) != CL_SUCCESS) {
         PrintMes(RGY_LOG_WARN, _T("Failed to create OpenCL context.\n"));
         m_cl.reset();
         return RGY_ERR_NONE;
+    }
+    // パフォーマンスコレクタを有効化
+    if (!clPerfDumpDir.empty()) {
+        RGYOpenCLPerfCollector::instance().enable(clPerfDumpDir);
+        PrintMes(RGY_LOG_DEBUG, _T("OpenCL perf collector enabled: %s\n"), clPerfDumpDir.c_str());
+        if (clPerfTimelineSec != 0.0) {
+            const uint64_t window_ns = (clPerfTimelineSec < 0.0) ? 0
+                : (uint64_t)(clPerfTimelineSec * 1e9);
+            RGYOpenCLPerfCollector::instance().enableTimeline(window_ns, devices[0]);
+            PrintMes(RGY_LOG_DEBUG, _T("OpenCL perf timeline enabled: %.1f sec\n"), clPerfTimelineSec);
+        }
     }
     return RGY_ERR_NONE;
 }
@@ -1601,7 +1694,7 @@ RGY_ERR CQSVPipeline::AllocFrames() {
             PrintMes(RGY_LOG_ERROR, _T("AllocFrames: invalid pipeline: cannot get request from either t0 or t1!\n"));
             return RGY_ERR_UNSUPPORTED;
         }
-        const int requestNumFrames = std::max(1, t0RequestNumFrame + t1RequestNumFrame + m_nAsyncDepth + 1);
+        const int requestNumFrames = std::max(1, t0RequestNumFrame + t1RequestNumFrame + t0->additionalOutputSurfaces() + m_nAsyncDepth + 1);
         if (allocateOpenCLFrame) { // OpenCLフレームを介してやり取りする場合
             const RGYFrameInfo frame(allocRequest.Info.CropW, allocRequest.Info.CropH,
                 csp_enc_to_rgy(allocRequest.Info.FourCC),
@@ -1833,6 +1926,11 @@ RGY_ERR CQSVPipeline::InitOutput(sInputParams *inputParams) {
         return RGY_ERR_UNSUPPORTED;
     }
 
+    auto muxerCmdline = tstring();
+    if (inputParams->common.muxerAddCmd) {
+        muxerCmdline = trim(gen_cmd(inputParams, false, RGYDisableGenCmdFlags::FilePath | RGYDisableGenCmdFlags::CtrlPrms | RGYDisableGenCmdFlags::InputPrms));
+    }
+
     err = initWriters(m_pFileWriter, m_pFileWriterListAudio, m_pFileReader, m_AudioReaders,
         &inputParams->common, &inputParams->input, &inputParams->ctrl, outputVideoInfo,
         m_trimParam, m_outputTimebase,
@@ -1842,7 +1940,7 @@ RGY_ERR CQSVPipeline::InitOutput(sInputParams *inputParams) {
         m_hdrseiOut.get(), m_hdr10plus.get(), m_dovirpu.get(), m_encTimestamp.get(),
         !check_lib_version(m_mfxVer, MFX_LIB_VERSION_1_6),
         inputParams->bBenchmark, false, 0, false,
-        m_poolPkt.get(), m_poolFrame.get(),
+        muxerCmdline, m_poolPkt.get(), m_poolFrame.get(),
         m_pStatus, m_pPerfMonitor, m_pQSVLog);
     if (err != RGY_ERR_NONE) {
         PrintMes(RGY_LOG_ERROR, _T("failed to initialize file reader(s).\n"));
@@ -1888,24 +1986,22 @@ RGY_ERR CQSVPipeline::InitInput(sInputParams *inputParam, DeviceCodecCsp& HWDecC
     inputParam->input.csp = getEncoderCsp(inputParam, &inputParam->input.bitdepth);
 
     // インタレ解除が指定され、かつインタレの指定がない場合は、自動的にインタレの情報取得を行う
-    int deinterlacer = 0;
-    if (inputParam->vppmfx.deinterlace) deinterlacer++;
-    if (inputParam->vpp.afs.enable) deinterlacer++;
-    if (inputParam->vpp.nnedi.enable) deinterlacer++;
-    if (inputParam->vpp.yadif.enable) deinterlacer++;
-    if (inputParam->vpp.decomb.enable) deinterlacer++;
-    if (deinterlacer > 0 && ((inputParam->input.picstruct & RGY_PICSTRUCT_INTERLACED) == 0)) {
+    if (hasVppDeinterlacer(inputParam, false) && ((inputParam->input.picstruct & RGY_PICSTRUCT_INTERLACED) == 0)) {
         inputParam->input.picstruct = RGY_PICSTRUCT_AUTO;
     }
 
     m_poolPkt = std::make_unique<RGYPoolAVPacket>();
     m_poolFrame = std::make_unique<RGYPoolAVFrame>();
 
+    const bool vpp_ivtc_expand_active =
+        (ENABLE_VPP_FILTER_IVTC && inputParam->vpp.ivtc.enable && inputParam->vpp.ivtc.expand > 0);
+
     auto sts = initReaders(m_pFileReader, m_AudioReaders, &inputParam->input, &inputParam->inprm, inputCspOfRawReader,
         m_pStatus, &inputParam->common, &inputParam->ctrl, HWDecCodecCsp, subburnTrackId,
         (ENABLE_VPP_FILTER_RFF) ? inputParam->vpp.rff.enable : false,
         (ENABLE_VPP_FILTER_AFS) ? inputParam->vpp.afs.enable : false,
         inputParam->vpp.libplacebo_tonemapping.enable,
+        vpp_ivtc_expand_active,
         m_poolPkt.get(), m_poolFrame.get(),
         nullptr, m_pPerfMonitor.get(), m_pQSVLog);
     if (sts != RGY_ERR_NONE) {
@@ -1964,7 +2060,15 @@ RGY_ERR CQSVPipeline::InitInput(sInputParams *inputParam, DeviceCodecCsp& HWDecC
 #if ENABLE_VPP_FILTER_RFF
         if (inputParam->vpp.rff.enable) {
             err_target += _T("vpp-rff, ");
+            // --vpp-ivtc が後段にある場合は RFF 展開 → IVTC デシメートで CFR (24fps など) に
+            // 戻るため、avsync を VFR に切り替えない (出力 timebase も CFR-friendly なまま保つ)。
+#if ENABLE_VPP_FILTER_IVTC
+            if (!inputParam->vpp.ivtc.enable) {
+                m_nAVSyncMode = RGY_AVSYNC_VFR;
+            }
+#else
             m_nAVSyncMode = RGY_AVSYNC_VFR;
+#endif
         }
 #endif
         err_target = err_target.substr(0, err_target.length()-2);
@@ -2087,7 +2191,7 @@ RGY_ERR CQSVPipeline::CheckParam(sInputParams *inputParam) {
 
     // 解像度の条件とcrop
     int h_mul = 2;
-    bool output_interlaced = ((inputParam->input.picstruct & RGY_PICSTRUCT_INTERLACED) != 0 && !inputParam->vppmfx.deinterlace);
+    bool output_interlaced = ((inputParam->input.picstruct & RGY_PICSTRUCT_INTERLACED) != 0 && !hasVppDeinterlacer(inputParam, true));
     if (output_interlaced) {
         h_mul *= 2;
     }
@@ -2172,47 +2276,88 @@ void CQSVPipeline::applyInputVUIToColorspaceParams(sInputParams *inputParam) {
 std::vector<VppType> CQSVPipeline::InitFiltersCreateVppList(const sInputParams *inputParam, const bool cspConvRequired, const bool cropRequired, const RGY_VPP_RESIZE_TYPE resizeRequired) {
     std::vector<VppType> filterPipeline;
     filterPipeline.reserve((size_t)VppType::CL_MAX);
+    const bool useInputCspForDeint = inputParam->vpp.deintCsp == VppDeintCsp::Input && hasVppDeinterlacer(inputParam, true);
+    const bool delayCspConvForDeint = useInputCspForDeint && cspConvRequired;
 
-    if (cspConvRequired || cropRequired) {
-        filterPipeline.push_back((inputParam->outputCsp == RGY_CHROMAFMT_RGB) ? VppType::CL_CROP : VppType::MFX_CROP);
-    }
-    if (inputParam->vpp.colorspace.enable) {
-        bool requireOpenCL = inputParam->vpp.colorspace.hdr2sdr.tonemap != HDR2SDR_DISABLED || inputParam->vpp.colorspace.lut3d.table_file.length() > 0;
-        if (!requireOpenCL) {
-            auto currentVUI = inputParam->input.vui;
-            for (size_t i = 0; i < inputParam->vpp.colorspace.convs.size(); i++) {
-                auto conv_from = inputParam->vpp.colorspace.convs[i].from;
-                auto conv_to = inputParam->vpp.colorspace.convs[i].to;
-                if (conv_from.chromaloc != conv_to.chromaloc
-                    || conv_from.colorprim != conv_to.colorprim
-                    || conv_from.transfer != conv_to.transfer) {
-                    requireOpenCL = true;
-                } else if (conv_from.matrix != conv_to.matrix
-                    && (conv_from.matrix != RGY_MATRIX_ST170_M && conv_from.matrix != RGY_MATRIX_BT709)
-                    && (conv_to.matrix != RGY_MATRIX_ST170_M && conv_to.matrix != RGY_MATRIX_BT709)) {
-                    requireOpenCL = true;
+    auto addColorspaceFilters = [&]() {
+        if (inputParam->vpp.colorspace.enable) {
+            bool requireOpenCL = inputParam->vpp.colorspace.hdr2sdr.tonemap != HDR2SDR_DISABLED || inputParam->vpp.colorspace.lut3d.table_file.length() > 0;
+            if (!requireOpenCL) {
+                auto currentVUI = inputParam->input.vui;
+                for (size_t i = 0; i < inputParam->vpp.colorspace.convs.size(); i++) {
+                    auto conv_from = inputParam->vpp.colorspace.convs[i].from;
+                    auto conv_to = inputParam->vpp.colorspace.convs[i].to;
+                    if (conv_from.chromaloc != conv_to.chromaloc
+                        || conv_from.colorprim != conv_to.colorprim
+                        || conv_from.transfer != conv_to.transfer) {
+                        requireOpenCL = true;
+                    } else if (conv_from.matrix != conv_to.matrix
+                        && (conv_from.matrix != RGY_MATRIX_ST170_M && conv_from.matrix != RGY_MATRIX_BT709)
+                        && (conv_to.matrix != RGY_MATRIX_ST170_M && conv_to.matrix != RGY_MATRIX_BT709)) {
+                        requireOpenCL = true;
+                    }
                 }
             }
+            filterPipeline.push_back((requireOpenCL) ? VppType::CL_COLORSPACE : VppType::MFX_COLORSPACE);
         }
-        filterPipeline.push_back((requireOpenCL) ? VppType::CL_COLORSPACE : VppType::MFX_COLORSPACE);
+        if (inputParam->vpp.libplacebo_tonemapping.enable) filterPipeline.push_back(VppType::CL_LIBPLACEBO_TONEMAP);
+    };
+
+    if ((cspConvRequired && !delayCspConvForDeint) || cropRequired) {
+        // Prefer the MFX path first. RGB output still ends up on AYUV/Y410/Y416
+        // surfaces for QSV, and forcing the OpenCL-only path here makes the
+        // non-filtered rgb cases take a fragile conversion route.
+        filterPipeline.push_back(VppType::MFX_CROP);
     }
-    if (inputParam->vpp.libplacebo_tonemapping.enable) filterPipeline.push_back(VppType::CL_LIBPLACEBO_TONEMAP);
+    if (!useInputCspForDeint) {
+        addColorspaceFilters();
+    }
     if (inputParam->vpp.rff.enable)        filterPipeline.push_back(VppType::CL_RFF);
     if (inputParam->vpp.delogo.enable)     filterPipeline.push_back(VppType::CL_DELOGO);
     if (inputParam->vpp.afs.enable)        filterPipeline.push_back(VppType::CL_AFS);
-    if (inputParam->vpp.nnedi.enable)      filterPipeline.push_back(VppType::CL_NNEDI);
+    if (inputParam->vpp.nnedi.enable)     filterPipeline.push_back(VppType::CL_NNEDI);
+    if (inputParam->vpp.rtgmc.enable)      filterPipeline.push_back(VppType::CL_RTGMC);
+    if (inputParam->vpp.kfm.enable)        filterPipeline.push_back(VppType::CL_KFM);
+    const bool degrainLegacy = inputParam->vpp.degrain.enable;
+    const bool degrainAnalyze = inputParam->vpp.degrainAnalyze.enable;
+    const bool degrainTR1 = inputParam->vpp.degrainTR1.enable;
+    const bool degrainTR2 = inputParam->vpp.degrainTR2.enable;
+    const bool shimmerRepairRep1 = inputParam->vpp.rtgmc_shimmer_repairRep1.enable;
+    const bool shimmerRepairRep2 = inputParam->vpp.rtgmc_shimmer_repairRep2.enable;
+    if (inputParam->vpp.rtgmc_bob.enable)  filterPipeline.push_back(VppType::CL_RTGMC_BOB);
+    if (inputParam->vpp.rtgmc_search_prefilter.enable) filterPipeline.push_back(VppType::CL_RTGMC_SEARCH_PREFILTER);
+    if (degrainAnalyze) filterPipeline.push_back(VppType::CL_DEGRAIN_ANALYZE);
+    if (inputParam->vpp.rtgmc_edi.enable && !degrainLegacy) filterPipeline.push_back(VppType::CL_RTGMC_EDI);
     if (inputParam->vpp.yadif.enable)      filterPipeline.push_back(VppType::CL_YADIF);
     if (inputParam->vpp.decomb.enable)     filterPipeline.push_back(VppType::CL_DECOMB);
+    if (inputParam->vpp.bwdif.enable)      filterPipeline.push_back(VppType::CL_BWDIF);
+    if (inputParam->vpp.ivtc.enable)       filterPipeline.push_back(VppType::CL_IVTC);
     if (inputParam->vppmfx.deinterlace != MFX_DEINTERLACE_NONE)  filterPipeline.push_back(VppType::MFX_DEINTERLACE);
     if (inputParam->vpp.decimate.enable)   filterPipeline.push_back(VppType::CL_DECIMATE);
     if (inputParam->vpp.mpdecimate.enable) filterPipeline.push_back(VppType::CL_MPDECIMATE);
+    if (delayCspConvForDeint) {
+        filterPipeline.push_back(VppType::MFX_CROP);
+    }
+    if (useInputCspForDeint) {
+        addColorspaceFilters();
+    }
     if (inputParam->vpp.convolution3d.enable) filterPipeline.push_back(VppType::CL_CONVOLUTION3D);
     if (inputParam->vpp.smooth.enable)     filterPipeline.push_back(VppType::CL_DENOISE_SMOOTH);
     if (inputParam->vpp.dct.enable)        filterPipeline.push_back(VppType::CL_DENOISE_DCT);
     if (inputParam->vpp.fft3d.enable)      filterPipeline.push_back(VppType::CL_DENOISE_FFT3D);
+    if (inputParam->vpp.msmooth.enable)    filterPipeline.push_back(VppType::CL_MSMOOTH);
     if (inputParam->vpp.knn.enable)        filterPipeline.push_back(VppType::CL_DENOISE_KNN);
     if (inputParam->vpp.nlmeans.enable)    filterPipeline.push_back(VppType::CL_DENOISE_NLMEANS);
     if (inputParam->vpp.pmd.enable)        filterPipeline.push_back(VppType::CL_DENOISE_PMD);
+    if (degrainLegacy)  filterPipeline.push_back(VppType::CL_DEGRAIN);
+    if (inputParam->vpp.rtgmc_edi.enable && degrainLegacy) filterPipeline.push_back(VppType::CL_RTGMC_EDI);
+    if (degrainTR1) filterPipeline.push_back(VppType::CL_DEGRAIN_APPLY_TR1);
+    if (shimmerRepairRep1) filterPipeline.push_back(VppType::CL_RTGMC_SHIMMER_REPAIR_REP1);
+    if (inputParam->vpp.rtgmc_retouch.enable) filterPipeline.push_back(VppType::CL_RTGMC_RETOUCH);
+    if (degrainTR2) filterPipeline.push_back(VppType::CL_DEGRAIN_APPLY_TR2);
+    if (shimmerRepairRep2) filterPipeline.push_back(VppType::CL_RTGMC_SHIMMER_REPAIR_REP2);
+    if (inputParam->vpp.rtgmc_shimmer_repair.enable) filterPipeline.push_back(VppType::CL_RTGMC_SHIMMER_REPAIR);
+    if (inputParam->vpp.rtgmc_primitive.enable) filterPipeline.push_back(VppType::CL_RTGMC_PRIMITIVE);
     if (inputParam->vppmfx.denoise.enable) filterPipeline.push_back(VppType::MFX_DENOISE);
     if (inputParam->vppmfx.imageStabilizer != 0) filterPipeline.push_back(VppType::MFX_IMAGE_STABILIZATION);
     if (inputParam->vppmfx.mctf.enable)    filterPipeline.push_back(VppType::MFX_MCTF);
@@ -2225,8 +2370,17 @@ std::vector<VppType> CQSVPipeline::InitFiltersCreateVppList(const sInputParams *
         ) filterPipeline.push_back(VppType::CL_RESIZE);
     else if (resizeRequired != RGY_VPP_RESIZE_TYPE_NONE)   filterPipeline.push_back(VppType::MFX_RESIZE);
     if (inputParam->vpp.unsharp.enable)    filterPipeline.push_back(VppType::CL_UNSHARP);
+    if (inputParam->vpp.chromashift.enable) filterPipeline.push_back(VppType::CL_CHROMASHIFT);
+    if (inputParam->vpp.deblock.enable)    filterPipeline.push_back(VppType::CL_DEBLOCK);
+    if (inputParam->vpp.deflicker.enable)  filterPipeline.push_back(VppType::CL_DEFLICKER);
+    if (inputParam->vpp.colorfix.enable)   filterPipeline.push_back(VppType::CL_COLORFIX);
+    if (inputParam->vpp.dehalo.enable)     filterPipeline.push_back(VppType::CL_DEHALO);
+    if (inputParam->vpp.finedehalo.enable) filterPipeline.push_back(VppType::CL_FINEDEHALO);
+    if (inputParam->vpp.dering.enable)     filterPipeline.push_back(VppType::CL_HQDERING);
     if (inputParam->vpp.edgelevel.enable)  filterPipeline.push_back(VppType::CL_EDGELEVEL);
+    if (inputParam->vpp.msharpen.enable)   filterPipeline.push_back(VppType::CL_MSHARPEN);
     if (inputParam->vpp.warpsharp.enable)  filterPipeline.push_back(VppType::CL_WARPSHARP);
+    if (inputParam->vpp.maa.enable)        filterPipeline.push_back(VppType::CL_MAA);
     if (inputParam->vppmfx.detail.enable)  filterPipeline.push_back(VppType::MFX_DETAIL_ENHANCE);
     if (inputParam->vppmfx.mirrorType != MFX_MIRRORING_DISABLED) filterPipeline.push_back(VppType::MFX_MIRROR);
     if (inputParam->vpp.transform.enable)  filterPipeline.push_back(VppType::CL_TRANSFORM);
@@ -2266,6 +2420,7 @@ std::vector<VppType> CQSVPipeline::InitFiltersCreateVppList(const sInputParams *
     for (size_t i = 0; i < filterPipeline.size(); i++) {
         const VppFilterType prev = (i >= 1)                        ? getVppFilterType(filterPipeline[i - 1]) : VppFilterType::FILTER_NONE;
         const VppFilterType next = (i + 1 < filterPipeline.size()) ? getVppFilterType(filterPipeline[i + 1]) : VppFilterType::FILTER_NONE;
+        const bool delayedCspConv = delayCspConvForDeint && filterPipeline[i] == VppType::MFX_CROP && !(cropRequired && i == 0);
         if (filterPipeline[i] == VppType::MFX_RESIZE) {
             if (resizeRequired == RGY_VPP_RESIZE_TYPE_AUTO // 自動以外の指定があれば、それに従うので、自動の場合のみ変更
                 && m_cl
@@ -2275,6 +2430,7 @@ std::vector<VppType> CQSVPipeline::InitFiltersCreateVppList(const sInputParams *
             }
         } else if (filterPipeline[i] == VppType::MFX_CROP) {
             if (m_cl
+                && !delayedCspConv
                 && (prev == VppFilterType::FILTER_OPENCL || next == VppFilterType::FILTER_OPENCL)
                 && (prev != VppFilterType::FILTER_MFX    || next != VppFilterType::FILTER_MFX)) {
                 filterPipeline[i] = VppType::CL_CROP; // OpenCLに挟まれていたら、OpenCLのcropを優先する
@@ -2480,7 +2636,16 @@ RGY_ERR CQSVPipeline::AddFilterOpenCL(std::vector<std::unique_ptr<RGYFilter>>& c
     if (vppType == VppType::CL_NNEDI) {
         unique_ptr<RGYFilter> filter(new RGYFilterNnedi(m_cl));
         shared_ptr<RGYFilterParamNnedi> param(new RGYFilterParamNnedi());
-        param->nnedi = params->vpp.nnedi;
+        param->nnedi.enable = params->vpp.nnedi.enable;
+        param->nnedi.field = params->vpp.nnedi.field;
+        param->nnedi.nsize = params->vpp.nnedi.nsize;
+        param->nnedi.nns = params->vpp.nnedi.nns;
+        param->nnedi.quality = params->vpp.nnedi.quality;
+        param->nnedi.prescreen = params->vpp.nnedi.prescreen;
+        param->nnedi.errortype = params->vpp.nnedi.errortype;
+        param->nnedi.clamp = params->vpp.nnedi.clamp;
+        param->nnedi.doubleHeight = params->vpp.nnedi.doubleHeight;
+        param->nnedi.weightfile = params->vpp.nnedi.weightfile;
         param->frameIn = inputFrame;
         param->frameOut = inputFrame;
         param->baseFps = m_encFps;
@@ -2490,10 +2655,119 @@ RGY_ERR CQSVPipeline::AddFilterOpenCL(std::vector<std::unique_ptr<RGYFilter>>& c
         if (sts != RGY_ERR_NONE) {
             return sts;
         }
-        //入力フレーム情報を更新
         inputFrame = param->frameOut;
         m_encFps = param->baseFps;
-        //登録
+        clfilters.push_back(std::move(filter));
+        return RGY_ERR_NONE;
+    }
+    //rtgmc
+    if (vppType == VppType::CL_RTGMC) {
+        unique_ptr<RGYFilter> filter(new RGYFilterRtgmc(m_cl));
+        shared_ptr<RGYFilterParamRtgmc> param(new RGYFilterParamRtgmc());
+        param->rtgmc = params->vpp.rtgmc;
+        param->frameIn = inputFrame;
+        param->frameOut = inputFrame;
+        param->baseFps = m_encFps;
+        param->timebase = m_outputTimebase;
+        param->bOutOverwrite = false;
+        auto sts = filter->init(param, m_pQSVLog);
+        if (sts != RGY_ERR_NONE) {
+            return sts;
+        }
+        inputFrame = param->frameOut;
+        m_encFps = param->baseFps;
+        clfilters.push_back(std::move(filter));
+        return RGY_ERR_NONE;
+    }
+    //kfm
+    if (vppType == VppType::CL_KFM) {
+        unique_ptr<RGYFilter> filter(new RGYFilterKfm(m_cl));
+        shared_ptr<RGYFilterParamKfm> param(new RGYFilterParamKfm());
+        param->kfm = params->vpp.kfm;
+        param->frameIn = inputFrame;
+        param->frameOut = inputFrame;
+        param->baseFps = m_encFps;
+        param->timebase = m_outputTimebase;
+        param->bOutOverwrite = false;
+        auto sts = filter->init(param, m_pQSVLog);
+        if (sts != RGY_ERR_NONE) {
+            return sts;
+        }
+        inputFrame = param->frameOut;
+        m_encFps = param->baseFps;
+        clfilters.push_back(std::move(filter));
+        return RGY_ERR_NONE;
+    }
+    //rtgmc bob
+    if (vppType == VppType::CL_RTGMC_BOB) {
+        unique_ptr<RGYFilter> filter(new RGYFilterRtgmcBob(m_cl));
+        shared_ptr<RGYFilterParamRtgmcBob> param(new RGYFilterParamRtgmcBob());
+        param->order = (params->vpp.rtgmc_bob.order == VppRtgmcBobOrder::TFF) ? RGYRtgmcBobFieldOrder::TFF
+            : (params->vpp.rtgmc_bob.order == VppRtgmcBobOrder::BFF) ? RGYRtgmcBobFieldOrder::BFF
+            : RGYRtgmcBobFieldOrder::Auto;
+        param->frameIn = inputFrame;
+        param->frameOut = inputFrame;
+        param->baseFps = m_encFps;
+        param->timebase = m_outputTimebase;
+        param->bOutOverwrite = false;
+        auto sts = filter->init(param, m_pQSVLog);
+        if (sts != RGY_ERR_NONE) {
+            return sts;
+        }
+        inputFrame = param->frameOut;
+        m_encFps = param->baseFps;
+        clfilters.push_back(std::move(filter));
+        return RGY_ERR_NONE;
+    }
+    //rtgmc search prefilter
+    if (vppType == VppType::CL_RTGMC_SEARCH_PREFILTER) {
+        unique_ptr<RGYFilter> filter(new RGYFilterRtgmcSearchPrefilter(m_cl));
+        shared_ptr<RGYFilterParamRtgmcSearchPrefilter> param(new RGYFilterParamRtgmcSearchPrefilter());
+        param->tr0 = params->vpp.rtgmc_search_prefilter.tr0;
+        param->rep0Thin = params->vpp.rtgmc_search_prefilter.rep0Thin;
+        param->rep0Pad = params->vpp.rtgmc_search_prefilter.rep0Pad;
+        param->searchRefine = params->vpp.rtgmc_search_prefilter.searchRefine;
+        param->tvRange = params->vpp.rtgmc_search_prefilter.tvRange;
+        param->chromaMotion = params->vpp.rtgmc_search_prefilter.chromaMotion;
+        param->dumpY4m = params->vpp.rtgmc_search_prefilter.dumpY4m;
+        param->dumpStage = params->vpp.rtgmc_search_prefilter.dumpStage;
+        param->dumpMaxFrames = params->vpp.rtgmc_search_prefilter.dumpMaxFrames;
+        param->attachSearchLuma = params->vpp.rtgmc_edi.enable || params->vpp.degrain.enable
+            || params->vpp.degrainAnalyze.enable || params->vpp.degrainTR1.enable || params->vpp.degrainTR2.enable
+            || params->vpp.rtgmc_retouch.enable || params->vpp.rtgmc_shimmer_repair.enable
+            || params->vpp.rtgmc_shimmer_repairRep1.enable || params->vpp.rtgmc_shimmer_repairRep2.enable;
+        param->frameIn = inputFrame;
+        param->frameOut = inputFrame;
+        param->baseFps = m_encFps;
+        param->bOutOverwrite = false;
+        auto sts = filter->init(param, m_pQSVLog);
+        if (sts != RGY_ERR_NONE) {
+            return sts;
+        }
+        inputFrame = param->frameOut;
+        m_encFps = param->baseFps;
+        clfilters.push_back(std::move(filter));
+        return RGY_ERR_NONE;
+    }
+    //rtgmc edi
+    if (vppType == VppType::CL_RTGMC_EDI) {
+        unique_ptr<RGYFilter> filter(new RGYFilterRtgmcEdi(m_cl));
+        shared_ptr<RGYFilterParamRtgmcEdi> param(new RGYFilterParamRtgmcEdi());
+        param->mode = params->vpp.rtgmc_edi.mode;
+        param->chromaEdi = params->vpp.rtgmc_edi.chromaEdi;
+        param->nnsize = params->vpp.rtgmc_edi.nnsize;
+        param->nneurons = params->vpp.rtgmc_edi.nneurons;
+        param->ediqual = params->vpp.rtgmc_edi.ediqual;
+        param->frameIn = inputFrame;
+        param->frameOut = inputFrame;
+        param->baseFps = m_encFps;
+        param->bOutOverwrite = false;
+        auto sts = filter->init(param, m_pQSVLog);
+        if (sts != RGY_ERR_NONE) {
+            return sts;
+        }
+        inputFrame = param->frameOut;
+        m_encFps = param->baseFps;
         clfilters.push_back(std::move(filter));
         return RGY_ERR_NONE;
     }
@@ -2519,6 +2793,45 @@ RGY_ERR CQSVPipeline::AddFilterOpenCL(std::vector<std::unique_ptr<RGYFilter>>& c
         clfilters.push_back(std::move(filter));
         return RGY_ERR_NONE;
     }
+    //bwdif
+    if (vppType == VppType::CL_BWDIF) {
+        unique_ptr<RGYFilter> filter(new RGYFilterBwdif(m_cl));
+        shared_ptr<RGYFilterParamBwdif> param(new RGYFilterParamBwdif());
+        param->bwdif = params->vpp.bwdif;
+        param->frameIn = inputFrame;
+        param->frameOut = inputFrame;
+        param->frameOut.picstruct = RGY_PICSTRUCT_FRAME;
+        param->baseFps = m_encFps;
+        param->timebase = m_outputTimebase;
+        param->bOutOverwrite = false;
+        auto sts = filter->init(param, m_pQSVLog);
+        if (sts != RGY_ERR_NONE) {
+            return sts;
+        }
+        //入力フレーム情報を更新
+        inputFrame = param->frameOut;
+        m_encFps = param->baseFps;
+        //登録
+        clfilters.push_back(std::move(filter));
+        return RGY_ERR_NONE;
+    }
+    if (vppType == VppType::CL_MAA) {
+        unique_ptr<RGYFilter> filter(new RGYFilterMaa(m_cl));
+        shared_ptr<RGYFilterParamMaa> param(new RGYFilterParamMaa());
+        param->maa = params->vpp.maa;
+        param->frameIn = inputFrame;
+        param->frameOut = inputFrame;
+        param->baseFps = m_encFps;
+        param->bOutOverwrite = false;
+        auto sts = filter->init(param, m_pQSVLog);
+        if (sts != RGY_ERR_NONE) {
+            return sts;
+        }
+        inputFrame = param->frameOut;
+        m_encFps = param->baseFps;
+        clfilters.push_back(std::move(filter));
+        return RGY_ERR_NONE;
+    }
     //decomb
     if (vppType == VppType::CL_DECOMB) {
         unique_ptr<RGYFilter> filter(new RGYFilterDecomb(m_cl));
@@ -2527,6 +2840,48 @@ RGY_ERR CQSVPipeline::AddFilterOpenCL(std::vector<std::unique_ptr<RGYFilter>>& c
         param->frameIn = inputFrame;
         param->frameOut = inputFrame;
         param->baseFps = m_encFps;
+        param->bOutOverwrite = false;
+        auto sts = filter->init(param, m_pQSVLog);
+        if (sts != RGY_ERR_NONE) {
+            return sts;
+        }
+        //入力フレーム情報を更新
+        inputFrame = param->frameOut;
+        m_encFps = param->baseFps;
+        //登録
+        clfilters.push_back(std::move(filter));
+        return RGY_ERR_NONE;
+    }
+    //ivtc
+    if (vppType == VppType::CL_IVTC) {
+        unique_ptr<RGYFilter> filter(new RGYFilterIvtc(m_cl));
+        shared_ptr<RGYFilterParamIvtc> param(new RGYFilterParamIvtc());
+        param->ivtc = params->vpp.ivtc;
+        if (params->vpp.rff.enable && param->ivtc.expand < 0) {
+            // vpp-rff 側で RFF 展開を担当するので、ivtc の auto-expand は無効化する。
+            param->ivtc.expand = 0;
+            PrintMes(RGY_LOG_DEBUG, _T("vpp-rff + vpp-ivtc: forcing ivtc expand=off (auto-disabled).\n"));
+        }
+        param->frameIn = inputFrame;
+        param->frameOut = inputFrame;
+        param->frameOut.picstruct = RGY_PICSTRUCT_FRAME;
+        param->baseFps = m_encFps;
+        param->timebase = m_outputTimebase;     // required for drift-free CFR emit-timestamp rescale in flushCycle
+        if (auto pAVCodecReader = std::dynamic_pointer_cast<RGYInputAvcodec>(m_pFileReader); pAVCodecReader) {
+            param->inputIsAvcodecReader = true;
+            param->inputBPulldownDetected = pAVCodecReader->getPulldownDetected();
+        }
+        // RFF-expansion pre-scan parameters. The filter's init() opens a
+        // SEPARATE libavcodec parser against inputFilePath to read per-
+        // frame RFF/TFF flags without decoding pixels, then builds the
+        // complete display-order schedule before runtime starts.
+        // trimOffset gives the number of leading coded frames that the
+        // runtime reader will discard (pre-keyframe packets), so the
+        // pre-scan can align its schedule to what run_filter will see.
+        // trimFrameCount=0 means "use all frames after trimOffset".
+        param->inputFilePath   = params->common.inputFilename;
+        param->trimOffset      = m_trimParam.offset;
+        param->trimFrameCount  = 0;
         param->bOutOverwrite = false;
         auto sts = filter->init(param, m_pQSVLog);
         if (sts != RGY_ERR_NONE) {
@@ -2686,6 +3041,26 @@ RGY_ERR CQSVPipeline::AddFilterOpenCL(std::vector<std::unique_ptr<RGYFilter>>& c
         clfilters.push_back(std::move(filter));
         return RGY_ERR_NONE;
     }
+    //msmooth
+    if (vppType == VppType::CL_MSMOOTH) {
+        unique_ptr<RGYFilter> filter(new RGYFilterMsmooth(m_cl));
+        shared_ptr<RGYFilterParamMsmooth> param(new RGYFilterParamMsmooth());
+        param->msmooth = params->vpp.msmooth;
+        param->frameIn = inputFrame;
+        param->frameOut = inputFrame;
+        param->baseFps = m_encFps;
+        param->bOutOverwrite = false;
+        auto sts = filter->init(param, m_pQSVLog);
+        if (sts != RGY_ERR_NONE) {
+            return sts;
+        }
+        //入力フレーム情報を更新
+        inputFrame = param->frameOut;
+        m_encFps = param->baseFps;
+        //登録
+        clfilters.push_back(std::move(filter));
+        return RGY_ERR_NONE;
+    }
     //knn
     if (vppType == VppType::CL_DENOISE_KNN) {
         unique_ptr<RGYFilter> filter(new RGYFilterDenoiseKnn(m_cl));
@@ -2745,6 +3120,140 @@ RGY_ERR CQSVPipeline::AddFilterOpenCL(std::vector<std::unique_ptr<RGYFilter>>& c
         //登録
         clfilters.push_back(std::move(filter));
         return RGY_ERR_NONE;
+    }
+    //degrain
+    if (vppType == VppType::CL_DEGRAIN
+        || vppType == VppType::CL_DEGRAIN_ANALYZE
+        || vppType == VppType::CL_DEGRAIN_APPLY_TR1
+        || vppType == VppType::CL_DEGRAIN_APPLY_TR2) {
+        unique_ptr<RGYFilter> filter(new RGYFilterDegrain(m_cl));
+        shared_ptr<RGYFilterParamDegrain> param(new RGYFilterParamDegrain());
+        switch (vppType) {
+        case VppType::CL_DEGRAIN_ANALYZE:
+            param->degrain = params->vpp.degrainAnalyze;
+            param->degrain.mode = VppDegrainMode::Analyze;
+            param->degrain.stage = VppDegrainStage::TR1;
+            break;
+        case VppType::CL_DEGRAIN_APPLY_TR1:
+            param->degrain = params->vpp.degrainTR1;
+            param->degrain.mode = VppDegrainMode::Degrain;
+            param->degrain.stage = VppDegrainStage::TR1;
+            break;
+        case VppType::CL_DEGRAIN_APPLY_TR2:
+            param->degrain = params->vpp.degrainTR2;
+            param->degrain.mode = VppDegrainMode::Degrain;
+            param->degrain.stage = VppDegrainStage::TR2;
+            break;
+        default:
+            param->degrain = params->vpp.degrain;
+            break;
+        }
+        param->frameIn = inputFrame;
+        param->frameOut = inputFrame;
+        param->baseFps = m_encFps;
+        param->bOutOverwrite = false;
+        auto sts = filter->init(param, m_pQSVLog);
+        if (sts != RGY_ERR_NONE) {
+            return sts;
+        }
+        //入力フレーム情報を更新
+        inputFrame = param->frameOut;
+        m_encFps = param->baseFps;
+        //登録
+        clfilters.push_back(std::move(filter));
+        return RGY_ERR_NONE;
+    }
+    //rtgmc retouch
+    if (vppType == VppType::CL_RTGMC_RETOUCH) {
+        unique_ptr<RGYFilter> filter(new RGYFilterRtgmcRetouch(m_cl));
+        shared_ptr<RGYFilterParamRtgmcRetouch> param(new RGYFilterParamRtgmcRetouch());
+        param->rtgmc_retouch = params->vpp.rtgmc_retouch;
+        param->frameIn = inputFrame;
+        param->frameOut = inputFrame;
+        param->baseFps = m_encFps;
+        param->bOutOverwrite = false;
+        auto sts = filter->init(param, m_pQSVLog);
+        if (sts != RGY_ERR_NONE) {
+            return sts;
+        }
+        inputFrame = param->frameOut;
+        m_encFps = param->baseFps;
+        clfilters.push_back(std::move(filter));
+        return RGY_ERR_NONE;
+    }
+    //rtgmc shimmer repair
+    if (vppType == VppType::CL_RTGMC_SHIMMER_REPAIR
+        || vppType == VppType::CL_RTGMC_SHIMMER_REPAIR_REP1
+        || vppType == VppType::CL_RTGMC_SHIMMER_REPAIR_REP2) {
+        unique_ptr<RGYFilter> filter(new RGYFilterRtgmcShimmerRepair(m_cl));
+        shared_ptr<RGYFilterParamRtgmcShimmerRepair> param(new RGYFilterParamRtgmcShimmerRepair());
+        const auto &shimmerRepair = (vppType == VppType::CL_RTGMC_SHIMMER_REPAIR_REP1)
+            ? params->vpp.rtgmc_shimmer_repairRep1
+            : (vppType == VppType::CL_RTGMC_SHIMMER_REPAIR_REP2)
+                ? params->vpp.rtgmc_shimmer_repairRep2
+                : params->vpp.rtgmc_shimmer_repair;
+        param->stage = (shimmerRepair.stage == VppRtgmcShimmerRepairStage::Rep1)
+            ? RGYRtgmcShimmerRepairStage::PreRetouch
+            : RGYRtgmcShimmerRepairStage::PostTR2;
+        param->repairThin = shimmerRepair.repThin;
+        param->repairPad = shimmerRepair.repPad;
+        param->processChroma = shimmerRepair.repChroma;
+        param->frameIn = inputFrame;
+        param->frameOut = inputFrame;
+        param->baseFps = m_encFps;
+        param->bOutOverwrite = false;
+        auto sts = filter->init(param, m_pQSVLog);
+        if (sts != RGY_ERR_NONE) {
+            return sts;
+        }
+        inputFrame = param->frameOut;
+        m_encFps = param->baseFps;
+        clfilters.push_back(std::move(filter));
+        return RGY_ERR_NONE;
+    }
+    //rtgmc primitive
+    if (vppType == VppType::CL_RTGMC_PRIMITIVE) {
+#if RGY_HAS_RTGMC_PRIMITIVE_FILTER
+        unique_ptr<RGYFilter> filter(new RGYFilterRtgmcPrimitive(m_cl));
+        shared_ptr<RGYFilterParamRtgmcPrimitive> param(new RGYFilterParamRtgmcPrimitive());
+        switch (params->vpp.rtgmc_primitive.op) {
+        case VppRtgmcPrimitiveOp::Copy:        param->op = RGYRtgmcPrimitiveOp::Copy; break;
+        case VppRtgmcPrimitiveOp::MakeDiff:    param->op = RGYRtgmcPrimitiveOp::MakeDiff; break;
+        case VppRtgmcPrimitiveOp::AddDiff:     param->op = RGYRtgmcPrimitiveOp::AddDiff; break;
+        case VppRtgmcPrimitiveOp::AddWeightedDiff: param->op = RGYRtgmcPrimitiveOp::AddWeightedDiff; break;
+        case VppRtgmcPrimitiveOp::RemoveGrain: param->op = RGYRtgmcPrimitiveOp::RemoveGrain; break;
+        case VppRtgmcPrimitiveOp::Repair:      param->op = RGYRtgmcPrimitiveOp::Repair; break;
+        case VppRtgmcPrimitiveOp::Merge:       param->op = RGYRtgmcPrimitiveOp::Merge; break;
+        case VppRtgmcPrimitiveOp::GaussResize: param->op = RGYRtgmcPrimitiveOp::GaussResize; break;
+        case VppRtgmcPrimitiveOp::VerticalMin5: param->op = RGYRtgmcPrimitiveOp::VerticalMin5; break;
+        case VppRtgmcPrimitiveOp::VerticalMax5: param->op = RGYRtgmcPrimitiveOp::VerticalMax5; break;
+        case VppRtgmcPrimitiveOp::LogicMin:    param->op = RGYRtgmcPrimitiveOp::LogicMin; break;
+        case VppRtgmcPrimitiveOp::LogicMax:    param->op = RGYRtgmcPrimitiveOp::LogicMax; break;
+        default:                               param->op = RGYRtgmcPrimitiveOp::Copy; break;
+        }
+        param->mode = params->vpp.rtgmc_primitive.mode;
+        param->weight = params->vpp.rtgmc_primitive.weight;
+        switch (params->vpp.rtgmc_primitive.ref) {
+        case VppRtgmcPrimitiveRef::RemoveGrain20: param->refMode = RGYRtgmcPrimitiveRefMode::RemoveGrain20; break;
+        default:                                  param->refMode = RGYRtgmcPrimitiveRefMode::Disabled; break;
+        }
+        param->processChroma = params->vpp.rtgmc_primitive.chroma;
+        param->frameIn = inputFrame;
+        param->frameOut = inputFrame;
+        param->baseFps = m_encFps;
+        param->bOutOverwrite = false;
+        auto sts = filter->init(param, m_pQSVLog);
+        if (sts != RGY_ERR_NONE) {
+            return sts;
+        }
+        inputFrame = param->frameOut;
+        m_encFps = param->baseFps;
+        clfilters.push_back(std::move(filter));
+        return RGY_ERR_NONE;
+#else
+        PrintMes(RGY_LOG_ERROR, _T("rtgmc-primitive filter is not available in this build.\n"));
+        return RGY_ERR_UNSUPPORTED;
+#endif
     }
     //字幕焼きこみ
     if (vppType == VppType::CL_SUBBURN) {
@@ -2877,11 +3386,172 @@ RGY_ERR CQSVPipeline::AddFilterOpenCL(std::vector<std::unique_ptr<RGYFilter>>& c
         clfilters.push_back(std::move(filter));
         return RGY_ERR_NONE;
     }
+    //chromashift
+    if (vppType == VppType::CL_CHROMASHIFT) {
+        unique_ptr<RGYFilter> filter(new RGYFilterChromaShift(m_cl));
+        shared_ptr<RGYFilterParamChromaShift> param(new RGYFilterParamChromaShift());
+        param->chromashift = params->vpp.chromashift;
+        param->frameIn = inputFrame;
+        param->frameOut = inputFrame;
+        param->baseFps = m_encFps;
+        param->bOutOverwrite = false;
+        auto sts = filter->init(param, m_pQSVLog);
+        if (sts != RGY_ERR_NONE) {
+            return sts;
+        }
+        //入力フレーム情報を更新
+        inputFrame = param->frameOut;
+        m_encFps = param->baseFps;
+        //登録
+        clfilters.push_back(std::move(filter));
+        return RGY_ERR_NONE;
+    }
+    //deblock
+    if (vppType == VppType::CL_DEBLOCK) {
+        unique_ptr<RGYFilter> filter(new RGYFilterDeblock(m_cl));
+        shared_ptr<RGYFilterParamDeblock> param(new RGYFilterParamDeblock());
+        param->deblock = params->vpp.deblock;
+        param->frameIn = inputFrame;
+        param->frameOut = inputFrame;
+        param->baseFps = m_encFps;
+        param->bOutOverwrite = false;
+        auto sts = filter->init(param, m_pQSVLog);
+        if (sts != RGY_ERR_NONE) {
+            return sts;
+        }
+        //入力フレーム情報を更新
+        inputFrame = param->frameOut;
+        m_encFps = param->baseFps;
+        //登録
+        clfilters.push_back(std::move(filter));
+        return RGY_ERR_NONE;
+    }
+    //deflicker
+    if (vppType == VppType::CL_DEFLICKER) {
+        unique_ptr<RGYFilter> filter(new RGYFilterDeflicker(m_cl));
+        shared_ptr<RGYFilterParamDeflicker> param(new RGYFilterParamDeflicker());
+        param->deflicker = params->vpp.deflicker;
+        param->frameIn = inputFrame;
+        param->frameOut = inputFrame;
+        param->baseFps = m_encFps;
+        param->bOutOverwrite = false;
+        auto sts = filter->init(param, m_pQSVLog);
+        if (sts != RGY_ERR_NONE) {
+            return sts;
+        }
+        //入力フレーム情報を更新
+        inputFrame = param->frameOut;
+        m_encFps = param->baseFps;
+        //登録
+        clfilters.push_back(std::move(filter));
+        return RGY_ERR_NONE;
+    }
+    //colorfix
+    if (vppType == VppType::CL_COLORFIX) {
+        unique_ptr<RGYFilter> filter(new RGYFilterColorFix(m_cl));
+        shared_ptr<RGYFilterParamColorFix> param(new RGYFilterParamColorFix());
+        param->colorfix = params->vpp.colorfix;
+        param->vui = vuiInfo;
+        param->frameIn = inputFrame;
+        param->frameOut = inputFrame;
+        param->baseFps = m_encFps;
+        param->bOutOverwrite = true;
+        auto sts = filter->init(param, m_pQSVLog);
+        if (sts != RGY_ERR_NONE) {
+            return sts;
+        }
+        //入力フレーム情報を更新
+        inputFrame = param->frameOut;
+        m_encFps = param->baseFps;
+        //登録
+        clfilters.push_back(std::move(filter));
+        return RGY_ERR_NONE;
+    }
     //edgelevel
     if (vppType == VppType::CL_EDGELEVEL) {
         unique_ptr<RGYFilter> filter(new RGYFilterEdgelevel(m_cl));
         shared_ptr<RGYFilterParamEdgelevel> param(new RGYFilterParamEdgelevel());
         param->edgelevel = params->vpp.edgelevel;
+        param->frameIn = inputFrame;
+        param->frameOut = inputFrame;
+        param->baseFps = m_encFps;
+        param->bOutOverwrite = false;
+        auto sts = filter->init(param, m_pQSVLog);
+        if (sts != RGY_ERR_NONE) {
+            return sts;
+        }
+        //入力フレーム情報を更新
+        inputFrame = param->frameOut;
+        m_encFps = param->baseFps;
+        //登録
+        clfilters.push_back(std::move(filter));
+        return RGY_ERR_NONE;
+    }
+    //dehalo
+    if (vppType == VppType::CL_DEHALO) {
+        unique_ptr<RGYFilter> filter(new RGYFilterDehalo(m_cl));
+        shared_ptr<RGYFilterParamDehalo> param(new RGYFilterParamDehalo());
+        param->dehalo = params->vpp.dehalo;
+        param->frameIn = inputFrame;
+        param->frameOut = inputFrame;
+        param->baseFps = m_encFps;
+        param->bOutOverwrite = false;
+        auto sts = filter->init(param, m_pQSVLog);
+        if (sts != RGY_ERR_NONE) {
+            return sts;
+        }
+        //入力フレーム情報を更新
+        inputFrame = param->frameOut;
+        m_encFps = param->baseFps;
+        //登録
+        clfilters.push_back(std::move(filter));
+        return RGY_ERR_NONE;
+    }
+    //finedehalo
+    if (vppType == VppType::CL_FINEDEHALO) {
+        unique_ptr<RGYFilter> filter(new RGYFilterFineDehalo(m_cl));
+        shared_ptr<RGYFilterParamFineDehalo> param(new RGYFilterParamFineDehalo());
+        param->finedehalo = params->vpp.finedehalo;
+        param->frameIn = inputFrame;
+        param->frameOut = inputFrame;
+        param->baseFps = m_encFps;
+        param->bOutOverwrite = false;
+        auto sts = filter->init(param, m_pQSVLog);
+        if (sts != RGY_ERR_NONE) {
+            return sts;
+        }
+        //入力フレーム情報を更新
+        inputFrame = param->frameOut;
+        m_encFps = param->baseFps;
+        //登録
+        clfilters.push_back(std::move(filter));
+        return RGY_ERR_NONE;
+    }
+    //hqdering
+    if (vppType == VppType::CL_HQDERING) {
+        unique_ptr<RGYFilter> filter(new RGYFilterDering(m_cl));
+        shared_ptr<RGYFilterParamDering> param(new RGYFilterParamDering());
+        param->dering = params->vpp.dering;
+        param->frameIn = inputFrame;
+        param->frameOut = inputFrame;
+        param->baseFps = m_encFps;
+        param->bOutOverwrite = false;
+        auto sts = filter->init(param, m_pQSVLog);
+        if (sts != RGY_ERR_NONE) {
+            return sts;
+        }
+        //入力フレーム情報を更新
+        inputFrame = param->frameOut;
+        m_encFps = param->baseFps;
+        //登録
+        clfilters.push_back(std::move(filter));
+        return RGY_ERR_NONE;
+    }
+    //msharpen
+    if (vppType == VppType::CL_MSHARPEN) {
+        unique_ptr<RGYFilter> filter(new RGYFilterMsharpen(m_cl));
+        shared_ptr<RGYFilterParamMsharpen> param(new RGYFilterParamMsharpen());
+        param->msharpen = params->vpp.msharpen;
         param->frameIn = inputFrame;
         param->frameOut = inputFrame;
         param->baseFps = m_encFps;
@@ -3150,12 +3820,7 @@ RGY_ERR CQSVPipeline::InitFilters(sInputParams *inputParam) {
     }
 
     //インタレ解除の個数をチェック
-    int deinterlacer = 0;
-    if (inputParam->vppmfx.deinterlace != MFX_DEINTERLACE_NONE) deinterlacer++;
-    if (inputParam->vpp.afs.enable) deinterlacer++;
-    if (inputParam->vpp.nnedi.enable) deinterlacer++;
-    if (inputParam->vpp.yadif.enable) deinterlacer++;
-    if (inputParam->vpp.decomb.enable) deinterlacer++;
+    const auto deinterlacer = countVppDeinterlacer(inputParam, true);
     if (deinterlacer >= 2) {
         PrintMes(RGY_LOG_ERROR, _T("Activating 2 or more deinterlacer is not supported.\n"));
         return RGY_ERR_UNSUPPORTED;
@@ -3206,56 +3871,85 @@ RGY_ERR CQSVPipeline::InitFilters(sInputParams *inputParam) {
     //読み込み時のcrop
     sInputCrop *inputCrop = (cropRequired) ? &inputParam->input.crop : nullptr;
     const auto resize = std::make_pair(resizeWidth, resizeHeight);
+    const auto inputSurfaceCsp = inputFrame.csp;
+    const auto inputSurfaceBitdepth = inputFrame.bitdepth;
+    const bool useInputCspForDeint = inputParam->vpp.deintCsp == VppDeintCsp::Input && hasVppDeinterlacer(inputParam, true);
+    const bool delayCspConvForDeint = useInputCspForDeint && cspConvRequired;
+    bool outputCspConverted = !delayCspConvForDeint;
+    auto targetSurfaceCsp = [&]() {
+        return outputCspConverted ? getEncoderCsp(inputParam) : inputSurfaceCsp;
+    };
+    auto targetSurfaceBitdepth = [&]() {
+        return outputCspConverted ? getEncoderBitdepth(inputParam) : inputSurfaceBitdepth;
+    };
 
     std::vector<std::unique_ptr<RGYFilter>> vppOpenCLFilters;
+    auto addOpenCLCopyFilter = [&](std::vector<std::unique_ptr<RGYFilter>>& filters, const bool normalizedToOpenCL, const RGY_CSP targetCsp, const int targetBitdepth) -> RGY_ERR {
+        auto filterCrop = std::make_unique<RGYFilterCspCrop>(m_cl);
+        shared_ptr<RGYFilterParamCrop> param(new RGYFilterParamCrop());
+        param->frameIn = inputFrame;
+        param->frameOut = inputFrame;
+        param->frameOut.csp = targetCsp;
+        if (normalizedToOpenCL) {
+            switch (param->frameOut.csp) { // OpenCLフィルタの内部形式への変換
+            case RGY_CSP_NV12: param->frameOut.csp = RGY_CSP_YV12; break;
+            case RGY_CSP_P010: param->frameOut.csp = RGY_CSP_YV12_16; break;
+            case RGY_CSP_VUYA: param->frameOut.csp = RGY_CSP_YUV444; break;
+            case RGY_CSP_Y410: param->frameOut.csp = RGY_CSP_YUV444_16; break;
+            case RGY_CSP_Y416: param->frameOut.csp = RGY_CSP_YUV444_16; break;
+            case RGY_CSP_MFX_RGB: param->frameOut.csp = RGY_CSP_RGB; break;
+            default:
+                break;
+            }
+            param->frameOut.bitdepth = RGY_CSP_BIT_DEPTH[param->frameOut.csp];
+            if (inputCrop) {
+                param->crop = *inputCrop;
+                inputCrop = nullptr;
+            }
+            param->frameIn.mem_type = RGY_MEM_TYPE_GPU_IMAGE_NORMALIZED;
+            param->frameOut.mem_type = RGY_MEM_TYPE_GPU;
+        } else {
+            param->frameOut.bitdepth = targetBitdepth;
+            param->frameIn.mem_type = RGY_MEM_TYPE_GPU;
+            param->frameOut.mem_type = RGY_MEM_TYPE_GPU_IMAGE_NORMALIZED;
+        }
+        param->baseFps = m_encFps;
+        param->bOutOverwrite = false;
+        auto sts = filterCrop->init(param, m_pQSVLog);
+        if (sts != RGY_ERR_NONE) {
+            return sts;
+        }
+        inputFrame = param->frameOut;
+        m_encFps = param->baseFps;
+        filters.push_back(std::move(filterCrop));
+        return RGY_ERR_NONE;
+    };
     for (size_t i = 0; i < filterPipeline.size(); i++) {
         const VppFilterType ftype0 = (i >= 1)                      ? getVppFilterType(filterPipeline[i-1]) : VppFilterType::FILTER_NONE;
         const VppFilterType ftype1 =                                 getVppFilterType(filterPipeline[i+0]);
         const VppFilterType ftype2 = (i+1 < filterPipeline.size()) ? getVppFilterType(filterPipeline[i+1]) : VppFilterType::FILTER_NONE;
         if (ftype1 == VppFilterType::FILTER_MFX) {
+            const bool delayedCspConv = delayCspConvForDeint && filterPipeline[i] == VppType::MFX_CROP && inputCrop == nullptr;
+            const auto mfxOutCsp = (delayedCspConv || outputCspConverted) ? getEncoderCsp(inputParam) : inputSurfaceCsp;
+            const auto mfxOutBitdepth = (delayedCspConv || outputCspConverted) ? getEncoderBitdepth(inputParam) : inputSurfaceBitdepth;
             auto [err, vppmfx] = AddFilterMFX(inputFrame, m_encFps, filterPipeline[i], &inputParam->vppmfx,
-                getEncoderCsp(inputParam), getEncoderBitdepth(inputParam), inputCrop, resize, blocksize);
+                mfxOutCsp, mfxOutBitdepth, inputCrop, resize, blocksize);
             inputCrop = nullptr;
             if (err != RGY_ERR_NONE) {
                 return err;
+            }
+            if (delayedCspConv) {
+                outputCspConverted = true;
             }
             if (vppmfx) {
                 m_vpFilters.push_back(VppVilterBlock(vppmfx));
             }
         } else if (ftype1 == VppFilterType::FILTER_OPENCL) {
             if (ftype0 != VppFilterType::FILTER_OPENCL || filterPipeline[i] == VppType::CL_CROP) { // 前のfilterがOpenCLでない場合、変換が必要
-                auto filterCrop = std::make_unique<RGYFilterCspCrop>(m_cl);
-                shared_ptr<RGYFilterParamCrop> param(new RGYFilterParamCrop());
-                param->frameIn = inputFrame;
-                param->frameOut = inputFrame;
-                param->frameOut.csp = getEncoderCsp(inputParam);
-                switch (param->frameOut.csp) { // OpenCLフィルタの内部形式への変換
-                case RGY_CSP_NV12: param->frameOut.csp = RGY_CSP_YV12; break;
-                case RGY_CSP_P010: param->frameOut.csp = RGY_CSP_YV12_16; break;
-                case RGY_CSP_VUYA: param->frameOut.csp = RGY_CSP_YUV444; break;
-                case RGY_CSP_Y410: param->frameOut.csp = RGY_CSP_YUV444_16; break;
-                case RGY_CSP_Y416: param->frameOut.csp = RGY_CSP_YUV444_16; break;
-                case RGY_CSP_MFX_RGB: param->frameOut.csp = RGY_CSP_RGB; break;
-                default:
-                    break;
-                }
-                param->frameOut.bitdepth = RGY_CSP_BIT_DEPTH[param->frameOut.csp];
-                if (inputCrop) {
-                    param->crop = *inputCrop;
-                    inputCrop = nullptr;
-                }
-                param->baseFps = m_encFps;
-                param->frameIn.mem_type = RGY_MEM_TYPE_GPU_IMAGE_NORMALIZED;
-                param->frameOut.mem_type = RGY_MEM_TYPE_GPU;
-                param->bOutOverwrite = false;
-                auto sts = filterCrop->init(param, m_pQSVLog);
+                auto sts = addOpenCLCopyFilter(vppOpenCLFilters, true, targetSurfaceCsp(), targetSurfaceBitdepth());
                 if (sts != RGY_ERR_NONE) {
                     return sts;
                 }
-                //入力フレーム情報を更新
-                inputFrame = param->frameOut;
-                m_encFps = param->baseFps;
-                vppOpenCLFilters.push_back(std::move(filterCrop));
             }
             if (filterPipeline[i] != VppType::CL_CROP) {
                 auto err = AddFilterOpenCL(vppOpenCLFilters, inputFrame, filterPipeline[i], inputParam, inputCrop, resize, VuiFiltered);
@@ -3264,25 +3958,10 @@ RGY_ERR CQSVPipeline::InitFilters(sInputParams *inputParam) {
                 }
             }
             if (ftype2 != VppFilterType::FILTER_OPENCL) { // 次のfilterがOpenCLでない場合、変換が必要
-                std::unique_ptr<RGYFilter> filterCrop(new RGYFilterCspCrop(m_cl));
-                std::shared_ptr<RGYFilterParamCrop> param(new RGYFilterParamCrop());
-                param->frameIn = inputFrame;
-                param->frameOut = inputFrame;
-                param->frameOut.csp = getEncoderCsp(inputParam);
-                param->frameOut.bitdepth = getEncoderBitdepth(inputParam);
-                param->frameIn.mem_type = RGY_MEM_TYPE_GPU;
-                param->frameOut.mem_type = RGY_MEM_TYPE_GPU_IMAGE_NORMALIZED;
-                param->baseFps = m_encFps;
-                param->bOutOverwrite = false;
-                auto sts = filterCrop->init(param, m_pQSVLog);
+                auto sts = addOpenCLCopyFilter(vppOpenCLFilters, false, targetSurfaceCsp(), targetSurfaceBitdepth());
                 if (sts != RGY_ERR_NONE) {
                     return sts;
                 }
-                //入力フレーム情報を更新
-                inputFrame = param->frameOut;
-                m_encFps = param->baseFps;
-                //登録
-                vppOpenCLFilters.push_back(std::move(filterCrop));
                 // ブロックに追加する
                 m_vpFilters.push_back(VppVilterBlock(vppOpenCLFilters));
                 vppOpenCLFilters.clear();
@@ -3290,6 +3969,31 @@ RGY_ERR CQSVPipeline::InitFilters(sInputParams *inputParam) {
         } else {
             PrintMes(RGY_LOG_ERROR, _T("Unsupported vpp filter type.\n"));
             return RGY_ERR_UNSUPPORTED;
+        }
+    }
+    if (inputParam->vppmfx.mfxInsertCLCopy
+        && !m_vpFilters.empty()
+        && m_vpFilters.back().type == VppFilterType::FILTER_MFX) {
+        if (!m_cl) {
+            if (!inputParam->ctrl.enableOpenCL) {
+                PrintMes(RGY_LOG_WARN, _T("OpenCL filter not enabled, mfxInsertCLCopy will be ignored.\n"));
+            } else {
+                PrintMes(RGY_LOG_ERROR, _T("OpenCL filter not supported on this platform: %s.\n"), CPU_GEN_STR[m_device->CPUGen()]);
+                return RGY_ERR_UNSUPPORTED;
+            }
+        } else if (inputParam->vppmfx.mfxInsertCLCopy == 1 && ENABLE_D3D11) {
+            PrintMes(RGY_LOG_INFO, _T("mfxInsertCLCopy=1 will be ignored when d3d11 support is enabled.\n"));
+        } else {
+            auto sts = addOpenCLCopyFilter(vppOpenCLFilters, true, targetSurfaceCsp(), targetSurfaceBitdepth());
+            if (sts != RGY_ERR_NONE) {
+                return sts;
+            }
+            sts = addOpenCLCopyFilter(vppOpenCLFilters, false, targetSurfaceCsp(), targetSurfaceBitdepth());
+            if (sts != RGY_ERR_NONE) {
+                return sts;
+            }
+            m_vpFilters.push_back(VppVilterBlock(vppOpenCLFilters));
+            vppOpenCLFilters.clear();
         }
     }
 
@@ -3386,11 +4090,7 @@ RGY_ERR CQSVPipeline::checkGPUListByEncoder(sInputParams *prm, std::vector<std::
         //インタレ保持のチェック
         const bool interlacedEncoding =
             (prm->input.picstruct & RGY_PICSTRUCT_INTERLACED)
-            && prm->vppmfx.deinterlace == MFX_DEINTERLACE_NONE
-            && !prm->vpp.afs.enable
-            && !prm->vpp.nnedi.enable
-            && !prm->vpp.yadif.enable
-            && !prm->vpp.decomb.enable;
+            && !hasVppDeinterlacer(prm, true);
         if (interlacedEncoding && (deviceFeature & ENC_FEATURE_INTERLACE) != ENC_FEATURE_INTERLACE) {
             message += strsprintf(_T("GPU #%d (%s) does not support %s interlaced encoding.\n"),
                 (*gpu)->deviceNum(), (*gpu)->name().c_str(), CodecToStr(prm->codec).c_str());
@@ -3768,7 +4468,7 @@ RGY_ERR CQSVPipeline::InitPerfMonitor(const sInputParams *inputParam) {
         perfMonLog = inputParam->common.outputFilename + _T("_perf.csv");
     }
     CPerfMonitorPrm perfMonitorPrm;
-    if (m_pPerfMonitor->init(perfMonLog.c_str(), inputParam->pythonPath.c_str(), (bLogOutput) ? inputParam->ctrl.perfMonitorInterval : 1000,
+    if (m_pPerfMonitor->init(perfMonLog.c_str(), inputParam->ctrl.pythonPath.empty() ? nullptr : inputParam->ctrl.pythonPath.c_str(), (bLogOutput) ? inputParam->ctrl.perfMonitorInterval : 1000,
         (int)inputParam->ctrl.perfMonitorSelect, (int)inputParam->ctrl.perfMonitorSelectMatplot,
 #if defined(_WIN32) || defined(_WIN64)
         std::unique_ptr<void, handle_deleter>(OpenThread(SYNCHRONIZE | THREAD_QUERY_INFORMATION, false, GetCurrentThreadId()), handle_deleter()),
@@ -3959,12 +4659,12 @@ RGY_ERR CQSVPipeline::Init(sInputParams *pParams) {
     m_pQSVLog->write(RGY_LOG_DEBUG, RGY_LOGT_DEV, _T("Device Info Cache size: %d\n"), (int)deviceInfoCache->getDeviceIds().size());
 
     std::vector<std::unique_ptr<QSVDevice>> deviceList;
-    auto getDevIdName = [&deviceList]() {
-        std::map<int, std::string> devIdName;
+    auto getDevInfo = [&deviceList]() {
+        std::map<int, RGYDeviceInfoCacheKey> devInfo;
         for (const auto& dev : deviceList) {
-            devIdName[(int)dev->deviceNum()] = tchar_to_string(dev->name());
+            devInfo[(int)dev->deviceNum()] = dev->cacheInfo();
         }
-        return devIdName;
+        return devInfo;
     };
     if (deviceInfoCache
         && (deviceInfoCache->getDeviceIds().size() == 0
@@ -3977,7 +4677,9 @@ RGY_ERR CQSVPipeline::Init(sInputParams *pParams) {
             return RGY_ERR_DEVICE_NOT_FOUND;
         }
         HWDecCodecCsp = getHWDecCodecCsp(pParams->ctrl.skipHWDecodeCheck, deviceList);
-        deviceInfoCache->setDecCodecCsp(getDevIdName(), HWDecCodecCsp);
+        const auto devInfo = getDevInfo();
+        deviceInfoCache->setDeviceInfos(devInfo);
+        deviceInfoCache->setDecCodecCsp(devInfo, HWDecCodecCsp);
         deviceInfoCache->saveCacheFile();
         PrintMes(RGY_LOG_DEBUG, _T("HW dec codec csp support saved to cache file.\n"));
         if (pParams->device != QSVDeviceNum::AUTO) {
@@ -4007,7 +4709,7 @@ RGY_ERR CQSVPipeline::Init(sInputParams *pParams) {
             return RGY_ERR_DEVICE_NOT_FOUND;
         }
         if (deviceInfoCache) {
-            deviceInfoCache->setDeviceIds(getDevIdName());
+            deviceInfoCache->setDeviceInfos(getDevInfo());
         }
     }
 
@@ -4020,7 +4722,7 @@ RGY_ERR CQSVPipeline::Init(sInputParams *pParams) {
     RGY_ERR(sts, _T("Failed to initialize encode session."));
     PrintMes(RGY_LOG_DEBUG, _T("InitSession: Success.\n"));
 
-    sts = InitOpenCL(pParams->ctrl.enableOpenCL, pParams->ctrl.parallelEnc.isParent() ? 1 : pParams->ctrl.openclBuildThreads, pParams->vpp.checkPerformance);
+    sts = InitOpenCL(pParams->ctrl.enableOpenCL, pParams->ctrl.parallelEnc.isParent() ? 1 : pParams->ctrl.openclBuildThreads, pParams->vpp.checkPerformance, pParams->ctrl.clPerfDumpDir, pParams->ctrl.clPerfTimelineSec);
     if (sts < RGY_ERR_NONE) return sts;
     PrintMes(RGY_LOG_DEBUG, _T("InitOpenCL: Success.\n"));
 
@@ -4395,7 +5097,7 @@ RGY_ERR CQSVPipeline::CreatePipeline(const sInputParams* prm) {
     if (m_parallelEnc && m_parallelEnc->id() < 0) {
         // 親プロセスの子プロセスのデータ回収用
         std::unique_ptr<PipelineTaskAudio> taskAudio;
-        if (m_pFileWriterListAudio.size() > 0) {
+        if (m_pFileWriterListAudio.size() > 0 || hasFilterForStreams(m_vpFilters)) {
             taskAudio = std::make_unique<PipelineTaskAudio>(m_pFileReader.get(), m_AudioReaders, m_pFileWriterListAudio, m_vpFilters, 0, m_mfxVer, m_pQSVLog);
         }
         const auto encOutputTimebase = (ENCODER_QSV) ? to_rgy(HW_NATIVE_TIMEBASE) : m_outputTimebase;
@@ -4415,7 +5117,7 @@ RGY_ERR CQSVPipeline::CreatePipeline(const sInputParams* prm) {
         }
         m_pipelineTasks.push_back(std::make_unique<PipelineTaskMFXDecode>(&m_device->mfxSession(), 1, m_mfxDEC->mfxdec(), m_mfxDEC->mfxparams(), m_mfxDEC->skipAV1C(), parallelEncEndPts, m_pFileReader.get(), m_mfxVer, m_pQSVLog));
     }
-    if (m_pFileWriterListAudio.size() > 0) {
+    if (m_pFileWriterListAudio.size() > 0 || hasFilterForStreams(m_vpFilters)) {
         m_pipelineTasks.push_back(std::make_unique<PipelineTaskAudio>(m_pFileReader.get(), m_AudioReaders, m_pFileWriterListAudio, m_vpFilters, 0, m_mfxVer, m_pQSVLog));
     }
 
@@ -4562,6 +5264,7 @@ RGY_ERR CQSVPipeline::RunEncode2() {
         PipelineTaskData(size_t t) : task(t), data() {};
         PipelineTaskData(size_t t, std::unique_ptr<PipelineTaskOutput>& d) : task(t), data(std::move(d)) {};
     };
+    std::vector<char> firstSendFrame(m_pipelineTasks.size(), false);
     std::deque<PipelineTaskData> dataqueue;
     {
         auto checkContinue = [&checkAbort](RGY_ERR& err) {
@@ -4579,6 +5282,10 @@ RGY_ERR CQSVPipeline::RunEncode2() {
                 if (d.task < m_pipelineTasks.size()) {
                     err = RGY_ERR_NONE;
                     auto& task = m_pipelineTasks[d.task];
+                    if (!firstSendFrame[d.task]) {
+                        PrintMes(RGY_LOG_DEBUG, _T("First send frame to task %s.\n"), task->print().c_str());
+                        firstSendFrame[d.task] = true;
+                    }
                     err = task->sendFrame(d.data);
                     if (!checkContinue(err)) {
                         PrintMes(setloglevel(err), _T("Break in task %s: %s.\n"), task->print().c_str(), get_err_mes(err));
@@ -4673,6 +5380,7 @@ RGY_ERR CQSVPipeline::RunEncode2() {
                         //checkptsの処理上、でてきたフレームはすぐに後続処理に渡したいのでbreak
                         break;
                     } else if (itask == flushedTaskGet && flushedTaskGet < flushedTaskSend) {
+                        PrintMes(RGY_LOG_DEBUG, _T("Flush task %s.\n"), task->print().c_str());
                         flushedTaskGet++;
                     }
                 }
@@ -4899,6 +5607,9 @@ RGY_ERR CQSVPipeline::CheckCurrentVideoParam(TCHAR *str, mfxU32 bufSize) {
         return sum + (int)task->workSurfacesCount();
         });
 
+    auto codingoptstr = [](uint16_t value) {
+        return (value == MFX_CODINGOPTION_ON) ? _T("on") : ((value == MFX_CODINGOPTION_OFF) ? _T("off") : _T("default"));
+    };
 
     if (m_pmfxENC) {
         CompareParam(m_prmSetIn, *outFrameInfo);
@@ -5125,6 +5836,19 @@ RGY_ERR CQSVPipeline::CheckCurrentVideoParam(TCHAR *str, mfxU32 bufSize) {
             && outFrameInfo->tuneEncQualityPrm.TuneQuality != MFX_ENCODE_TUNE_OFF
             && get_cx_desc(list_enc_tune_quality_mode, outFrameInfo->tuneEncQualityPrm.TuneQuality) != nullptr) {
             PRINT_INFO(_T("Tune Quality   %s\n"), get_str_of_tune_bitmask(outFrameInfo->tuneEncQualityPrm.TuneQuality).c_str());
+        }
+        if (check_lib_version(m_mfxVer, MFX_LIB_VERSION_2_16) && m_encParams.aiEncCtrlEnabled) {
+            tstring strAIEncCtrl;
+            if (outFrameInfo->aiEncCtrlPrm.SaliencyEncoder != MFX_CODINGOPTION_OFF) {
+                strAIEncCtrl += tstring(_T("Saliency: ")) + codingoptstr(outFrameInfo->aiEncCtrlPrm.SaliencyEncoder);
+            }
+            if (outFrameInfo->aiEncCtrlPrm.AdaptiveTargetUsage != MFX_CODINGOPTION_OFF) {
+                strAIEncCtrl += tstring(_T("Adaptive: ")) + codingoptstr(outFrameInfo->aiEncCtrlPrm.AdaptiveTargetUsage);
+            }
+            if (strAIEncCtrl.empty()) {
+                strAIEncCtrl = _T("off");
+            }
+            PRINT_INFO(_T("AI Enc Ctrl    %s\n"), strAIEncCtrl.c_str());
         }
         if (check_lib_version(m_mfxVer, MFX_LIB_VERSION_1_9)) {
             auto qp_limit_str = [](mfxU8 limitI, mfxU8 limitP, mfxU8 limitB) {

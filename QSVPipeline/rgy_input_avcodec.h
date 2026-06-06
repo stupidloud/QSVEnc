@@ -712,6 +712,7 @@ struct AVDemuxFormat {
     double                    analyzeSec;            //動画ファイルを先頭から分析する時間
     bool                      isPipe;                //入力がパイプ
     bool                      lowLatency;            //低遅延モード
+    double                    audioReadOffsetSec;    //映像終了後に通す音声の余裕秒数
     bool                      timestampPassThrough;  //timestampをそのまま通す
     uint32_t                  preReadBufferIdx;      //先読みバッファの読み込み履歴
     int                       audioTracks;           //存在する音声のトラック数
@@ -853,11 +854,13 @@ public:
     PerfQueueInfo *queueInfo;               //キューの情報を格納する構造体
     DeviceCodecCsp *HWDecCodecCsp;          //HWデコーダのサポートするコーデックと色空間
     bool           videoDetectPulldown;     //pulldownの検出を試みるかどうか
+    bool           suppressPulldownMutation; //true: still DETECT pulldown (bPulldown set) but do NOT rewrite avgDuration *= 1.25. Used by --vpp-ivtc expand=on/auto which needs the real stream fps.
     bool           parseHDRmetadata;        //HDR関連のmeta情報を取得する
     bool           hdr10plusMetadataCopy;   //HDR10plus関連のmeta情報を取得する
     bool           doviRpuMetadataCopy;     //dovi rpuのmeta情報を取得する
     RGY_PICSTRUCT  interlaceSet;            //指定されたインタレ
     bool           lowLatency;
+    double         audioReadOffsetSec;      //映像終了後に通す音声の余裕秒数
     bool           timestampPassThrough;    //timestampをそのまま出力する
     RGYListRef<RGYFrameDataQP> *qpTableListRef; //qp tableを格納するときのベース構造体
     RGYOptList     inputOpt;                //入力オプション
@@ -1062,6 +1065,12 @@ protected:
     tstring          m_logFramePosList;           //FramePosListの内容を入力終了時に出力する (デバッグ用)
     std::unique_ptr<FILE, fp_deleter> m_fpPacketList; // 読み取ったパケット情報を出力するファイル
     vector<uint8_t>  m_hevcMp42AnnexbBuffer;       //HEVCのmp4->AnnexB簡易変換用バッファ
+    bool             m_suppressPulldownDetect;     // true: skip avgDuration *= 1.25 after bPulldown is detected. bPulldown itself is still set so log/diagnostic paths see it. Mirrors RGYInputAvcodecPrm::suppressPulldownMutation.
+    bool             m_pulldownDetected;           // true when getFirstFramePosAndFrameRate detected soft pulldown.
+
+public:
+    void setSuppressPulldownDetect(bool v) { m_suppressPulldownDetect = v; }
+    bool getPulldownDetected() const { return m_pulldownDetected; }
 };
 
 #endif //ENABLE_AVSW_READER

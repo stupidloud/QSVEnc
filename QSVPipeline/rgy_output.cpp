@@ -1369,6 +1369,7 @@ RGY_ERR initWriters(
     const bool HEVCAlphaChannel,
     const int HEVCAlphaChannelMode,
     const uint32_t insertHeader,
+    const tstring &muxerCmdline,
     RGYPoolAVPacket *poolPkt,
     RGYPoolAVFrame *poolFrame,
     shared_ptr<EncodeStatus> pStatus,
@@ -1429,6 +1430,7 @@ RGY_ERR initWriters(
         writerPrm.threadParamCsp          = ctrl->threadParams.get(RGYThreadType::CSP);
         writerPrm.bufSizeMB               = ctrl->outputBufSizeMB;
         writerPrm.audioResampler          = common->audioResampler;
+        writerPrm.audioEncodeOtherCodecOnly = common->audioEncodeOtherCodecOnly;
         writerPrm.audioIgnoreDecodeError  = common->audioIgnoreDecodeError;
         writerPrm.queueInfo = (pPerfMonitor) ? pPerfMonitor->GetQueueInfoPtr() : nullptr;
         writerPrm.muxVidTsLogFile         = ctrl->logMuxVidTs.getFilename(common->outputFilename, _T(".muxts.log"));
@@ -1448,6 +1450,7 @@ RGY_ERR initWriters(
         writerPrm.videoCodecTag           = common->videoCodecTag;
         writerPrm.videoMetadata           = common->videoMetadata;
         writerPrm.formatMetadata          = common->formatMetadata;
+        writerPrm.muxerCmdline            = muxerCmdline;
         writerPrm.afs                     = isAfs;
         writerPrm.disableMp4Opt           = common->disableMp4Opt;
         writerPrm.lowlatency              = ctrl->lowLatency;
@@ -1561,7 +1564,7 @@ RGY_ERR initWriters(
                     //pAudioSelect == nullptrは "copyAllStreams" か 字幕ストリーム によるもの
                     if (pAudioSelect != nullptr) {
                         prm.decodeCodecPrm = pAudioSelect->decCodecPrm;
-                        prm.bitrate = pAudioSelect->encBitrate;
+                        prm.encodeBitrate = pAudioSelect->encBitrate;
                         prm.quality = pAudioSelect->encQuality;
                         prm.samplingRate = pAudioSelect->encSamplingRate;
                         prm.encodeCodec = pAudioSelect->encCodec;
@@ -1586,9 +1589,9 @@ RGY_ERR initWriters(
                         prm.disposition = pDataSelect->disposition;
                         prm.metadata = pDataSelect->metadata;
                     }
-                    log->write(RGY_LOG_DEBUG, RGY_LOGT_OUT, _T("Output: Added %s track#%d (stream idx %d) for mux, bitrate %d, quality %s, codec: %s %s %s, bsf: %s, disposition: %s, metadata %s\n"),
+                    log->write(RGY_LOG_DEBUG, RGY_LOGT_OUT, _T("Output: Added %s track#%d (stream idx %d) for mux, bitrate %s, quality %s, codec: %s %s %s, bsf: %s, disposition: %s, metadata %s\n"),
                         char_to_tstring(av_get_media_type_string(streamMediaType)).c_str(),
-                        stream.trackId, stream.index, prm.bitrate,
+                        stream.trackId, stream.index, encbitrate_to_string(prm.encodeBitrate).c_str(),
                         prm.quality.first ? strsprintf("%d", prm.quality.second).c_str() : "unset",
                         prm.encodeCodec.c_str(),
                         prm.encodeCodecProfile.c_str(),
@@ -1687,7 +1690,7 @@ RGY_ERR initWriters(
                     //pAudioSelect == nullptrは "copyAllStreams" か 字幕ストリーム によるもの
                     if (pAudioSelect != nullptr) {
                         prm.decodeCodecPrm = pAudioSelect->decCodecPrm;
-                        prm.bitrate = pAudioSelect->encBitrate;
+                        prm.encodeBitrate = pAudioSelect->encBitrate;
                         prm.quality = pAudioSelect->encQuality;
                         prm.samplingRate = pAudioSelect->encSamplingRate;
                         prm.encodeCodec = pAudioSelect->encCodec;
@@ -1708,9 +1711,9 @@ RGY_ERR initWriters(
                         prm.disposition = pSubtitleSelect->disposition;
                         prm.metadata = pSubtitleSelect->metadata;
                     }
-                    log->write(RGY_LOG_DEBUG, RGY_LOGT_OUT, _T("Output: Added %s track#%d (stream idx %d) for mux, bitrate %d, quality %s, codec: %s %s %s, bsf: %s, disposition: %s, metadata: %s\n"),
+                    log->write(RGY_LOG_DEBUG, RGY_LOGT_OUT, _T("Output: Added %s track#%d (stream idx %d) for mux, bitrate %s, quality %s, codec: %s %s %s, bsf: %s, disposition: %s, metadata: %s\n"),
                         char_to_tstring(av_get_media_type_string(streamMediaType)).c_str(),
-                        stream.trackId, stream.index, prm.bitrate,
+                        stream.trackId, stream.index, encbitrate_to_string(prm.encodeBitrate).c_str(),
                         prm.quality.first ? strsprintf("%d", prm.quality.second).c_str() : "unset",
                         prm.encodeCodec.c_str(),
                         prm.encodeCodecProfile.c_str(),
@@ -1819,14 +1822,14 @@ RGY_ERR initWriters(
                     log->write(RGY_LOG_ERROR, RGY_LOGT_OUT, _T("Audio track #%d is not used anyware, this should not happen.\n"), trackID(audioTrack.trackId));
                     return RGY_ERR_UNKNOWN;
                 }
-                log->write(RGY_LOG_DEBUG, RGY_LOGT_OUT, _T("Output: Output audio track #%d (stream index %d) to \"%s\", format: %s, codec %s, bitrate %d\n"),
-                    trackID(audioTrack.trackId), audioTrack.index, pAudioSelect->extractFilename.c_str(), pAudioSelect->extractFormat.c_str(), pAudioSelect->encCodec.c_str(), pAudioSelect->encBitrate);
+                log->write(RGY_LOG_DEBUG, RGY_LOGT_OUT, _T("Output: Output audio track #%d (stream index %d) to \"%s\", format: %s, codec %s, bitrate %s\n"),
+                    trackID(audioTrack.trackId), audioTrack.index, pAudioSelect->extractFilename.c_str(), pAudioSelect->extractFormat.c_str(), pAudioSelect->encCodec.c_str(), encbitrate_to_string(pAudioSelect->encBitrate).c_str());
 
                 AVOutputStreamPrm prm;
                 prm.src = audioTrack;
                 //pAudioSelect == nullptrは "copyAll" によるもの
                 prm.decodeCodecPrm = pAudioSelect->decCodecPrm;
-                prm.bitrate = pAudioSelect->encBitrate;
+                prm.encodeBitrate = pAudioSelect->encBitrate;
                 prm.quality = pAudioSelect->encQuality;
                 prm.samplingRate = pAudioSelect->encSamplingRate;
                 prm.encodeCodec = pAudioSelect->encCodec;

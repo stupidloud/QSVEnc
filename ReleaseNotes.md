@@ -1,5 +1,102 @@
 # QSVEnc Release Notes
 
+## 8.14
+
+- Optimize [--vpp-rtgmc](./QSVEncC_Options.en.md#--vpp-rtgmc-param1value1param2value2).
+- Add [--cl-perf-timeline](./QSVEncC_Options.en.md#--cl-perf-timeline) to display OpenCL kernel performance timeline.
+- Add [--vpp-hqdering](./QSVEncC_Options.en.md#--vpp-hqdering-param1value1param2value2) high quality dering filter.
+- Add [--vpp-finedehalo](./QSVEncC_Options.en.md#--vpp-finedehalo-param1value1param2value2) fine dehalo filter for anime content.
+- Add [--vpp-deblock](./QSVEncC_Options.en.md#--vpp-deblock-param1value1param2value2) deblocking filter.
+- Add [--vpp-chromashift](./QSVEncC_Options.en.md#--vpp-chromashift-param1value1param2value2) chroma-luma shift correction filter.
+- Add [--vpp-colorfix](./QSVEncC_Options.en.md#--vpp-colorfix-param1value1param2value2) color adjustment filter.
+- Add [--vpp-deflicker](./QSVEncC_Options.en.md#--vpp-deflicker-param1value1param2value2) deflicker filter.
+- Add new options to [--vpp-ivtc](./QSVEncC_Options.en.md#--vpp-ivtc-param1value1param2value2), [--vpp-warpsharp](./QSVEncC_Options.en.md#--vpp-warpsharp-param1value1param2value2), [--vpp-msmooth](./QSVEncC_Options.en.md#--vpp-msmooth-param1value1param2value2), [--vpp-msharpen](./QSVEncC_Options.en.md#--vpp-msharpen-param1value1param2value2), and [--vpp-maa](./QSVEncC_Options.en.md#--vpp-maa-param1value1param2value2).
+
+## 8.13
+
+- Add [--vpp-kfm](./QSVEncC_Options.en.md#--vpp-kfm-param1value1param2value2) adaptive inverse telecine filter for 24/30/60 mixed VFR output.
+- Add [--vpp-rtgmc](./QSVEncC_Options.en.md#--vpp-rtgmc-param1value1) high quality deinterlacer.
+- Add [--vpp-degrain](./QSVEncC_Options.en.md#--vpp-degrain-param1value1) motion compensated degrain filter.
+- Add gauss mode to [--vpp-resize](./QSVEncC_Options.en.md#--vpp-resize-string).
+- Add [--vpp-deint-csp](./QSVEncC_Options.en.md#--vpp-deint-csp-string) to specify CSP for deinterlace filters.
+- Update [--vpp-nnedi](./QSVEncC_Options.en.md#--vpp-nnedi-param1value1param2value2) with new implementation, which allows higher performance.
+  - Please note that `prescreen` option values have now changed due to this update.
+- Add [--cl-perf-dump](./QSVEncC_Options.en.md#--cl-perf-dump-dir) to dump OpenCL kernel performance and auto-generate report.
+- Add [--ocloc-path](./QSVEncC_Options.en.md#--ocloc-path-path) which can be used to set ocloc path for which can be used for generating disasm when using [--cl-perf-dump](./QSVEncC_Options.en.md#--cl-perf-dump-dir).
+- Improve OpenCL filter pipeline (required frame count, kernel routines).
+- Avoid GPU hand when using HEVC + Bframes + LookaheadDepth with Intel Graphics Driver 32.0.101.8801.
+- Add QSVEnc.auo settings for new VPP filters.
+
+## 8.12
+
+- Add [--vpp-maa](./QSVEncC_Options.en.md#--vpp-maa-param1value1param2value2) masked anti-aliasing filter for animated content.
+- Update [--vpp-ivtc](./QSVEncC_Options.en.md#--vpp-ivtc-param1value1param2value2) processing.
+- Fix possible freeze with [--vpp-ivtc](./QSVEncC_Options.en.md#--vpp-ivtc-param1value1param2value2).
+- Speed up [--vpp-smooth](./QSVEncC_Options.en.md#--vpp-smooth-param1value1param2value2) with simd16. ( #288 )
+- Speed up [--vpp-pmd](./QSVEncC_Options.en.md#--vpp-pmd-param1value1param2value2). ( #288 )
+- Improve Linux support when using the Intel Xe kernel driver.
+- Fix output failure when audio packets reached the muxer before the file header was written.
+- Fix neroaacenc 2pass output in QSVEnc.auo.
+
+## 8.11
+
+- Add [--vpp-ivtc](./QSVEncC_Options.en.md#--vpp-ivtc-param1value1param2value2), including mixed mode. ( #289 )
+- Add [--vpp-bwdif](./QSVEncC_Options.en.md#--vpp-bwdif-param1value1). ( #290 )
+- Add QSVEnc.auo settings for [--vpp-ivtc](./QSVEncC_Options.en.md#--vpp-ivtc-param1value1param2value2), [--vpp-bwdif](./QSVEncC_Options.en.md#--vpp-bwdif-param1value1), [--vpp-msharpen](./QSVEncC_Options.en.md#--vpp-msharpen-param1value1param2value2), and [--vpp-msmooth](./QSVEncC_Options.en.md#--vpp-msmooth-param1value1param2value2).
+- Fix libopus encoding for 5.1 / 7.1 channel layouts.
+- Improve subtitle burn-in for Blu-ray and MPEG-TS inputs.
+
+## 8.10
+
+- Speedup [--vpp-unsharp](./QSVEncC_Options.en.md#--vpp-unsharp-param1value1param2value2). ( #288 )
+- Speedup vpp-tweak by removing unnecessary pow() calls. ( #288 )
+- Fix index calculation errors in [--vpp-knn](./QSVEncC_Options.en.md#--vpp-knn-param1value1param2value2). ( #288 )
+- Fix index calculation errors in [--vpp-nlmeans](./QSVEncC_Options.en.md#--vpp-nlmeans-param1value1param2value2). ( #288 )
+- Add sigmoid options to [--vpp-libplacebo-shader](./QSVEncC_Options.en.md#--vpp-libplacebo-shader-param1value1param2value2). ( #286 )
+- Add input color space specification to [--vpp-libplacebo-shader](./QSVEncC_Options.en.md#--vpp-libplacebo-shader-param1value1param2value2). ( #286 )
+- Add warning when using [--vpp-libplacebo-shader](./NVEncC_Options.en.md#--vpp-libplacebo-shader-param1value1param2value2) in res specification seems required. ( #286 )
+- Automatically disable output thread when [--lowlatency](./QSVEncC_Options.en.md#--lowlatency) is specified.
+- Optimize [--lowlatency](./QSVEncC_Options.en.md#--lowlatency) to reduce pipe latency.
+- Add debug feature [--vpp-mfx-insert-clcopy](./QSVEncC_Options.en.md#--vpp-mfx-insert-clcopy-int) which will insert OpenCL copy if mfx vpp is th last of vpp pipeline.
+
+## 8.09
+
+- Add --vpp-msmooth and --vpp-msharpen filters. ( #283 )
+- Allow building without libass.
+- Enable static linking of libplacebo and libvmaf.
+- Enable building and running VMAF on Linux.
+- Prepare AviSynthPlus/vapoursynth headers in meson.build. ( #285 )
+
+## 8.08
+
+- Add more vpy reader error messages. ( #284 )
+
+## 8.07
+
+- Query VPP capabilities separately for 8-bit and 10-bit pixel formats. ( #174, #278 )
+- Improve detection of multi-channel audio channel layouts.
+
+## 8.06
+
+- Fix DTS:X (dtsx) track not being copyable. ( #256 )
+
+## 8.05
+
+- Update libvpl to 2.16.
+- Allow per-channel bitrate specification for audio encoding. ([--audio-bitrate](./QSVEncC_Options.en.md#--audio-bitrate-intstringint))
+- Add option to write encoder command to muxer metadata. ([--muxer-add-cmd](./QSVEncC_Options.en.md#--muxer-add-cmd))
+- Add legacy mode to [--vpp-denoise](./QSVEncC_Options.en.md#--vpp-denoise-int-or-param1value1param2value2) and fix error exit on some environments.
+- Auto-disable repartition-check when not supported by the hardware.
+- Improve RGB processing handling.
+- Linux build will now not require ffmpeg lib packages as dependencies, and change to ffmpeg 8.0 libs.
+- Fix vapoursynth reader corrupted in Linux systems.
+- Fix encoding failing with SIGPIPE(141) on Linux multi GPU systems. 
+
+## 8.04
+
+- Add support for Vapoursynth API V4.
+- Add option to encode only when input audio codec differs from codec specified by [--audio-codec](./QSVEncC_Options.en.md#--audio-codec-intstringstringstringstringstringstring). ([--audio-encode-other-codec-only](./QSVEncC_Options.en.md#--audio-encode-other-codec-only))
+
 ## 8.03
 
 - Fix [--qp-offset](./QSVEncC_Options.en.md#--qp-offset-intintint) not working for AV1. ( #273 )

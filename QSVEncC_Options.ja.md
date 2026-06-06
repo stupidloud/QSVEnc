@@ -170,7 +170,8 @@
   - [--avcodec-prms \<string\>](#--avcodec-prms-string)
   - [--audio-copy \[\<int/string\>;\[,\<int/string\>\]...\]](#--audio-copy-intstringintstring)
   - [--audio-codec \[\[\<int/string\>?\]\<string\>\[:\<string\>=\<string\>\[,\<string\>=\<string\>\]...\]...\]](#--audio-codec-intstringstringstringstringstringstring)
-  - [--audio-bitrate \[\<int/string\>?\]\<int\>](#--audio-bitrate-intstringint)
+  - [--audio-encode-other-codec-only](#--audio-encode-other-codec-only)
+  - [--audio-bitrate \[\<int/string\>?\]\<int\> or \[\<int/string\>?\]\<string\>:\<int\>\[,\<string\>:\<int\>\]\[,...\]](#--audio-bitrate-intstringint-or-intstringstringintstringint)
   - [--audio-quality \[\<int/string\>?\]\<int\>](#--audio-quality-intstringint)
   - [--audio-profile \[\<int/string\>?\]\<string\>](#--audio-profile-intstringstring)
   - [--audio-stream \[\<int/string\>?\]{\<string1\>}\[:\<string2\>\]](#--audio-stream-intstringstring1string2)
@@ -200,6 +201,7 @@
   - [--metadata \<string\> or \<string\>=\<string\>](#--metadata-string-or-stringstring)
   - [--avsync \<string\>](#--avsync-string)
   - [--timestamp-passthrough](#--timestamp-passthrough)
+  - [--muxer-add-cmd](#--muxer-add-cmd)
   - [--timecode \[\<string\>\]](#--timecode-string)
   - [--tcfile-in \<string\>](#--tcfile-in-string)
   - [--timebase \<int\>/\<int\>](#--timebase-intint)
@@ -215,16 +217,29 @@
   - [--vpp-rff](#--vpp-rff)
   - [--vpp-delogo \<string\>\[,\<param1\>=\<value1\>\]\[,\<param2\>=\<value2\>\]...](#--vpp-delogo-stringparam1value1param2value2)
   - [--vpp-afs \[\<param1\>=\<value1\>\[,\<param2\>=\<value2\>\]...\]](#--vpp-afs-param1value1param2value2)
-  - [--vpp-nnedi \[\<param1\>=\<value1\>\[,\<param2\>=\<value2\>\]...\]](#--vpp-nnedi-param1value1param2value2)
+  - [--vpp-bwdif \[\<param1\>=\<value1\>\]](#--vpp-bwdif-param1value1)
   - [--vpp-yadif \[\<param1\>=\<value1\>\]](#--vpp-yadif-param1value1)
+  - [--vpp-nnedi \[\<param1\>=\<value1\>\[,\<param2\>=\<value2\>\]...\]](#--vpp-nnedi-param1value1param2value2)
+  - [--vpp-rtgmc \[\<param1\>=\<value1\>\]](#--vpp-rtgmc-param1value1)
+  - [--vpp-rtgmc-bob \[\<param1\>=\<value1\>\]](#--vpp-rtgmc-bob-param1value1)
+  - [--vpp-rtgmc-search-prefilter \[\<param1\>=\<value1\>\]](#--vpp-rtgmc-search-prefilter-param1value1)
+  - [--vpp-rtgmc-edi \[\<param1\>=\<value1\>\]](#--vpp-rtgmc-edi-param1value1)
+  - [--vpp-rtgmc-retouch \[\<param1\>=\<value1\>\]](#--vpp-rtgmc-retouch-param1value1)
+  - [--vpp-rtgmc-shimmer-repair \[\<param1\>=\<value1\>\]](#--vpp-rtgmc-shimmer-repair-param1value1)
+  - [--vpp-rtgmc-primitive \[\<param1\>=\<value1\>\]](#--vpp-rtgmc-primitive-param1value1)
+  - [--vpp-degrain \[\<param1\>=\<value1\>\]](#--vpp-degrain-param1value1)
+  - [--vpp-kfm \[\<param1\>=\<value1\>\[,\<param2\>=\<value2\>\]...\]](#--vpp-kfm-param1value1param2value2)
   - [--vpp-decomb \[\<param1\>=\<value1\>\[,\<param2\>=\<value2\>\]...\]](#--vpp-decomb-param1value1param2value2)
   - [--vpp-deinterlace \<string\>](#--vpp-deinterlace-string)
+  - [--vpp-deint-csp \<string\>](#--vpp-deint-csp-string)
+  - [--vpp-ivtc \[\<param1\>=\<value1\>\[,\<param2\>=\<value2\>\]...\]](#--vpp-ivtc-param1value1param2value2)
   - [--vpp-decimate \[\<param1\>=\<value1\>\[,\<param2\>=\<value2\>\]...\]](#--vpp-decimate-param1value1param2value2)
   - [--vpp-mpdecimate \[\<param1\>=\<value1\>\[,\<param2\>=\<value2\>\]...\]](#--vpp-mpdecimate-param1value1param2value2)
   - [--vpp-convolution3d \[\<param1\>=\<value1\>\[,\<param2\>=\<value2\>\]...\]](#--vpp-convolution3d-param1value1param2value2)
   - [--vpp-smooth \[\<param1\>=\<value1\>\[,\<param2\>=\<value2\>\]...\]](#--vpp-smooth-param1value1param2value2)
   - [--vpp-denoise-dct \[\<param1\>=\<value1\>\]\[,\<param2\>=\<value2\>\],...](#--vpp-denoise-dct-param1value1param2value2)
   - [--vpp-fft3d \[\<param1\>=\<value1\>\]\[,\<param2\>=\<value2\>\],...](#--vpp-fft3d-param1value1param2value2)
+  - [--vpp-msmooth \[\<param1\>=\<value1\>\[,\<param2\>=\<value2\>\]...\]](#--vpp-msmooth-param1value1param2value2)
   - [--vpp-knn \[\<param1\>=\<value1\>\[,\<param2\>=\<value2\>\]...\]](#--vpp-knn-param1value1param2value2)
   - [--vpp-nlmeans \[\<param1\>=\<value1\>\[,\<param2\>=\<value2\>\]...\]](#--vpp-nlmeans-param1value1param2value2)
   - [--vpp-pmd \[\<param1\>=\<value1\>\[,\<param2\>=\<value2\>\]...\]](#--vpp-pmd-param1value1param2value2)
@@ -236,8 +251,17 @@
   - [--vpp-resize \<string\>](#--vpp-resize-string)
   - [--vpp-resize-mode \<string\>](#--vpp-resize-mode-string)
   - [--vpp-unsharp \[\<param1\>=\<value1\>\[,\<param2\>=\<value2\>\]...\]](#--vpp-unsharp-param1value1param2value2)
+  - [--vpp-chromashift \[\<param1\>=\<value1\>\[,\<param2\>=\<value2\>\]...\]](#--vpp-chromashift-param1value1param2value2)
+  - [--vpp-deblock \[\<param1\>=\<value1\>\[,\<param2\>=\<value2\>\]...\]](#--vpp-deblock-param1value1param2value2)
+  - [--vpp-deflicker \[\<param1\>=\<value1\>\[,\<param2\>=\<value2\>\]...\]](#--vpp-deflicker-param1value1param2value2)
+  - [--vpp-colorfix \[\<param1\>=\<value1\>\[,\<param2\>=\<value2\>\]...\]](#--vpp-colorfix-param1value1param2value2)
+  - [--vpp-dehalo \[\<param1\>=\<value1\>\[,\<param2\>=\<value2\>\]...\]](#--vpp-dehalo-param1value1param2value2)
+  - [--vpp-finedehalo \[\<param1\>=\<value1\>\[,\<param2\>=\<value2\>\]...\]](#--vpp-finedehalo-param1value1param2value2)
+  - [--vpp-hqdering \[\<param1\>=\<value1\>\[,\<param2\>=\<value2\>\]...\]](#--vpp-hqdering-param1value1param2value2)
   - [--vpp-edgelevel \[\<param1\>=\<value1\>\[,\<param2\>=\<value2\>\]...\]](#--vpp-edgelevel-param1value1param2value2)
+  - [--vpp-msharpen \[\<param1\>=\<value1\>\[,\<param2\>=\<value2\>\]...\]](#--vpp-msharpen-param1value1param2value2)
   - [--vpp-warpsharp \[\<param1\>=\<value1\>\[,\<param2\>=\<value2\>\]...\]](#--vpp-warpsharp-param1value1param2value2)
+  - [--vpp-maa \[\<param1\>=\<value1\>\[,\<param2\>=\<value2\>\]...\]](#--vpp-maa-param1value1param2value2)
   - [--vpp-detail-enhance \<int\>](#--vpp-detail-enhance-int)
   - [--vpp-rotate \<int\>](#--vpp-rotate-int)
   - [--vpp-transform \[\<param1\>=\<value1\>\[,\<param2\>=\<value2\>\]...\]](#--vpp-transform-param1value1param2value2)
@@ -248,6 +272,7 @@
   - [--vpp-pad \<int\>,\<int\>,\<int\>,\<int\>](#--vpp-pad-intintintint)
   - [--vpp-overlay \[\<param1\>=\<value1\>\]\[,\<param2\>=\<value2\>\],...](#--vpp-overlay-param1value1param2value2)
   - [--vpp-perc-pre-enc](#--vpp-perc-pre-enc)
+  - [--vpp-mfx-insert-clcopy \[\<int\>\]](#--vpp-mfx-insert-clcopy-int)
   - [--vpp-ai-frameinterp \[\<param1\>=\<value1\>\]\[,\<param2\>=\<value2\>\],...](#--vpp-ai-frameinterp-param1value1param2value2)
   - [--vpp-perf-monitor](#--vpp-perf-monitor)
 - [制御系のオプション](#制御系のオプション)
@@ -278,8 +303,13 @@
   - [--fallback-bitdepth](#--fallback-bitdepth)
   - [--avsdll \<string\>](#--avsdll-string)
   - [--vsdir \<string\> \[Windows専用\]](#--vsdir-string-windows専用)
+  - [--vpy-assume-script-dir](#--vpy-assume-script-dir)
   - [--process-codepage \<string\>](#--process-codepage-string)
   - [--task-perf-monitor](#--task-perf-monitor)
+  - [--cl-perf-dump \<dir\>](#--cl-perf-dump-dir)
+  - [--cl-perf-timeline \[\<float\>\]](#--cl-perf-timeline-float)
+  - [--ocloc-path \<path\>](#--ocloc-path-path)
+  - [--python \<string\>](#--python-string)
   - [--perf-monitor \[\<string\>\[,\<string\>\]...\]](#--perf-monitor-stringstring)
   - [--perf-monitor-interval \<int\>](#--perf-monitor-interval-int)
 
@@ -573,7 +603,7 @@ raw形式の場合のみ有効で、その他の場合は無視されるか、fp
   --output-res 1024x576 -> 通常の指定方法
   --output-res 960x0    -> 960x720にリサイズ (0のほうは720のまま)
   --output-res 1920x-2  -> 1920x1080にリサイズ (アスペクト比が維持できるように調整)
-  
+
   --output-res 1440x1440,preserve_aspect_ratio=increase -> 2560x1440にリサイズ
   --output-res 1440x1440,preserve_aspect_ratio=decrease -> 1440x810にリサイズ
   ```
@@ -774,7 +804,7 @@ best, higher, high, balanced(default), fast, faster, fastest
        出力フレーム番号 5000-5999 の間は固定品質の29.0でエンコードし、
        その他の領域は固定品質の25.0でエンコードする。
     --icq=25 --dynamic-rc 3000:3999,vbr=12000 --dynamic-rc 5000:5999,icq=29
-  
+
   例2: 出力フレーム番号 3000までは、vbrの6000kbpsでエンコードし、
        出力フレーム番号 3000以降はvbrの12000kbpsでエンコードする。
     --vbr 6000 --dynamic-rc start=3000,vbr=12000
@@ -987,7 +1017,9 @@ avhw読み込みでは、フレームの並び替えにタイムスタンプを�
 ### --dolby-vision-profile &lt;string&gt; [HEVC, AV1]
 指定されたdolby visionプロファイルを適用します。[--dolby-vision-rpu](#--dolby-vision-rpu-string)との併用が推奨です。
 
-"copy" は、入力ファイルのdolby visionプロファイルを適用します。 ([avhw](#--avhw)/[avsw](#--avsw)読み込みのみ)  
+HEVCのDolby Vision出力では、Dolby Vision用のVUI設定に加え、AUD / pic timing / buffering period のシグナリングが自動的に有効になります。repeat headers もDolby Vision出力時に自動的に挿入されます。
+
+"copy" は、入力ファイルのdolby visionプロファイルを適用します。 ([avhw](#--avhw)/[avsw](#--avsw)読み込みのみ)
 
 ```
 unset, copy, 5.0, 8.1, 8.2, 8.4, 10.0, 10.1, 10.2, 10.4
@@ -995,6 +1027,10 @@ unset, copy, 5.0, 8.1, 8.2, 8.4, 10.0, 10.1, 10.2, 10.4
 
 ### --dolby-vision-rpu &lt;string&gt; [HEVC, AV1]
 指定のrpuファイルに含まれるdolby visionのmetadataを出力ファイルに挿入します。[--dolby-vision-profile](#--dolby-vision-profile-string)との併用が推奨です。
+
+現在のDolby Vision出力は BL+RPU のみです。BL+EL の出力には対応していません。
+
+Dolby Visionのprofile/level bitrateおよびHRD制約をよりよく満たすには、bitrate/VBV制御可能なモードを使用し、[--max-bitrate](#--max-bitrate-int) / [--vbv-bufsize](#--vbv-bufsize-int) を適切に指定してください。`--cqp` / `--icq` のような品質ベースのモードも使用できますが、これらの制約をそれ自体で保証するものではありません。
 
 ### --dolby-vision-rpu copy [HEVC, AV1]
 HEVCの入力ファイルから読み取ったdolby visionのmetadataを出力ファイルに挿入します。 [--dolby-vision-profile](#--dolby-vision-profile-string)との併用が推奨です。
@@ -1242,15 +1278,31 @@ tsなどでエラーが出るなどしてうまく動作しない場合は、[--
   --audio-codec aac:aac_coder=twoloop
   ```
 
-### --audio-bitrate [&lt;int/string&gt;?]&lt;int&gt;
+### --audio-encode-other-codec-only
+`--audio-codec` と併用すると、入力の音声コーデックが `--audio-codec` で指定したコーデックと同じ場合は `--audio-copy` としてコピーし、異なる場合のみ `--audio-codec` に基づいてエンコードを行う。
+
+- 使用例
+  ```
+  例: 入力がAACならコピー、他ならAACへエンコード
+  --audio-codec aac --audio-encode-other-codec-only
+  ```
+
+### --audio-bitrate [&lt;int/string&gt;?]&lt;int&gt; or [&lt;int/string&gt;?]&lt;string&gt;:&lt;int&gt;[,&lt;string&gt;:&lt;int&gt;][,...]
 音声をエンコードする際のビットレートをkbpsで指定する。
 
-[&lt;int&gt;]で音声トラック(1,2,...)を選択したり、[&lt;string&gt;]で指定した言語の音声トラックを選択することもできる。
+```?```の前の[&lt;int&gt;]で音声トラック(1,2,...)を選択したり、[&lt;string&gt;]で指定した言語の音声トラックを選択することもできる。
+
+```?```の後ろの&lt;string&gt;では下記のチャンネル指定により、指定のチャンネルに対して指定値を適用することもできる。
+
+```
+mono, stereo, 2.1, 3.0, 3.0(back), 3.1, 4.0, quad, quad(side), 5.0, 5.1, 6.0, 6.0(front), hexagonal, 6.1, 6.1(front), 7.0, 7.0(front), 7.1, 7.1(wide)
+```
 
 - 使用例
   ```
   例1: --audio-bitrate 192   (音声を192kbpsで変換)
-  例2: --audio-bitrate 2?256 (音声の第2トラックを256kbpsで変換)
+  例2: --audio-bitrate 1?320 --audio-bitrate 2?256 (音声の第1トラックを320kbpsで変換、音声の第2トラックを256kbpsで変換)
+  例3: --audio-bitrate stereo:256,5.1:640 (stereoを256kbpsで、5.1chを640kbpsで変換)
   ```
 
 ### --audio-quality [&lt;int/string&gt;?]&lt;int&gt;
@@ -1701,6 +1753,9 @@ mux時にオプションパラメータを渡す。&lt;string1&gt;にオプシ�
 
 オリジナルのタイムスタンプをそのまま引き渡す。```--avsync vfr```が自動的に指定される。
     
+### --muxer-add-cmd
+Muxer metadataの `encoding_tool` に、入力パラメータのコマンドラインを追記します。
+
 ### --timecode [&lt;string&gt;]  
   指定のパスにtimecodeファイルを出力する。パスを省略した場合には、"&lt;出力ファイル名&gt;.timecode.txt"に出力する。
 
@@ -1744,15 +1799,27 @@ vppフィルタの適用順は固定で、コマンドラインの順序によ�
   - [--vpp-delogo](#--vpp-delogo-stringparam1value1param2value2)
   - [--vpp-afs](#--vpp-afs-param1value1param2value2)
   - [--vpp-nnedi](#--vpp-nnedi-param1value1param2value2)
+  - [--vpp-bwdif](#--vpp-bwdif-param1value1)
   - [--vpp-yadif](#--vpp-yadif-param1value1)
+  - [--vpp-rtgmc](#--vpp-rtgmc-param1value1)
+  - [--vpp-rtgmc-bob](#--vpp-rtgmc-bob-param1value1)
+  - [--vpp-rtgmc-search-prefilter](#--vpp-rtgmc-search-prefilter-param1value1)
+  - [--vpp-rtgmc-edi](#--vpp-rtgmc-edi-param1value1)
+  - [--vpp-rtgmc-retouch](#--vpp-rtgmc-retouch-param1value1)
+  - [--vpp-rtgmc-shimmer-repair](#--vpp-rtgmc-shimmer-repair-param1value1)
+  - [--vpp-rtgmc-primitive](#--vpp-rtgmc-primitive-param1value1)
+  - [--vpp-degrain](#--vpp-degrain-param1value1)
+  - [--vpp-kfm](#--vpp-kfm-param1value1param2value2)
   - [--vpp-decomb](#--vpp-decomb-param1value1param2value2)
   - [--vpp-deinterlace](#--vpp-deinterlace-string)
+  - [--vpp-ivtc](#--vpp-ivtc-param1value1param2value2)
   - [--vpp-decimate](#--vpp-decimate-param1value1param2value2)
   - [--vpp-mpdecimate](#--vpp-mpdecimate-param1value1param2value2)
   - [--vpp-convolution3d](#--vpp-convolution3d-param1value1param2value2)
   - [--vpp-smooth](#--vpp-smooth-param1value1param2value2)
   - [--vpp-denoise-dct](#--vpp-denoise-dct-param1value1param2value2)
   - [--vpp-fft3d](#--vpp-fft3d-param1value1param2value2)
+  - [--vpp-msmooth](#--vpp-msmooth-param1value1param2value2)
   - [--vpp-nlmeans](#--vpp-nlmeans-param1value1param2value2)
   - [--vpp-knn](#--vpp-knn-param1value1param2value2)
   - [--vpp-pmd](#--vpp-pmd-param1value1param2value2)
@@ -1763,8 +1830,17 @@ vppフィルタの適用順は固定で、コマンドラインの順序によ�
   - [--vpp-libplacebo-shader](#--vpp-libplacebo-shader-param1value1param2value2)
   - [--vpp-resize](#--vpp-resize-string)
   - [--vpp-unsharp](#--vpp-unsharp-param1value1param2value2)
+  - [--vpp-chromashift](#--vpp-chromashift-param1value1param2value2)
+  - [--vpp-deblock](#--vpp-deblock-param1value1param2value2)
+  - [--vpp-deflicker](#--vpp-deflicker-param1value1param2value2)
+  - [--vpp-colorfix](#--vpp-colorfix-param1value1param2value2)
+  - [--vpp-dehalo](#--vpp-dehalo-param1value1param2value2)
+  - [--vpp-finedehalo](#--vpp-finedehalo-param1value1param2value2)
+  - [--vpp-hqdering](#--vpp-hqdering-param1value1param2value2)
   - [--vpp-edgelevel](#--vpp-edgelevel-param1value1param2value2)
+  - [--vpp-msharpen](#--vpp-msharpen-param1value1param2value2)
   - [--vpp-warpsharp](#--vpp-warpsharp-param1value1param2value2)
+  - [--vpp-maa](#--vpp-maa-param1value1param2value2)
   - [--vpp-detail-enhance ](#--vpp-detail-enhance-int)
   - [--vpp-transform/rotate](#--vpp-rotate-int)
   - [--vpp-curves](#--vpp-curves-param1value1param2value2)
@@ -1774,6 +1850,7 @@ vppフィルタの適用順は固定で、コマンドラインの順序によ�
   - [--vpp-padding](#--vpp-pad-intintintint)
   - [--vpp-overlay](#--vpp-overlay-param1value1param2value2)
   - [--vpp-perc-pre-enc](#--vpp-perc-pre-enc)
+  - [--vpp-mfx-insert-clcopy](#--vpp-mfx-insert-clcopy)
   - [--vpp-ai-frameinterp](#--vpp-ai-frameinterp-param1value1param2value2)
 
 ### --vpp-colorspace [&lt;param1&gt;=&lt;value1&gt;[,&lt;param2&gt;=&lt;value2&gt;]...]  
@@ -2215,81 +2292,29 @@ rff=1の場合のみの対応。(rff > 1には対応しない) また、[--trim]
   --vpp-afs preset=anime,method_switch=92,thre_shift=448,24fps=true
   ```
 
-### --vpp-nnedi [&lt;param1&gt;=&lt;value1&gt;[,&lt;param2&gt;=&lt;value2&gt;]...]  
-nnediによるインタレ解除を行う。基本的には片方フィールドは捨てて、もう片方のフィールドから
-ニューラルネットを使って輪郭を補正しながらフレームを再構築することでインタレ解除するが、とても重い…。
+### --vpp-bwdif [&lt;param1&gt;=&lt;value1&gt;]
+bwdifによるインタレ解除を行う。
 
 - **パラメータ**
-  - field  
-    インタレ解除の方法。
-    - auto (デフォルト)  
-      維持するフィールドを自動的に選択
-    - top  
-      トップフィールド維持
-    - bottom  
-      ボトムフィールド維持
-  
-  - nns  (デフォルト: 32)  
-    ニューラルネットのニューロン数。
-    - 16, 32, 64, 128, 256
-  
-  - nsize  (デフォルト: 32x4)  
-    ニューラルネットが参照する近傍ブロックのサイズ。
-    - 8x6, 16x6, 32x6, 48x6, 8x4, 16x4, 32x4
-  
-  - quality  (デフォルト: fast)  
-    品質の設定。
-  
-    - fast  
-      ひとつのニューラルネットの出力で画像を構成する。
-  
-    - slow  
-      slowではfastのニューラルネットの出力に、もうひとつの
-      ニューラルネットの出力をブレンドして品質を上げる(当然その分さらに遅い)。
-  
-  - prescreen (デフォルト: new_block)  
-    事前に前処理を行い、単純な補間で済ますか、ニューラルネットでの補正を行うか決定する。
-    基本的にはエッジ近傍がニューラルネットでの補正の対象となり、ニューラルネットを使う頻度が下がることで処理が高速になる。
-    
-    - none  
-      前処理を行わず、すべてのpixelをニューラルネットで再構成する。
-  
-    - original
-    - new  
-      前処理を行い、必要なところのみニューラルネットでの補正を行うようにする。originalとnewは方式が異なる。newのほうが速くなる傾向にある。
-  
-    - original_block
-    - new_block  
-      original/newのGPU最適化版。pixel単位の判定の代わりにブロック単位の判定を行う。
-  
-  - errortype (デフォルト: abs)  
-    ニューラルネットの重みパラメータを選択する。
-    - abs  
-      絶対誤差を最小にするよう学習された重みを用いる。
-    - square  
-      二乗誤差を最小にするよう学習された重みを用いる。
-    
-  - prec (デフォルト: auto)  
-    演算精度の選択。
-    - auto  
-      fp16が使用可能かつ使用したほうが高速と思われる場合、fp16を自動的に選択する。
-      現状ではTuring世代のGPUで自動的にfp16が使用される。
-      Pascal世代はfp16を使用できるものの、とても遅いので使用しない。
-    
-    - fp16  
-      半精度浮動小数点をメインに使って計算する。環境によっては高速。
-    
-    - fp32  
-      単精度浮動小数点を使って計算する。
-      
-    
-  - weightfile (デフォルト: 組み込み)  
-    重みパラメータファイルの(パスの)指定。特に指定のない場合、実行ファイルに埋め込まれたデータを使用する。
-  
-- 使用例
-  ```
-  例: --vpp-nnedi field=auto,nns=64,nsize=32x6,quality=slow,prescreen=none,prec=fp32
-  ```
+
+  - mode
+
+    - frame (default)
+      入力と同じフレームレートで出力する。
+    - bob
+      2倍フレームレートで出力する。
+
+  - order
+
+    - auto (default)
+      入力フレームごとのフィールド順を自動判定する。
+    - tff
+      トップフィールド優先として処理する。
+    - bff
+      ボトムフィールド優先として処理する。
+
+  - thr=&lt;float&gt;
+    動き判定の閾値。デフォルト 0.0 (0.0 - 100.0)。
 
 ### --vpp-yadif [&lt;param1&gt;=&lt;value1&gt;]
 yadifによるインタレ解除を行う。
@@ -2310,7 +2335,237 @@ yadifによるインタレ解除を行う。
       60fps化を行う(tff)。
     - bob_bff   
       60fps化を行う(bff)。
-  
+
+### --vpp-nnedi [&lt;param1&gt;=&lt;value1&gt;[,&lt;param2&gt;=&lt;value2&gt;]...]
+nnediによるインタレ解除を行う。
+
+- **パラメータ**
+
+  - field=&lt;string&gt;  
+    対象フィールド。`bob`, `auto`(デフォルト), `top`, `bottom`, `bob_tff`, `bob_bff`。
+
+  - nsize=&lt;string&gt;  
+    NN近傍サイズ。`8x6`, `16x6`, `32x6`, `48x6`, `8x4`, `16x4`, `32x4`(デフォルト)。
+
+  - nns=&lt;int&gt;  
+    ニューロン数。`16`, `32`(デフォルト), `64`, `128`, `256`。
+
+  - quality=&lt;string&gt;  
+    品質。`fast`(デフォルト) または `slow`。
+
+  - prescreen=&lt;int&gt;  
+    `2/3/4` をサポート。`0/1` は未対応。デフォルト: `2`。
+
+  - errortype=&lt;string&gt;  
+    誤差種別。`abs`(デフォルト) または `square`。
+
+  - clamp=&lt;int&gt;  
+    クリップ範囲モード。`0-4`。デフォルト: `1`。
+
+  - double_height=&lt;bool&gt;  
+    高さ2倍出力。`field=auto/top/bottom` でのみ有効。デフォルト: `off`。
+
+  - weightfile=&lt;path&gt;  
+    `nnedi3_weights.bin` のパス。省略時はWindowsビルドでは `nnedi3_weights.bin` を検索し、Linuxビルドでは組み込みウェイトを使用する。
+
+- **注意**
+  - `prescreen=0/1` は未実装。
+  - RTGMCで使わない補助パラメータ (実行最適化やデバッグ向け) は現時点では受け付けない。
+
+### --vpp-rtgmc [&lt;param1&gt;=&lt;value1&gt;]
+高品質として知られる QTGMC のアルゴリズムを使うインタレ解除フィルタを一部処理をGPU並列向けに緩和したもの。高品質だが処理が重い。
+
+- **主要パラメータ**
+
+  - preset=&lt;string&gt;  
+    `slower`, `slow`, `medium`, `fast`, `faster`(デフォルト), `veryfast`, `superfast`, `ultrafast`, `draft`。
+    原則としてオリジナルの値を踏襲。
+
+  - tuning=&lt;string&gt;  
+    `none`(デフォルト), `dv-sd`, `dv-hd`。
+
+  - preset展開表 (実装値)
+
+    | preset | tr0 | tr1 | tr2 | rep0-thin | rep2-thin | edi | nnsize | nneurons | search_refine | search | searchparam | pelsearch | chroma_motion | precise | prog_sad_mask |
+    |:--|--:|--:|--:|--:|--:|:--|--:|--:|--:|--:|--:|--:|:--|:--|--:|
+    | slower | 2 | 2 | 1 | 4 | 4 | nnedi3 | 1 | 1 | 3 | 4 | 2 | 2 | on | off | 10.0 |
+    | slow | 2 | 1 | 1 | 4 | 4 | nnedi3 | 1 | 1 | 3 | 4 | 2 | 2 | off | off | 10.0 |
+    | medium | 2 | 1 | 1 | 3 | 4 | nnedi3 | 5 | 1 | 3 | 4 | 2 | 1 | off | off | 10.0 |
+    | fast | 2 | 1 | 0 | 3 | 4 | nnedi3 | 5 | 0 | 2 | 4 | 2 | 1 | off | off | 0.0 |
+    | faster | 1 | 1 | 0 | 0 | 4 | nnedi3 | 4 | 0 | 2 | 4 | 2 | 1 | off | off | 0.0 |
+    | veryfast | 1 | 1 | 0 | 0 | 4 | nnedi3 | 4 | 0 | 2 | 4 | 1 | 1 | off | off | 0.0 |
+    | superfast | 1 | 1 | 0 | 0 | 3 | nnedi3 | 4 | 0 | 1 | 0 | 1 | 1 | off | off | 0.0 |
+    | ultrafast | 1 | 1 | 0 | 0 | 3 | repyadif | 4 | 0 | 1 | 0 | 1 | 1 | off | off | 0.0 |
+    | draft | 0 | 1 | 0 | 0 | 0 | bob | 4 | 0 | 0 | 0 | 1 | 1 | off | off | 0.0 |
+
+    - `blksize` は `slower..fast` では `tuning` 依存 (`dv-hd=32`, それ以外=16)、`faster..draft` では固定 `32`。
+    - `overlap` は `slower..faster` で `blksize/2`、`veryfast..draft` で `blksize/4`。
+    - `subpel` は `slower..slow=2`、`medium..draft=1`。
+
+  - source_match=&lt;int&gt;  
+    `0-3`。`match_tr1/match_tr2` は `0-2`、`match_enhance` は `0.0-1.0`。
+
+  - edi/match_edi=&lt;string&gt;  
+    `bob`, `yadif`, `cyadif`, `repyadif`, `repcyadif`, `nnedi3`, `passthrough`。
+    ただし `source_match>0` 時の `match_edi` は `bob/yadif/cyadif/repyadif/repcyadif/nnedi3` のみ。
+
+  - tr0/rep0-thin/rep0-pad/search_refine
+    `tr0=-1..2`、`rep0-thin=0-7`、`rep0-pad=0-3`、`search_refine=0-3`。
+
+  - mv_spatial_refine=&lt;int|auto&gt;
+    モーションベクトルの spatial refine 回数。動きベクトル探索は複数の解像度（解析レベル）を粗→細の順に進む階層構造を取るが、本オプションは各レベルで「**近傍ブロックの動きベクトルを参照してさらに精度を上げる**」spatial refine パスを何回実行するかを指定する。
+    デフォルトは `auto` (`-1`) で、**もっとも解像度の低い最上位レベル（ブロック数が最も少ない階層）でのみ spatial refine を行い、それ以降の下位レベルでは行わない**。ブロック数の少ない階層に spatial 情報による精度向上を集中させ、ブロック数の多い下位階層では GPU の並列性を最大限に活用するための既定戦略。
+    `0` は spatial refine を全レベルで無効化、`1` は全レベルで1回、`2` は全レベルで2回、以降同様。
+
+  - rep1-thin/rep1-pad/rep2-thin/rep2-pad
+    `repN-thin=0-7`、`repN-pad=0-3`。
+
+  - noise系
+
+    ノイズ抽出・平滑化・戻し量を制御する段。主に以下のパラメータで構成される。
+
+    - `noise_process`  
+      ノイズ処理段の有効化レベル。`0` は無効、`1` はノイズ処理を有効化、`2` は現状未対応。
+    - `denoiser`  
+      ノイズ低減器の種類。`nlmeans` は NLMeans 系、`fft3d` は FFT3D 系を使用する。
+    - `noise_deint`  
+      抽出ノイズの補間方法。`none` は補間なし、`bob` はボブ補間、`generate` はノイズ生成補間(現状未対応)。
+    - `sigma`  
+      ノイズ推定強度。値を上げるほど平滑化が強くなる。
+    - `chroma_noise`  
+      色差面もノイズ低減対象に含めるかどうか。
+    - `grain_restore` / `noise_restore`  
+      平滑化後に粒状感を戻す量。現実装では `noise_process=1` 時のみ有効。
+    ただし有効範囲は後述の「注意」を参照。
+
+  - motion系
+
+    モーションベクトル探索と時系列参照の挙動を制御する段。
+    - `searchparam` / `pelsearch`  
+      探索の広さ・精度側のプリセット係数。`1` は軽量寄り、`2` は精度寄り。
+    - `useflag`  
+      参照方向の制限。`0` は前後参照、`1` は過去方向のみ、`2` は未来方向のみ。
+    - `pel` / `levels` / `lambda` / `lsad` / `pnew` / `plevel` / `globalmotion`  
+      ブロックマッチングの副パラメータ群。探索の粒度・コスト関数・大域動き補正の重みを調整する。
+    なお `subpelinterp=2`, `truemotion=false`, `dct=0` は CUDA参照実装互換のため固定。
+
+  - retouch系
+
+    出力の輪郭補正と過剰シャープ抑制を行う後段。
+    - `sharpness`  
+      基本のシャープ量 (`0.0-1.0`)。大きいほど輪郭強調が強くなる。
+    - `limit`  
+      旧来互換の抑制係数 (`0.0-1.0`)。高値側でオーバーシュート抑制を強める。
+    - `smode`  
+      シャープ処理の方式選択 (`0-2`)。`0` は実質オフ、`1/2` は補正経路が異なる。
+    - `slmode` / `slrad` / `sovs`  
+      シャープ抑制の方式・半径・許容オーバーシュート量 (`slmode=0-4`, `slrad=0-3`, `sovs>=0`)。
+    - `svthin`  
+      細線化量 (`0.0-1.0`)。インタレ由来の縦方向太りを抑える。
+    - `sbb`  
+      back-blend の適用モード (`0-3`)。シャープ前後の差分混合位置を制御する。
+    - `precise`  
+      retouch の精密経路を使うかどうか (`on/off`)。
+
+- **注意**
+  - EDI は bob/yadif/cyadif/repyadif/repcyadif/nnedi3(rnnedi3) 相当のみ対応します。NNEDI2/NNEDI/EEDI3(+NNEDI3)/EEDI2/
+  TDeint、EdiMaxD、EdiThreads は未対応です。
+  - chroma_edi は none または nnedi3(rnnedi3) のみ対応します。
+  - ノイズ処理は noise_process=2、ezkeepgrain、denoise_mc=true、noise_tr>0、noise_deint=generate、ShowNoise、
+  StabilizeNoise、dfttest/KNLMeansCL、lsb/lsbd/DftDither 相当の経路には対応していません。
+  - source_match は 0-3 に対応しますが、MatchPreset/MatchPreset2 による段階別設定、独立した MatchEdi2、EdiMaxD 系の指
+  定は未対応です。match_edi は bob/yadif/cyadif/repyadif/repcyadif/nnedi3 の範囲です。
+  - FPSDivisor、ShutterBlur、ShutterAngleSrc/Out、SBlurLimit によるモーションブラー/フレーム間引きは未対応です。
+
+### --vpp-rtgmc-bob [&lt;param1&gt;=&lt;value1&gt;]
+デバッグ用 `--vpp-rtgmc` bob 単体フィルタ。パラメータ: `order=auto|tff|bff`。
+
+### --vpp-rtgmc-search-prefilter [&lt;param1&gt;=&lt;value1&gt;]
+デバッグ用 `--vpp-rtgmc` search reference prefilter 単体フィルタ。パラメータ: `tr0`, `rep0-thin`, `rep0-pad`, `search_refine`, `tv_range`, `chroma_motion`, `dump_y4m`, `dump_stage`, `dump_max_frames`。
+
+### --vpp-rtgmc-edi [&lt;param1&gt;=&lt;value1&gt;]
+デバッグ用 `--vpp-rtgmc` EDI 単体フィルタ。パラメータ: `mode`, `nnsize`, `nneurons`, `ediqual`, `chroma_edi`。
+
+### --vpp-rtgmc-retouch [&lt;param1&gt;=&lt;value1&gt;]
+デバッグ用 `--vpp-rtgmc` retouch 単体フィルタ。パラメータ: `sharpness`, `limit`, `smode`, `slmode`, `slrad`, `sovs`, `svthin`, `sbb`, `precise`, `tr1`, `tr2`。
+
+### --vpp-rtgmc-shimmer-repair [&lt;param1&gt;=&lt;value1&gt;]
+デバッグ用 `--vpp-rtgmc` shimmer repair 単体フィルタ。パラメータ: `stage=rep1|rep2`, `rep-thin`, `rep-pad`, `rep_chroma`。
+
+### --vpp-rtgmc-primitive [&lt;param1&gt;=&lt;value1&gt;]
+デバッグ用 `--vpp-rtgmc` primitive/debug 単体フィルタ。パラメータ: `op`, `ref`, `mode`, `weight`, `chroma`。
+
+### --vpp-degrain [&lt;param1&gt;=&lt;value1&gt;]
+動き補償つき degrain デバッグフィルタ。
+
+- **パラメータ**
+  - preset=&lt;string&gt;
+    surface preset。`custom` (デフォルト), `auto`。原則としてオリジナルの値を踏襲。
+  - mode=&lt;string&gt;
+    出力モード。`source` (デフォルト), `analyze`, `compb`, `compf`, `compb2`, `compf2`, `degrain`, `mv`, `sad`。
+  - stage=&lt;string&gt;
+    Step2 stage marker。`auto` (デフォルト), `tr1`, `tr2`。
+  - tr=&lt;int&gt;
+    Auto preset temporal radius。`1` または `2`。`mode=degrain`, `stage`, `delta` を設定する。
+  - blksize/search/overlap/delta/levels/pel
+    ブロックマッチングの形状と時間方向参照半径。
+  - thsad/thsadc/thscd1/thscd2
+    degrain とシーンチェンジの閾値。
+  - tr0/rep0/search_refine
+    search reference prefilter パラメータ。
+  - searchparam/pelsearch/truemotion/lambda/lsad/pnew/plevel/globalmotion/dct/useflag
+    モーション探索の調整パラメータ。
+  - mv_spatial_refine=&lt;int|auto&gt;
+    モーションベクトルの spatial refine 回数。デフォルトは `auto` (`-1`) で、もっとも解像度の低い最上位レベルでのみ近傍ブロック参照による refine を行い、下位（高解像度）レベルでは行わない。ブロック数の少ない階層に spatial 情報を集中させ、ブロック数の多い下位階層では GPU の並列性を最大限に活用するための既定戦略。`0` は全レベルで無効、`1` は全レベルで1回、`2` は全レベルで2回、以降同様。
+  - chroma/binomial/tv_range
+    色差解析、prefilter、レンジ制御。
+
+- **注意**
+  - 解析を伴うモードでは levels=2 が必要です。
+  - 解析時の blksize は 8/16/32 のみ対応します。
+  - overlap は 0 または blksize/2 のみ対応します。
+  - delta は 1-5 に対応しますが、delta>2 は analyze または stage=tr2 の degrain のみ対応します。
+  - pel は 1/2/4 のみ対応します。
+
+### --vpp-kfm [&lt;param1&gt;=&lt;value1&gt;[,&lt;param2&gt;=&lt;value2&gt;]...]
+`--vpp-rtgmc`を使用した逆テレシネ・24/30/60混合VFR対応の高品質なインタレ解除フィルタ。重いのでdGPUでの使用を推奨。
+
+- **パラメータ**
+
+  - mode=&lt;string&gt;  
+    出力モード。`vfr` (デフォルト), `60`, `24`。
+
+  - preset=&lt;string&gt;  
+    RTGMCのpreset。`slower`, `slow`, `medium`, `fast`, `faster`(デフォルト), `veryfast`, `superfast`, `ultrafast`, `draft`。
+
+  - timing=&lt;string&gt;  
+    タイミング解析モード。`realtime`, `realtime+` (デフォルト), `strict`。
+
+  - past_cycles=&lt;int&gt;  
+    `realtime+` のcommit delay cycle数。デフォルト: 30。
+
+  - thswitch=&lt;float&gt;  
+    60p切替threshold。デフォルト: 0.5。
+
+  - ucf=&lt;bool&gt;  
+    UCF段を有効化。デフォルト: off。
+
+  - nr=&lt;bool&gt;  
+    最終出力に `vpp-degrain` を適用。デフォルト: off。
+
+  - is120=&lt;bool&gt;  
+    120fps duration補正用の予約フラグ。デフォルト: on。
+
+  - debug=&lt;bool&gt;  
+    `timecode` 指定時に `.result.dat` / `.frameinfo.tsv` dumpを出力する。デフォルト: off。
+
+  - debug_stage=&lt;string&gt;  
+    `none`, `switch-flag`(`switch-flag-min`), `contains-combe`, `combe-mask`(`combe-mask-min`)。
+    24p系デバッグ表示に使用。
+
+  - timecode=&lt;path&gt;  
+    timecode v2 dump path。`mode=24/vfr` では `*.duration.txt` も併せて出力する。
+
 ### --vpp-decomb [&lt;param1&gt;=&lt;value1&gt;[,&lt;param2&gt;=&lt;value2&gt;]...]  
 decombによるインタレ解除を行う。
 
@@ -2342,6 +2597,67 @@ GPUによるインタレ解除を使用する。"normal", "bob"はわりとき�
   - normal_tff, normal_bff
   - bob_tff, bob_bff
   - it_tff, it_bff
+
+  互換性のため `auto-bob` も `auto_double` の別名として利用できます。
+
+### --vpp-deint-csp &lt;string&gt;
+インタレ解除系フィルタを実行する CSP を指定します。デフォルトは `input` です。
+
+- **パラメータ**
+  - input
+    インタレ解除系フィルタがある場合、インタレ解除とその前後の密接な処理を入力 CSP 側で実行します。
+  - output
+    従来動作と同じく、出力 CSP 側でインタレ解除系フィルタを実行します。
+
+### --vpp-ivtc [&lt;param1&gt;=&lt;value1&gt;[,&lt;param2&gt;=&lt;value2&gt;]...]
+ソフトテレシネ/ハードテレシネ向けの inverse telecine を行います。
+
+- **パラメータ**
+  - guide=&lt;int&gt;  (デフォルト: 1)  
+    マッチングモード。
+    - 0  
+      C/P/N の中から match-quality 最小の候補を選択。ただし C が完全に progressive (combing ゼロ) の場合は、別時刻のフィールド混合によるコーミング発生を防ぐため C を維持する。
+    - 1  
+      C が十分クリーンなら C を優先し、そうでなければ P/N から選択。
+
+  - post=&lt;int&gt;  (デフォルト: 2)  
+    フィールドマッチ後に残るコーミングへの後処理。
+    - 0  
+      後処理なし。
+    - 2  
+      second-field 行について per-pixel のコーミング判定を行い、combed と検出されたピクセルのみ bob 補間 (上下平均) で置換する。first-field 行は常にそのまま保持される。
+
+  - cycle=&lt;auto|int&gt;  (デフォルト: auto)  
+    デシメーション周期。
+    - auto  
+      入力 fps が ~30fps (28-32fps) の場合のみ `cycle=5` を有効化し、それ以外では無効。
+    - 0  
+      デシメーション無効。
+    - 5  
+      3:2 pulldown 想定の 30fps → 24fps デシメーション。
+    - 2..16  
+      カスタム周期。
+
+  - drop=&lt;int&gt;  (デフォルト: 1)  
+    1 サイクルあたりにドロップするフレーム数。現状は `1` のみ対応。
+
+  - combthresh=&lt;float&gt;  (デフォルト: 0.12)  
+    画素単位の combing 判定閾値。`0.0 - 1.0`。
+
+  - cleanfrac=&lt;float&gt;  (デフォルト: 0.01)  
+    `guide=1` と `post=2` で使用するブロック単位の clean 判定閾値。1ブロック内で combed と判定されるピクセルの許容割合を指定する。
+
+  - mixed=&lt;bool&gt;  (デフォルト: off)  
+    RFF/progressive区間と本物のインタレース区間が混在するTS向けの混合モード。`--avsw` または `--avhw` 入力が必要。
+    RFF区間はdecimateせず、repeat field pendingがある場合のみcopy候補とfield再構築候補を比較し、縞が少ない候補を24000/1001fpsのCFRでdirect emitする。
+    インタレース区間は通常のfield match / post processを行い、内部で `cycle=5,drop=1` により30fps→24fps化する。
+    `mixed=on` は `expand=on` およびユーザー指定の `cycle` と併用不可。
+
+  - tff=&lt;auto|on|off&gt;  (デフォルト: auto)  
+    フィールド順。`auto` では各入力フレームの `picstruct` を参照し、不明時は入力設定を既定値として使う。
+
+  - log=&lt;path|bool&gt;  
+    フレームごとのマッチ結果ログを出力する。`log=true` の場合は出力ファイル名を元に `*.ivtc.log.txt` を生成する。
 
 ### --vpp-decimate [&lt;param1&gt;=&lt;value1&gt;[,&lt;param2&gt;=&lt;value2&gt;]...]  
 重複フレームを削除します。
@@ -2504,7 +2820,38 @@ GPUによるインタレ解除を使用する。"normal", "bob"はわりとき�
     - auto ... 可能な場合fp16(半精度浮動小数点)で計算する (高速)
     - fp32 ... 常にfp32(単精度浮動小数点)で計算する
     
+
+### --vpp-msmooth [&lt;param1&gt;=&lt;value1&gt;[,&lt;param2&gt;=&lt;value2&gt;]...]
+ディテール保持型スムージングフィルタ。エッジを検出してマスクを作成し、エッジ以外の領域に対して反復的な平滑化を行う。
+
+- **パラメータ**
+  - strength=&lt;int&gt; (default=3, 0 - 20)  
+    スムージングの反復回数。値が大きいほど強い平滑化効果。
   
+  - threshold=&lt;float&gt;  (default=15.0, 0.0 - 255.0)  
+    エッジ検出の閾値。
+
+  - threshold_c=&lt;float&gt;  (default=-1.0, -1.0 - 255.0)  
+    色差のエッジ検出の閾値。-1.0 の場合は threshold と同じ値を使用する。
+  
+  - highq=&lt;bool&gt;  (default=true)  
+    trueの場合、4方向(対角+水平垂直)でエッジ検出を行う。falseの場合は対角2方向のみ。
+  
+  - mask=&lt;bool&gt;  (default=false)  
+    trueの場合、スムージングの代わりにエッジマスクを出力する(デバッグ用)。
+
+- 使用例
+  ```
+  例: デフォルト設定
+  --vpp-msmooth
+  
+  例: 強めの平滑化
+  --vpp-msmooth strength=6,threshold=10.0
+
+  例: 色差の閾値を個別に指定
+  --vpp-msmooth threshold=12.0,threshold_c=18.0
+  ```
+
 ### --vpp-knn [&lt;param1&gt;=&lt;value1&gt;[,&lt;param2&gt;=&lt;value2&gt;]...]
 
 - **パラメータ**
@@ -2682,6 +3029,14 @@ image stabilizerのモードの指定。
     - res=&lt;int&gt;x&lt;int&gt;  
       フィルタの出力解像度。
 
+    - csp=&lt;string&gt;  
+      libplaceboに渡す入力CSPを指定。
+      yuv444 (デフォルト) では従来通り4:4:4へ変換してから処理し、
+      yuv420 では4:2:0入力時のアップサンプリングをスキップしてlibplacebo側でクロマ処理を行う。
+      ```
+      yuv444, yuv420
+      ```
+
     - colorsystem=&lt;string&gt;  
       使用する色空間を指定。デフォルトでは入力ファイルから自動的に設定される。
       ```
@@ -2725,7 +3080,19 @@ image stabilizerのモードの指定。
       アンチリンギング強度。(0.0 - 1.0、デフォルト = 0.0)
     
     - linear=&lt;bool&gt;  
-      linearize image before processing.
+      処理前に画像を線形化してスケーリングを行います。(デフォルト = false)
+
+    - sigmoid=&lt;bool&gt;  
+      スケーリング時に sigmoidization を有効化します。(デフォルト = false)
+      `linear=true` が必要で、主にアップスケーリング経路で有効です。
+
+    - sigmoid_center=&lt;float&gt;  
+      sigmoid の中心値を指定します。(0.0 - 1.0)
+      未指定時は libplacebo の既定値 (0.75) を使用します。
+
+    - sigmoid_slope=&lt;float&gt;  
+      sigmoid の傾きを指定します。(1.0 - 20.0)
+      未指定時は libplacebo の既定値 (6.5) を使用します。
 
 
 - 使用例
@@ -2777,6 +3144,7 @@ image stabilizerのモードの指定。
       | lanczos2      | 4x4 lanczos補間                            |
       | lanczos3      | 6x6 lanczos補間                            |
       | lanczos4      | 8x8 lanczos補間                            |
+      | gauss         | ガウス補間 (p=2.0)                         |
 
     - [libplacebo](https://code.videolan.org/videolan/libplacebo)ライブラリのリサイズフィルタ
     
@@ -2877,6 +3245,228 @@ unsharpフィルタ。輪郭・ディテール強調用のフィルタ。
   --vpp-unsharp weight=1.0
   ```
 
+### --vpp-chromashift [&lt;param1&gt;=&lt;value1&gt;[,&lt;param2&gt;=&lt;value2&gt;]...]
+色差プレーンをシフトし、輝度と色差の位置ずれを補正するフィルタ。
+
+- **パラメータ**
+  - x=&lt;float&gt; (default=0.0, -4.0 - 4.0)
+    横方向のシフト量。輝度画素単位で指定する。
+
+  - y=&lt;float&gt; (default=0.0, -4.0 - 4.0)
+    縦方向のシフト量。輝度画素単位で指定する。
+
+  - show=&lt;normal|laplacian&gt; (default=normal)
+    laplacian 診断画像を出力する。
+
+  - auto=&lt;bool&gt; (default=false)
+    冒頭フレームからシフト量を自動検出する。
+
+  - auto_frames=&lt;int&gt; (default=5, 1-100)
+    自動検出で採用する解析フレーム数。
+
+  - auto_min_pairs=&lt;int&gt; (default=200, 10-10000)
+    解析フレームあたりに必要なゼロクロス対応点数。
+
+- 使用例
+  ```
+  --vpp-chromashift x=1.0,y=-0.5
+  --vpp-chromashift auto=true,auto_frames=5
+  --vpp-chromashift show=laplacian
+  ```
+
+### --vpp-deblock [&lt;param1&gt;=&lt;value1&gt;[,&lt;param2&gt;=&lt;value2&gt;]...]
+H.264のnon-strong style相当の空間デブロックフィルタ。エンコーダの `--no-deblock` とは異なり、入力画像に対するVPPフィルタとして動作する。
+
+- **パラメータ**
+  - qp=&lt;int&gt; (default=24, 0-51)
+    フィルタ強度のQP。
+
+  - alpha=&lt;int&gt; (default=0, -6 - 6)
+    alphaオフセット。
+
+  - beta=&lt;int&gt; (default=0, -6 - 6)
+    betaオフセット。
+
+  - chroma=&lt;bool&gt; (default=false)
+    planar色差プレーンにも適用する。NV12/P010などのsemi-planar色差では無効化される。
+
+- 使用例
+  ```
+  --vpp-deblock
+  --vpp-deblock qp=30,alpha=2,beta=2,chroma=true
+  ```
+
+### --vpp-deflicker [&lt;param1&gt;=&lt;value1&gt;[,&lt;param2&gt;=&lt;value2&gt;]...]
+フレーム間の輝度ゆらぎを統計的に補正する時間方向フィルタ。
+
+- **パラメータ**
+  - strength=&lt;float&gt; (default=1.0, 0.0-1.0)
+    補正結果の合成強度。
+
+  - damping=&lt;float&gt; (default=0.8, 0.0-1.0)
+    前フレームの補正量を使った時間方向の減衰。
+
+  - scene_threshold=&lt;float&gt; (default=2.0, 0.5-5.0)
+    シーンチェンジ判定のしきい値。判定されたフレームは補正せず通過する。
+
+  - frames=&lt;int&gt; (default=30, 5-300)
+    参照統計に使用するローリングフレーム数。
+
+  - predictor=&lt;bool&gt; (default=true)
+    predictor-corrector による2段補正を使用する。
+
+  - chroma=&lt;bool&gt; (default=false)
+    色差プレーンにも補正を適用する。
+
+- 使用例
+  ```
+  --vpp-deflicker
+  --vpp-deflicker strength=0.8,damping=0.9,frames=60,predictor=false,chroma=true
+  ```
+
+### --vpp-colorfix [&lt;param1&gt;=&lt;value1&gt;[,&lt;param2&gt;=&lt;value2&gt;]...]
+色かぶりやホワイトバランスを補正するフィルタ。
+
+- **パラメータ**
+  - mode=&lt;manual|auto|gray&gt; (default=manual)
+    補正モード。manual は指定した白点/黒点で補正し、auto は色差平均、gray は grayworld 仮定で解析する。
+
+  - space=&lt;auto|rgb|yuv&gt; (default=auto)
+    処理する色空間。auto は mode に応じて選択する。
+
+  - matrix=&lt;auto|bt601|bt709|bt2020&gt; (default=auto)
+    RGB/YUV 変換に使用する行列。auto は入力 VUI と解像度から選択する。
+
+  - white=&lt;rrggbb&gt; (default=ffffff)
+    manual モードの白点。
+
+  - black=&lt;rrggbb&gt; (default=000000)
+    manual モードの黒点。
+
+  - frames=&lt;int&gt; (default=30, 10-5000)
+    auto/gray モードで解析に使用するフレーム数。
+
+  - strength=&lt;float&gt; (default=1.0, 0.0-1.0)
+    auto/gray モードの補正強度。
+
+  - variance_threshold=&lt;float&gt; (default=2.0, &gt;0)
+    フラッシュ/フェードを解析から除外するための分散しきい値。
+
+- 使用例
+  ```
+  --vpp-colorfix
+  --vpp-colorfix white=fff6e8,black=050505
+  --vpp-colorfix mode=gray,frames=30,strength=0.7
+  ```
+
+### --vpp-dehalo [&lt;param1&gt;=&lt;value1&gt;[,&lt;param2&gt;=&lt;value2&gt;]...]
+ハロー除去フィルタ。輝度成分に補正を適用し、色差成分は元のままコピーする。
+
+- **パラメータ**
+  - rx=&lt;float&gt; (default=2.0, 0.5 - 10.0)  
+    水平方向のハロー半径。
+
+  - ry=&lt;float&gt; (default=2.0, 0.5 - 10.0)  
+    垂直方向のハロー半径。
+
+  - darkstr=&lt;float&gt; (default=1.0, 0.0 - 1.0)  
+    明るいハローを暗く補正する強度。
+
+  - brightstr=&lt;float&gt; (default=0.0, 0.0 - 1.0)  
+    暗いハローを明るく補正する強度。
+
+  - lowsens=&lt;int&gt; (default=50, 0 - 100)  
+    感度ランプの下限。
+
+  - highsens=&lt;int&gt; (default=50, 0 - 100)  
+    感度ランプの上限。
+
+  - ss=&lt;float&gt; (default=1.5, 1.0 - 4.0)  
+    スーパーサンプリング倍率。
+
+- 使用例
+  ```
+  --vpp-dehalo
+  --vpp-dehalo rx=2.4,ry=2.0,darkstr=0.8,brightstr=0.1,lowsens=40,highsens=70,ss=1.5
+  ```
+
+### --vpp-finedehalo [&lt;param1&gt;=&lt;value1&gt;[,&lt;param2&gt;=&lt;value2&gt;]...]
+細線保護マスクを使ったハロー除去フィルタ。輝度成分に補正を適用し、色差成分は元のままコピーする。
+
+- **パラメータ**
+  - rx=&lt;float&gt; (default=2.0, 0.5 - 10.0)
+    水平方向のハロー半径。
+
+  - ry=&lt;float&gt; (default=2.0, 0.5 - 10.0)
+    垂直方向のハロー半径。
+
+  - darkstr=&lt;float&gt; (default=1.0, 0.0 - 1.0)
+    明るいハローを暗く補正する強度。
+
+  - brightstr=&lt;float&gt; (default=0.0, 0.0 - 1.0)
+    暗いハローを明るく補正する強度。
+
+  - lowsens=&lt;int&gt; (default=50, 0 - 100)
+    dehalo処理の感度ランプ下限。
+
+  - highsens=&lt;int&gt; (default=50, 0 - 100)
+    dehalo処理の感度ランプ上限。
+
+  - ss=&lt;float&gt; (default=1.5, 1.0 - 4.0)
+    スーパーサンプリング倍率。
+
+  - thmi=&lt;int&gt; (default=80, 0 - 255)
+    エッジマスクの下限しきい値。
+
+  - thma=&lt;int&gt; (default=128, 0 - 255)
+    エッジマスクの上限しきい値。
+
+  - thlimi=&lt;int&gt; (default=50, 0 - 255)
+    補正制限マスクの下限しきい値。
+
+  - thlima=&lt;int&gt; (default=100, 0 - 255)
+    補正制限マスクの上限しきい値。
+
+  - showmask=&lt;int&gt; (default=0, 0 - 4)
+    デバッグ用マスク出力。
+
+  - edge=&lt;string&gt; (default=prewitt)
+    エッジ検出方式。prewitt, sobel, scharr, kirsch, laplacian から選択。
+
+- 使用例
+  ```
+  --vpp-finedehalo
+  --vpp-finedehalo edge=scharr,thmi=60,thma=160,thlimi=30,thlima=120,showmask=4
+  ```
+
+### --vpp-hqdering [&lt;param1&gt;=&lt;value1&gt;[,&lt;param2&gt;=&lt;value2&gt;]...]
+DCTリンギング低減フィルタ。輝度成分に補正を適用し、色差成分は元のままコピーする。
+
+- **パラメータ**
+  - mrad=&lt;int&gt; (default=1, 1 - 3)
+    リングマスクの拡張半径。
+
+  - mthr=&lt;int&gt; (default=10, 0 - 255)
+    エッジマスクのしきい値。
+
+  - sigma=&lt;float&gt; (default=1.5, 0.5 - 5.0)
+    ガウスぼかしの sigma。
+
+  - showmask=&lt;bool&gt; (default=false)
+    有効マスクのみを出力する。
+
+  - protect=&lt;bool&gt; (default=true)
+    元のエッジ画素を保護する。
+
+  - edge=&lt;string&gt; (default=log)
+    エッジ検出方式。log, sobel, prewitt, scharr, kirsch, laplacian から選択。
+
+- 使用例
+  ```
+  --vpp-hqdering
+  --vpp-hqdering mrad=2,mthr=12,sigma=2.0,protect=true,edge=scharr
+  ```
+
 ### --vpp-edgelevel [&lt;param1&gt;=&lt;value1&gt;[,&lt;param2&gt;=&lt;value2&gt;]...]
 エッジレベル調整フィルタ。輪郭強調用のフィルタ。
 
@@ -2902,6 +3492,40 @@ unsharpフィルタ。輪郭・ディテール強調用のフィルタ。
   --vpp-edgelevel strength=5.0,threshold=24.0,black=6.0
   ```
 
+### --vpp-msharpen [&lt;param1&gt;=&lt;value1&gt;[,&lt;param2&gt;=&lt;value2&gt;]...]
+エッジ選択型シャープニングフィルタ。
+
+- **パラメータ**
+  - strength=&lt;float&gt; (default=1.0, 0.0 - 1.0)  
+    シャープニングの強度。
+  
+  - threshold=&lt;float&gt;  (default=15.0, 0.0 - 255.0)  
+    エッジ検出の閾値。
+
+  - slope=&lt;float&gt; (default=0.0, 0.0 disables)
+    sigmoid によるソフトマスクを有効化する。値を大きくするとエッジ判定の遷移が急になる。
+
+  - luma_limit=&lt;float&gt; (default=0.0, 0.0 disables)
+    指定した 8bit 輝度値より暗い領域でシャープニングを抑制する。
+  
+  - highq=&lt;bool&gt;  (default=true)  
+    trueの場合、4方向(対角+水平垂直)でエッジ検出を行う。falseの場合は対角2方向のみ。
+  
+  - mask=&lt;bool&gt;  (default=false)  
+    trueの場合、シャープニングの代わりにエッジマスクを出力する(デバッグ用)。
+
+- 使用例
+  ```
+  例: デフォルト設定
+  --vpp-msharpen
+  
+  例: やや弱め
+  --vpp-msharpen strength=0.5,threshold=20.0
+
+  例: ソフトマスクと暗部抑制を使用
+  --vpp-msharpen strength=0.8,threshold=18.0,slope=8.0,luma_limit=32.0
+  ```
+
 ### --vpp-warpsharp [&lt;param1&gt;=&lt;value1&gt;[,&lt;param2&gt;=&lt;value2&gt;]...]
 細線化フィルタ。輪郭調整用のフィルタ。
 
@@ -2923,11 +3547,66 @@ unsharpフィルタ。輪郭・ディテール強調用のフィルタ。
     色差の処理方法の指定。
     - 0 ... 輝度ベースの輪郭検出を色差成分にも適用する。
     - 1 ... 各色差成分についてそれぞれ輪郭検出を行う。
+
+  - depth_min=&lt;float&gt;  (default=depthと同じ, -128.0 - 128.0)
+    輪郭マスクが弱い画素に適用するwarp深度。強い輪郭ほど弱めたい場合は `depth_max` より大きい値も指定できる。
+
+  - depth_max=&lt;float&gt;  (default=depthと同じ, -128.0 - 128.0)
+    輪郭マスクが強い画素に適用するwarp深度。
+
+  - edge_thr=&lt;float&gt;  (default=192.0, 1.0 - 255.0)
+    adaptive depth が `depth_max` に到達する輪郭マスク値。8bit基準で指定する。
+
+  - gamma=&lt;float&gt;  (default=1.0, 0.01 - 8.0)
+    adaptive depth の応答カーブ。1.0未満では弱い輪郭への効果が強まり、1.0より大きいと強い輪郭中心に効果がかかる。
   
 - 使用例
   ```
   例: type=1を使う場合
   --vpp-warpsharp threshold=128,blur=3,type=1
+
+  例: adaptive depthを使う場合
+  --vpp-warpsharp depth=8,depth_min=4,depth_max=12,edge_thr=192,gamma=0.7
+  ```
+
+### --vpp-maa [&lt;param1&gt;=&lt;value1&gt;[,&lt;param2&gt;=&lt;value2&gt;]...]
+アニメ・セル画調の映像向けの masked anti-aliasing を行う。方向別9コストのAAとエッジマスクを組み合わせ、非エッジ部分を壊さずに斜め線のジャギーを低減する。
+
+- **パラメータ**
+  - ss=&lt;float&gt; (デフォルト=2.0, 1.0 - 4.0)  
+    スーパーサンプリング倍率。
+  
+  - aa=&lt;int&gt; (デフォルト=48, 0 - 255)  
+    輝度のAA強度。
+  
+  - aac=&lt;int&gt; (デフォルト=aa-8, 0 - 255)  
+    色差のAA強度。chroma=on のときのみ使用する。
+  
+  - mask=&lt;bool&gt; (デフォルト=on)  
+    エッジマスクを有効にする。
+  
+  - mthresh=&lt;int&gt; (デフォルト=7, 1 - 255)  
+    エッジ判定の閾値。値を大きくするとエッジとして扱うピクセルが少なくなる。
+  
+  - chroma=&lt;bool&gt; (デフォルト=off)  
+    色差プレーンも処理する。おおよそ50-100%遅くなる。
+  
+  - show=&lt;int&gt; (デフォルト=0)  
+    デバッグ表示。0=通常、1=マスクのみ、2=マスク+AA。
+
+  - edge=&lt;string&gt; (デフォルト=sobel)
+    エッジ検出方法。sobel, prewitt, sobel_full, scharr, kirsch, laplacian から選択する。
+
+- 使用例
+  ```
+  例: デフォルト設定
+  --vpp-maa
+
+  例: 輝度AAをやや強め、エッジ判定を少し強める
+  --vpp-maa aa=64,mthresh=8
+
+  例: Scharr エッジ検出を使用する
+  --vpp-maa edge=scharr
   ```
 
 ### --vpp-detail-enhance &lt;int&gt;
@@ -2947,6 +3626,7 @@ GPUによるディテールの強調を行う。0 - 100 の間でディテール
   - flip_y=&lt;bool&gt;
   
   - transpose=&lt;bool&gt;
+
 ### --vpp-curves [&lt;param1&gt;=&lt;value1&gt;][,&lt;param2&gt;=&lt;value2&gt;],...  
 指定した変換カーブに基づく色調整を行うフィルタ。
 
@@ -3152,6 +3832,16 @@ GPUによるディテールの強調を行う。0 - 100 の間でディテール
 
 ### --vpp-perc-pre-enc
 perceptual pre encode filterを有効にする。
+
+### --vpp-mfx-insert-clcopy [&lt;int&gt;]
+`InitFilters` の結果、最後のVPPグループがMFX系で終わる場合に、末尾へ OpenCL copy を挿入して最後のグループをOpenCL系にする。
+
+- `0`  
+  デフォルト。無効。
+- `1`  
+  `ENABLE_D3D11=0` のときのみ有効。引数省略時はこれとして扱う。
+- `2`  
+  `ENABLE_D3D11!=0` でも有効。
 
 ### --vpp-ai-frameinterp [&lt;param1&gt;=&lt;value1&gt;][,&lt;param2&gt;=&lt;value2&gt;],...
 AIベースのフレーム補間を用いて、フレームレートを倍にする。
@@ -3473,6 +4163,9 @@ avsw/avhw読み込み時のデバッグ情報出力。
 ### --vsdir &lt;string&gt; [Windows専用]
 VapoursynthのPortable版を使用する際に、インストールしたフォルダを指定する。特に指定しない場合、システムにインストールされたVapoursynthが使用される。
 
+### --vpy-assume-script-dir
+vpy reader使用時に、`.vpy` 内の相対パスをカレントディレクトリではなく、スクリプトファイルのあるディレクトリ基準で解決する。
+
 ### --process-codepage &lt;string&gt;  
 - **パラメータ**  
   - utf8  
@@ -3490,6 +4183,42 @@ VapoursynthのPortable版を使用する際に、インストールしたフォ�
 ### --task-perf-monitor
 
   各タスクの所要時間を計測し、エンコード後にログ出力を行う。
+
+### --cl-perf-dump &lt;dir&gt;
+OpenCL kernel performance dumpを指定したディレクトリに出力し、エンコード後に`report.html`を自動生成する。
+
+また、report生成には`python`が必要。デフォルトではWindowsでは`py.exe`、必要に応じて`python.exe`を使用し、Linuxでは`python3`を使用する。使用するpythonは[--python](#--python-string)で別途指定可能。
+
+`ocloc`があると逆アセンブルを表示可能(必須ではない)。`ocloc`はIntel oneAPIをインストールすると含まれており、典型的には `C:\Program Files (x86)\Intel\oneAPI\<version>\bin\ocloc.exe` などにある。`ocloc`の実行ファイルパスは[--ocloc-path](#--ocloc-path-path)で指定できる。
+
+![report](data/qsvencc_cl_perf_dir_20260522_s.webp)
+
+### --cl-perf-timeline [&lt;float&gt;]
+[--cl-perf-dump](#--cl-perf-dump-dir)と併用し、OpenCLコマンドのtimelineデータを収集して`timeline.html`を生成する。
+
+エンコード開始から指定秒数の間、個々のkernel起動やメモリ転送コマンドのhost側発行タイミングとdevice側実行タイミングを記録する。host-device間のclock correlationは`clGetDeviceAndHostTimer` (OpenCL 2.1)による2点calibrationで補正される。
+
+値を省略した場合のデフォルトは10秒。負の値を指定すると時間制限なしで全イベントを収集する(大量のメモリを消費する場合がある)。
+
+```
+例: 先頭5秒間のtimelineを収集
+--cl-perf-dump perf_out --cl-perf-timeline 5
+
+例: デフォルト10秒間で収集
+--cl-perf-dump perf_out --cl-perf-timeline
+```
+
+![timeline](data/qsvencc_cl_perf_timeline_20260531.png)
+
+生成される`timeline.html`はズーム/パン/ホバーによる詳細表示が可能(マウスホイール/ドラッグ)。host thread別レーンとdevice queue別レーンの2セクション構成で、同一イベントのhost/device対応をseq番号で紐づけてハイライト表示する。
+
+### --ocloc-path &lt;path&gt;
+[--cl-perf-dump](#--cl-perf-dump-dir)と併用し、cl_perf aggregateに渡すocloc実行ファイルパスを指定する。
+
+### --python &lt;string&gt;
+[--perf-monitor](#--perf-monitor-stringstring)のplot表示、および[--cl-perf-dump](#--cl-perf-dump-dir)のreport生成に使用するPython実行ファイルパスを指定する。
+
+指定のない場合、Windowsでは`py.exe`、必要に応じて`python.exe`を使用し、Linuxでは`python3`を使用する。
 
 ### --perf-monitor [&lt;string&gt;[,&lt;string&gt;]...]
 エンコーダのパフォーマンス情報を出力する。パラメータとして出力したい情報名を下記から選択できる。デフォルトはall (すべての情報)。

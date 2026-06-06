@@ -16,10 +16,6 @@ jobs:
         include:
           - dockerimg: ubuntu2004
             pkgtype: deb
-          - dockerimg: ubuntu2204
-            pkgtype: deb
-          - dockerimg: ubuntu2404
-            pkgtype: deb
           - dockerimg: fedora41
             pkgtype: rpm
 
@@ -27,6 +23,7 @@ jobs:
       DOCKER_IMAGE: ${{ matrix.dockerimg }}
       PKG_TYPE: ${{ matrix.pkgtype }}
       BASE_IMAGE_REPO: ghcr.io/${{ github.repository_owner }}/qsvenc-build
+      FFMPEG_PREFIX: /opt/build_scripts/ffmpeg_dll/build_dll/x64/build
 
     name: Upload Release Asset
     runs-on: ubuntu-latest
@@ -66,11 +63,6 @@ jobs:
             exit 1
           fi
 
-      - name: Checkout dependencies
-        run: |
-          git clone --depth 1 https://github.com/AviSynth/AviSynthPlus.git AviSynthPlus
-          git clone -b R72 --depth 1 https://github.com/vapoursynth/vapoursynth.git vapoursynth
-
       - name: Pull base image
         run: docker pull ${{ steps.prep.outputs.base_image }}
 
@@ -87,10 +79,14 @@ jobs:
             -u "$(id -u):$(id -g)" \
             --workdir /work \
             --name build_pkg ${{ steps.prep.outputs.base_image }}
-          docker exec build_pkg bash -lc './configure --extra-cxxflags="-I./AviSynthPlus/avs_core/include -I./vapoursynth/include" --enable-lto'
-          docker exec build_pkg make -j${{ steps.prep.outputs.nproc }}
-          docker exec build_pkg ./qsvencc --version
-          docker exec build_pkg ./check_options.py
+          docker exec -e PKG_CONFIG_PATH=${{ env.FFMPEG_PREFIX }}/lib/pkgconfig build_pkg bash -lc '
+            meson setup ./build . --buildtype=release -Db_lto=true -Dcpp_args="['\''-I/work/AviSynthPlus/avs_core/include'\'','\''-I/work/vapoursynth/include'\'']"
+          '
+          docker exec build_pkg bash -lc "meson compile -C ./build -j${{ steps.prep.outputs.nproc }}"
+          docker exec build_pkg ldd ./build/qsvencc
+          docker exec build_pkg ./build/qsvencc --version
+          docker exec build_pkg ./check_options.py -exe ./build/qsvencc
+          docker exec build_pkg cp ./build/qsvencc ./qsvencc
           docker exec build_pkg ./build_${{ env.PKG_TYPE }}.sh
           docker exec build_pkg bash -lc "cp -v ./*.${{ env.PKG_TYPE }} /output/"
           PKGFILE=`ls ${{ steps.prep.outputs.output_dir }}/*.${{ env.PKG_TYPE }}`

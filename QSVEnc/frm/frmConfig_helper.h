@@ -141,7 +141,29 @@ static const ENC_OPTION_STR2 list_deinterlace_gui[] = {
     { AUO_CONFIG_CX_DEINTERLACE_NNEDI,  L"nnedi",                   101 },
     { AUO_CONFIG_CX_DEINTERLACE_YADIF,  L"yadif",                   102 },
     { AUO_CONFIG_CX_DEINTERLACE_DECOMB, L"decomb",                  103 },
+    { AUO_CONFIG_CX_DEINTERLACE_IVTC,   L"ivtc",                    104 },
+    { AUO_CONFIG_CX_DEINTERLACE_BWDIF,  L"bwdif",                   105 },
+    { AUO_CONFIG_CX_DEINTERLACE_RTGMC,  L"rtgmc",                   106 },
+    { AUO_CONFIG_CX_DEINTERLACE_KFM,    L"kfm",                     107 },
     { AUO_MES_UNKNOWN, NULL, NULL }
+};
+
+static const ENC_OPTION_STR2 list_vpp_ivtc_guide_gui[] = {
+    { AUO_CONFIG_CX_IVTC_GUIDE_0, L"0",  0 },
+    { AUO_CONFIG_CX_IVTC_GUIDE_1, L"1",  1 },
+    { AUO_MES_UNKNOWN, NULL, 0 }
+};
+
+static const ENC_OPTION_STR2 list_vpp_ivtc_post_gui[] = {
+    { AUO_CONFIG_CX_IVTC_POST_0, L"0",  0 },
+    { AUO_CONFIG_CX_IVTC_POST_2, L"2",  2 },
+    { AUO_MES_UNKNOWN, NULL, 0 }
+};
+
+static const ENC_OPTION_STR2 list_vpp_bwdif_mode_gui[] = {
+    { AUO_CONFIG_CX_BWDIF_MODE_FRAME, L"frame",  (int)VppBwdifMode::Frame },
+    { AUO_CONFIG_CX_BWDIF_MODE_BOB,   L"bob",    (int)VppBwdifMode::Bob   },
+    { AUO_MES_UNKNOWN, NULL, 0 }
 };
 
 static const ENC_OPTION_STR list_vpp_afs_analyze[] = {
@@ -153,12 +175,10 @@ static const ENC_OPTION_STR list_vpp_afs_analyze[] = {
     { NULL, AUO_MES_UNKNOWN, NULL},
 };
 
-static const ENC_OPTION_STR2 list_vpp_nnedi_pre_screen_gui[] = {
-    { AUO_CONFIG_CX_NNEDI_PRESCREEN_NONE,           L"none",           VPP_NNEDI_PRE_SCREEN_NONE           },
-    { AUO_CONFIG_CX_NNEDI_PRESCREEN_ORIGINAL,       L"original",       VPP_NNEDI_PRE_SCREEN_ORIGINAL       },
-    { AUO_CONFIG_CX_NNEDI_PRESCREEN_NEW,            L"new",            VPP_NNEDI_PRE_SCREEN_NEW            },
-    { AUO_CONFIG_CX_NNEDI_PRESCREEN_ORIGINAL_BLOCK, L"original_block", VPP_NNEDI_PRE_SCREEN_ORIGINAL_BLOCK },
-    { AUO_CONFIG_CX_NNEDI_PRESCREEN_NEW_BLOCK,      L"new_block",      VPP_NNEDI_PRE_SCREEN_NEW_BLOCK      },
+static const ENC_OPTION_STR2 list_vpp_nnedi_prescreen_gui[] = {
+    { AUO_MES_UNKNOWN, L"2", 2 },
+    { AUO_MES_UNKNOWN, L"3", 3 },
+    { AUO_MES_UNKNOWN, L"4", 4 },
     { AUO_MES_UNKNOWN, NULL, NULL }
 };
 

@@ -26,7 +26,8 @@ by rigaya
 ### Windows
 Windows 10/11 (x86/x64) (QSVEnc.auo / QSVEncC.exe x86版)  
 Windows 10/11 (x64) (QSVEncC.exe x64版)  
-Aviutl 1.00 以降 (QSVEnc.auo)  
+AviUtl 1.00/1.10  (QSVEnc.auo)  
+AviUtl 2.00 beta19 以降  (QSVEnc.auo2)  
 
 ### Linux
 CentOS/Readhat系 (QSVEncC)  
@@ -109,6 +110,7 @@ QSVEncを使用したことによる、いかなる損害・トラブルにつ�
       - unsharp
       - edgelevel (エッジレベル調整)
       - warpsharp
+      - maa (masked anti-aliasing)
 
 ### QSVEnc.auo
 - 音声エンコード

@@ -143,14 +143,29 @@ RGY_ERR QSVVppMfx::SetParam(
         return err;
     }
 
-    err = checkVppParams(params, (frameIn.picstruct & RGY_PICSTRUCT_INTERLACED) != 0);
-    if (err != RGY_ERR_NONE) {
-        return err;
-    }
-
     VppExtMes.clear();
 
     auto mfxIn = SetMFXFrameIn(frameIn, crop, infps, sar, deinterlaceMode, blockSize);
+
+    mfxFrameInfo mfxOutQuery;
+    if ((err = SetMFXFrameOut(mfxOutQuery, params, frameOut, mfxIn, blockSize)) != RGY_ERR_NONE) {
+        return err;
+    }
+
+    mfxVideoParam queryVideoPrm;
+    RGY_MEMSET_ZERO(queryVideoPrm);
+    queryVideoPrm.AsyncDepth = (mfxU16)((m_asyncDepth > 0) ? m_asyncDepth : 3);
+    queryVideoPrm.IOPattern = (m_memType != SYSTEM_MEMORY) ?
+        MFX_IOPATTERN_IN_VIDEO_MEMORY | MFX_IOPATTERN_OUT_VIDEO_MEMORY :
+        MFX_IOPATTERN_IN_SYSTEM_MEMORY | MFX_IOPATTERN_OUT_SYSTEM_MEMORY;
+    queryVideoPrm.vpp.In = mfxIn;
+    queryVideoPrm.vpp.Out = mfxOutQuery;
+    const auto availableFeaures = CheckVppFeatures(m_mfxSession, queryVideoPrm);
+
+    err = checkVppParams(params, (frameIn.picstruct & RGY_PICSTRUCT_INTERLACED) != 0, availableFeaures);
+    if (err != RGY_ERR_NONE) {
+        return err;
+    }
 
     mfxFrameInfo mfxOut;
     if ((err = SetMFXFrameOut(mfxOut, params, frameOut, mfxIn, blockSize)) != RGY_ERR_NONE) {
@@ -203,6 +218,20 @@ RGY_ERR QSVVppMfx::Init() {
     if (err == RGY_WRN_PARTIAL_ACCELERATION) {
         PrintMes(RGY_LOG_WARN, _T("partial acceleration on vpp.\n"));
         err = RGY_ERR_NONE;
+    }
+    if (err != RGY_ERR_NONE
+        && m_ExtDenoise2.Header.BufferId == MFX_EXTBUFF_VPP_DENOISE2
+        && m_ExtDenoise2.Mode == MFX_DENOISE_MODE_DEFAULT) {
+        PrintMes(RGY_LOG_WARN, _T("Failed to initialize vpp with denoise mode default, retrying with post mode.\n"));
+        m_ExtDenoise2.Mode = MFX_DENOISE_MODE_INTEL_HVS_POST_MANUAL;
+        m_mfxVPP = std::make_unique<MFXVideoVPP>(m_mfxSession);
+        const auto retry_log_level = logTemporarilyIgnoreErrorMes();
+        err = err_to_rgy(m_mfxVPP->Init(&m_mfxVppParams));
+        m_log->setLogLevelAll(retry_log_level);
+        if (err == RGY_WRN_PARTIAL_ACCELERATION) {
+            PrintMes(RGY_LOG_WARN, _T("partial acceleration on vpp.\n"));
+            err = RGY_ERR_NONE;
+        }
     }
     if (err != RGY_ERR_NONE) {
         PrintMes(RGY_LOG_ERROR, _T("Failed to initialize vpp: %s.\n"), get_err_mes(err));
@@ -273,8 +302,7 @@ RGY_ERR QSVVppMfx::InitMFXSession() {
     return RGY_ERR_NONE;
 }
 
-RGY_ERR QSVVppMfx::checkVppParams(sVppParams& params, const bool inputInterlaced) {
-    const auto availableFeaures = CheckVppFeatures(m_mfxSession);
+RGY_ERR QSVVppMfx::checkVppParams(sVppParams& params, const bool inputInterlaced, const mfxU64 availableFeaures) {
 #if ENABLE_FPS_CONVERSION
     if (FPS_CONVERT_NONE != params.nFPSConversion && !(availableFeaures & VPP_FEATURE_FPS_CONVERSION_ADV)) {
         PrintMes(RGY_LOG_WARN, _T("FPS Conversion not supported on this platform, disabled.\n"));
@@ -306,6 +334,17 @@ RGY_ERR QSVVppMfx::checkVppParams(sVppParams& params, const bool inputInterlaced
             }
             params.denoise.mode = MFX_DENOISE_MODE_LEGACY;
         }
+    }
+
+    if (params.mctf.enable && !(availableFeaures & VPP_FEATURE_MCTF)) {
+        PrintMes(RGY_LOG_WARN, _T("--vpp-mctf not supported on this platform, disabled.\n"));
+        params.mctf.enable = false;
+        params.mctf.strength = 0;
+    }
+
+    if (params.percPreEnc && !(availableFeaures & VPP_FEATURE_PERC_ENC_PRE)) {
+        PrintMes(RGY_LOG_WARN, _T("--vpp-perc-pre-enc not supported for current VPP input/output format, disabled.\n"));
+        params.percPreEnc = false;
     }
 
     if (params.imageStabilizer && !(availableFeaures & VPP_FEATURE_IMAGE_STABILIZATION)) {
@@ -425,6 +464,22 @@ RGY_ERR QSVVppMfx::SetMFXFrameOut(mfxFrameInfo& mfxOut, const sVppParams& params
         case MFX_DEINTERLACE_AUTO_DOUBLE:
             m_ExtDeinterlacing.Mode = (uint16_t)((params.deinterlace == MFX_DEINTERLACE_BOB) ? MFX_DEINTERLACING_BOB : MFX_DEINTERLACING_AUTO_DOUBLE);
             mfxOut.FrameRateExtN *= 2;
+            break;
+        case MFX_DEINTERLACE_FULL_FR_OUT:
+            m_ExtDeinterlacing.Mode = MFX_DEINTERLACING_FULL_FR_OUT;
+            mfxOut.FrameRateExtN *= 2;
+            break;
+        case MFX_DEINTERLACE_HALF_FR_OUT:
+            m_ExtDeinterlacing.Mode = MFX_DEINTERLACING_HALF_FR_OUT;
+            break;
+        case MFX_DEINTERLACE_ADVANCED:
+            m_ExtDeinterlacing.Mode = MFX_DEINTERLACING_ADVANCED;
+            break;
+        case MFX_DEINTERLACE_ADVANCED_NOREF:
+            m_ExtDeinterlacing.Mode = MFX_DEINTERLACING_ADVANCED_NOREF;
+            break;
+        case MFX_DEINTERLACE_ADVANCED_SCD:
+            m_ExtDeinterlacing.Mode = MFX_DEINTERLACING_ADVANCED_SCD;
             break;
         case MFX_DEINTERLACE_NONE:
             break;

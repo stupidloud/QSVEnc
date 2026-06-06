@@ -32,6 +32,7 @@
 #include "rgy_osdep.h"
 #include <iostream>
 #include <fstream>
+#include <set>
 #include <regex>
 
 tstring RGYFilterParamLibplaceboResample::print() const {
@@ -2114,6 +2115,7 @@ RGYFilterLibplaceboShader::RGYFilterLibplaceboShader(shared_ptr<RGYOpenCLContext
     m_colorsystem(),
     m_transfer(),
     m_range(),
+    m_inputCsp((VppLibplaceboInputCSP)FILTER_DEFAULT_LIBPLACEBO_SHADER_CSP),
     m_chromaloc(),
     m_sample_params(),
     m_sigmoid_params(),
@@ -2124,9 +2126,62 @@ RGYFilterLibplaceboShader::RGYFilterLibplaceboShader(shared_ptr<RGYOpenCLContext
 }
 RGYFilterLibplaceboShader::~RGYFilterLibplaceboShader() {};
 
+bool RGYFilterLibplaceboShader::isResolutionDependentWhenLine(const std::string& line) const {
+    const auto trimmed = trim(line);
+    if (trimmed.rfind("//!WHEN", 0) != 0) {
+        return false;
+    }
+    const auto lowered = tolowercase(trimmed);
+    if (lowered.find("output.w") == std::string::npos
+        && lowered.find("output.h") == std::string::npos) {
+        return false;
+    }
+    static const auto sizeRefPattern = std::regex(R"(\b(?!output\b)[a-z_][a-z0-9_]*\.(?:w|h)\b)");
+    return std::regex_search(lowered, sizeRefPattern);
+}
+
+void RGYFilterLibplaceboShader::warnResolutionDependentWhenWithoutRes(const tstring& shaderPath, const std::string& shaderText) {
+    std::vector<tstring> uniqueWhenLines;
+    std::set<tstring> seenWhenLines;
+    for (const auto& line : split(shaderText, "\n")) {
+        if (!isResolutionDependentWhenLine(line)) {
+            continue;
+        }
+        auto whenLine = trim(char_to_tstring(line));
+        if (whenLine.length() == 0) {
+            continue;
+        }
+        if (seenWhenLines.insert(whenLine).second) {
+            uniqueWhenLines.push_back(whenLine);
+        }
+    }
+
+    if (uniqueWhenLines.empty()) {
+        return;
+    }
+
+    AddMessage(RGY_LOG_WARN,
+        _T("libplacebo shader \"%s\" contains size-dependent //!WHEN directives, but no output resolution was specified; passes guarded by these conditions may be skipped.\n"),
+        shaderPath.c_str());
+
+    constexpr size_t maxLinesToPrint = 8;
+    for (size_t i = 0; i < uniqueWhenLines.size() && i < maxLinesToPrint; i++) {
+        AddMessage(RGY_LOG_WARN, _T("  %s\n"), uniqueWhenLines[i].c_str());
+    }
+    if (uniqueWhenLines.size() > maxLinesToPrint) {
+        AddMessage(RGY_LOG_WARN, _T("  ... and %zu more //!WHEN line(s).\n"), uniqueWhenLines.size() - maxLinesToPrint);
+    }
+}
+
 RGY_CSP RGYFilterLibplaceboShader::getTextureCsp(const RGY_CSP csp) {
     const auto inChromaFmt = RGY_CSP_CHROMA_FORMAT[csp];
-    return (inChromaFmt == RGY_CHROMAFMT_RGB) ? RGY_CSP_RGB_16 : RGY_CSP_YUV444_16;
+    if (inChromaFmt == RGY_CHROMAFMT_RGB) {
+        return RGY_CSP_RGB_16;
+    }
+    if (m_inputCsp == VppLibplaceboInputCSP::YUV420 && inChromaFmt == RGY_CHROMAFMT_YUV420) {
+        return RGY_CSP_YV12_16;
+    }
+    return RGY_CSP_YUV444_16;
 }
 
 RGYPLInteropDataFormat RGYFilterLibplaceboShader::getTextureDataFormat([[maybe_unused]] const RGY_CSP csp) {
@@ -2180,6 +2235,22 @@ RGY_ERR RGYFilterLibplaceboShader::checkParam(const RGYFilterParam *param) {
         AddMessage(RGY_LOG_ERROR, _T("antiring must be between 0.0f and 1.0f.\n"));
         return RGY_ERR_INVALID_PARAM;
     }
+    if (prm->shader.sigmoid && !prm->shader.linear) {
+        AddMessage(RGY_LOG_ERROR, _T("sigmoid requires linear=true.\n"));
+        return RGY_ERR_INVALID_PARAM;
+    }
+    if (!prm->shader.sigmoid && (prm->shader.sigmoid_center || prm->shader.sigmoid_slope)) {
+        AddMessage(RGY_LOG_ERROR, _T("sigmoid_center/sigmoid_slope require sigmoid=true.\n"));
+        return RGY_ERR_INVALID_PARAM;
+    }
+    if (prm->shader.sigmoid_center && (*prm->shader.sigmoid_center < 0.0f || *prm->shader.sigmoid_center > 1.0f)) {
+        AddMessage(RGY_LOG_ERROR, _T("sigmoid_center must be between 0.0f and 1.0f.\n"));
+        return RGY_ERR_INVALID_PARAM;
+    }
+    if (prm->shader.sigmoid_slope && (*prm->shader.sigmoid_slope < 1.0f || *prm->shader.sigmoid_slope > 20.0f)) {
+        AddMessage(RGY_LOG_ERROR, _T("sigmoid_slope must be between 1.0f and 20.0f.\n"));
+        return RGY_ERR_INVALID_PARAM;
+    }
     return RGY_ERR_NONE;
 }
 
@@ -2222,6 +2293,9 @@ RGY_ERR RGYFilterLibplaceboShader::setLibplaceboParam(const RGYFilterParam *para
         AddMessage(RGY_LOG_ERROR, _T("Failed to parse shader.\n"));
         return RGY_ERR_UNKNOWN;
     }
+    if (prm->shader.width <= 0 || prm->shader.height <= 0) {
+        warnResolutionDependentWhenWithoutRes(prm->shader.shader, shader_data);
+    }
 
     const auto inChromaFmt = RGY_CSP_CHROMA_FORMAT[param->frameIn.csp];
     auto vui = prm->vui;
@@ -2260,7 +2334,19 @@ RGY_ERR RGYFilterLibplaceboShader::setLibplaceboParam(const RGYFilterParam *para
         m_transfer = transfer_rgy_to_libplacebo(vui.transfer);
     }
     m_range = (vui.colorrange == RGY_COLORRANGE_FULL) ? PL_COLOR_LEVELS_FULL : PL_COLOR_LEVELS_LIMITED;
+    m_inputCsp = prm->shader.csp;
     m_linear = prm->shader.linear;
+    if (prm->shader.sigmoid) {
+        m_sigmoid_params = std::make_unique<pl_sigmoid_params>(m_pl->p_sigmoid_default_params());
+        if (prm->shader.sigmoid_center) {
+            m_sigmoid_params->center = *prm->shader.sigmoid_center;
+        }
+        if (prm->shader.sigmoid_slope) {
+            m_sigmoid_params->slope = *prm->shader.sigmoid_slope;
+        }
+    } else {
+        m_sigmoid_params.reset();
+    }
     m_chromaloc = chromaloc_rgy_to_libplacebo(prm->shader.chromaloc);
 
     m_sample_params = std::make_unique<pl_sample_filter_params>();

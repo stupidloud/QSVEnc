@@ -69,6 +69,7 @@ AVDemuxFormat::AVDemuxFormat() :
     analyzeSec(0.0),
     isPipe(false),
     lowLatency(false),
+    audioReadOffsetSec(0.0),
     timestampPassThrough(false),
     preReadBufferIdx(0),
     audioTracks(0),
@@ -267,11 +268,13 @@ RGYInputAvcodecPrm::RGYInputAvcodecPrm(RGYInputPrm base) :
     queueInfo(nullptr),
     HWDecCodecCsp(nullptr),
     videoDetectPulldown(false),
+    suppressPulldownMutation(false),
     parseHDRmetadata(false),
     hdr10plusMetadataCopy(false),
     doviRpuMetadataCopy(false),
     interlaceSet(RGY_PICSTRUCT_FRAME),
     lowLatency(false),
+    audioReadOffsetSec(0.0),
     timestampPassThrough(false),
     qpTableListRef(nullptr),
     inputOpt(),
@@ -284,7 +287,9 @@ RGYInputAvcodec::RGYInputAvcodec() :
     m_Demux(),
     m_logFramePosList(),
     m_fpPacketList(),
-    m_hevcMp42AnnexbBuffer() {
+    m_hevcMp42AnnexbBuffer(),
+    m_suppressPulldownDetect(false),
+    m_pulldownDetected(false) {
     m_readerName = _T("av" DECODER_NAME "/avsw");
 }
 
@@ -592,6 +597,12 @@ vector<int> RGYInputAvcodec::getStreamIndex(AVMediaType type) {
                 // video, audio, subtitleの場合はCodecIDが必要 (たまにCodecIDのセットされていないものが来てエラーになる)
                 if (stream->codecpar->codec_id != AV_CODEC_ID_NONE) {
                     streams.push_back(i);
+                } else {
+                    AddMessage(RGY_LOG_DEBUG, _T("skip %s stream #%d: codec_id is none, codec_tag %s (0x%08x).\n"),
+                        char_to_tstring(av_get_media_type_string(type)).c_str(),
+                        i,
+                        char_to_tstring(tagToStr(stream->codecpar->codec_tag)).c_str(),
+                        stream->codecpar->codec_tag);
                 }
             } else {
                 streams.push_back(i);
@@ -797,6 +808,7 @@ RGY_ERR RGYInputAvcodec::getFirstFramePosAndFrameRate(const sTrim *pTrimList, in
     std::vector<int> frameDurationList;
     vector<std::pair<int, int>> durationHistgram;
     bool bPulldown = false;
+    m_pulldownDetected = false;
 
     // m_Demux.qVideoPktに入っているパケットがあれば、まずはそれを解析する
     auto qVideoPktCheckCount = (int)m_Demux.qVideoPkt.size();
@@ -927,6 +939,7 @@ RGY_ERR RGYInputAvcodec::getFirstFramePosAndFrameRate(const sTrim *pTrimList, in
                 }
             }
             bPulldown = (bDetectpulldown && ((rff_frames + 1/*たまたま切り捨てられることのないように*/) / (double)nFramesToCheck > 0.45));
+            m_pulldownDetected = bPulldown;
 
             //durationのヒストグラムを作成
             std::for_each(frameDurationList.begin(), frameDurationList.end(), [&durationHistgram](const int& duration) {
@@ -990,7 +1003,11 @@ RGY_ERR RGYInputAvcodec::getFirstFramePosAndFrameRate(const sTrim *pTrimList, in
             //std::accumulateの初期値に"(uint64_t)0"と与えることで、64bitによる計算を実行させ、桁あふれを防ぐ
             //大きすぎるtimebaseの時に必要
             double avgDuration = std::accumulate(frameDurationList.begin(), frameDurationList.end(), (uint64_t)0, [this](const uint64_t sum, const int& duration) { return sum + duration; }) / (double)(frameDurationList.size());
-            if (bPulldown) {
+            // Detection is separate from mutation. bPulldown was set above (line 937) so
+            // downstream diagnostics/logs still see the signal. Only the avgDuration
+            // rewrite is gated — --vpp-ivtc expand=on/auto suppresses it because the
+            // filter needs the real stream fps to drive its cycle auto-resolve.
+            if (bPulldown && !m_suppressPulldownDetect) {
                 avgDuration *= 1.25;
             }
             double avgFps = m_Demux.video.stream->time_base.den / (double)(avgDuration * m_Demux.video.stream->time_base.num);
@@ -1620,6 +1637,28 @@ RGY_ERR RGYInputAvcodec::initFormatCtx(const TCHAR *strFileName, const RGYInputA
     }
     findStreamInfoOpt.reset();
 
+    for (uint32_t i = 0; i < m_Demux.format.formatCtx->nb_streams; i++) {
+        auto stream = m_Demux.format.formatCtx->streams[i];
+        if (stream == nullptr || stream->codecpar == nullptr) {
+            continue;
+        }
+        if (stream->codecpar->codec_type == AVMEDIA_TYPE_AUDIO && stream->codecpar->codec_id == AV_CODEC_ID_NONE) {
+            if (stream->codecpar->codec_tag == MKTAG('d', 't', 's', 'x')) {
+                stream->codecpar->codec_id = AV_CODEC_ID_DTS;
+                AddMessage(RGY_LOG_WARN, _T("treat audio stream #%d codec_tag %s (0x%08x) as %s for stream copy.\n"),
+                    i,
+                    char_to_tstring(tagToStr(stream->codecpar->codec_tag)).c_str(),
+                    stream->codecpar->codec_tag,
+                    char_to_tstring(avcodec_get_name(stream->codecpar->codec_id)).c_str());
+            } else {
+                AddMessage(RGY_LOG_WARN, _T("audio stream #%d has unknown codec_id with codec_tag %s (0x%08x).\n"),
+                    i,
+                    char_to_tstring(tagToStr(stream->codecpar->codec_tag)).c_str(),
+                    stream->codecpar->codec_tag);
+            }
+        }
+    }
+
     AddMessage(RGY_LOG_DEBUG, _T("got stream information.\n"));
     av_dump_format(m_Demux.format.formatCtx, 0, filename_char.c_str(), 0);
     //dump_format(dec.formatCtx, 0, argv[1], 0);
@@ -1631,6 +1670,11 @@ RGY_ERR RGYInputAvcodec::initFormatCtx(const TCHAR *strFileName, const RGYInputA
 #pragma warning(disable:4127) //warning C4127: 条件式が定数です。
 RGY_ERR RGYInputAvcodec::Init(const TCHAR *strFileName, VideoInfo *inputInfo, const RGYInputPrm *prm) {
     const RGYInputAvcodecPrm *input_prm = dynamic_cast<const RGYInputAvcodecPrm*>(prm);
+
+    // Propagate the "detect but do not rewrite avgDuration" flag into the class
+    // member before getFirstFramePosAndFrameRate runs. Consumed at rgy_input_avcodec.cpp
+    // bPulldown-mutation site. Set by --vpp-ivtc expand=on/auto.
+    m_suppressPulldownDetect = input_prm->suppressPulldownMutation;
 
     if (input_prm->readVideo) {
         if (inputInfo->type != RGY_INPUT_FMT_AVANY) {
@@ -1667,7 +1711,7 @@ RGY_ERR RGYInputAvcodec::Init(const TCHAR *strFileName, VideoInfo *inputInfo, co
         }
         if (input_prm->ppAudioSelect[i]->encCodec.length() > 0
             && !avcodecIsCopy(input_prm->ppAudioSelect[i]->encCodec)) {
-            audioLog += strsprintf(_T("bitrate %d"), input_prm->ppAudioSelect[i]->encBitrate);
+            audioLog += strsprintf(_T("bitrate %d"), encbitrate_to_string(input_prm->ppAudioSelect[i]->encBitrate).c_str());
         }
         if (input_prm->ppAudioSelect[i]->extractFilename.length() > 0) {
             audioLog += tstring(_T("filename \"")) + input_prm->ppAudioSelect[i]->extractFilename + tstring(_T("\""));
@@ -1927,6 +1971,28 @@ RGY_ERR RGYInputAvcodec::Init(const TCHAR *strFileName, VideoInfo *inputInfo, co
         if (m_Demux.video.stream->codecpar->width == 0 || m_Demux.video.stream->codecpar->height == 0) {
             AddMessage(RGY_LOG_ERROR, _T("Input video info not parsed yet [%dx%d]!\n"), m_Demux.video.stream->codecpar->width, m_Demux.video.stream->codecpar->height);
             AddMessage(RGY_LOG_ERROR, _T("Consider increasing the value for the --input-analyze and/or --input-probesize!\n"), input_prm->analyzeSec, input_prm->probesize);
+            auto [ret, pkt] = getSample();
+            if (ret == 0) {
+                std::vector<nal_info> nals;
+                if (m_Demux.video.stream->codecpar->codec_id != AV_CODEC_ID_HEVC) {
+                    nals = m_Demux.video.parse_nal_hevc(pkt->data, pkt->size);
+                } else if (m_Demux.video.stream->codecpar->codec_id != AV_CODEC_ID_H264) {
+                    nals = m_Demux.video.parse_nal_h264(pkt->data, pkt->size);
+                }
+                if (nals.size() > 0) {
+                    AddMessage(RGY_LOG_ERROR, _T("First video pkt info:\n"));
+                    nals = m_Demux.video.parse_nal_hevc(pkt->data, pkt->size);
+                    for (const auto& nal : nals) {
+                        AddMessage(RGY_LOG_ERROR, _T("  nal type %d, size %d\n"), nal.type, nal.size);
+                    }
+                    std::unique_ptr<FILE, decltype(&fclose)> fpTmp(
+                        _tfopen(_T("debug_dump_nal.bin"), _T("wb")), fclose);
+                    if (fpTmp) {
+                        fwrite(pkt->data, 1, pkt->size, fpTmp.get());
+                        AddMessage(RGY_LOG_ERROR, _T("Dumped first video pkt to debug_dump_nal.bin\n"));
+                    }
+                }
+            }
             return RGY_ERR_NOT_FOUND;
         }
         AddMessage(RGY_LOG_DEBUG, _T("use video stream #%d for input, codec %s, stream time_base %d/%d.\n"),
@@ -2258,6 +2324,7 @@ RGY_ERR RGYInputAvcodec::Init(const TCHAR *strFileName, VideoInfo *inputInfo, co
 
         //スレッド関連初期化
         m_Demux.format.lowLatency = input_prm->lowLatency;
+        m_Demux.format.audioReadOffsetSec = input_prm->audioReadOffsetSec;
         m_Demux.thread.bAbortInput = false;
         auto nPrmInputThread = input_prm->threadInput;
         m_Demux.thread.threadInput = (nPrmInputThread == RGY_INPUT_THREAD_AUTO) ? (input_prm->lowLatency ? 0 : 1) : nPrmInputThread;
@@ -2742,9 +2809,10 @@ bool RGYInputAvcodec::checkStreamPacketToAdd(AVPacket *pkt, AVDemuxStream *strea
                 stream->trimOffset += std::max<int64_t>(0, vid0_start - vid0_first);
             } else {
                 assert(frame_trim_block_index > 0);
-                const int last_valid_vid_frame = m_trimParam.list[frame_trim_block_index-1].start;
+                const int last_valid_vid_frame = clamp(m_trimParam.list[frame_trim_block_index-1].fin, 0, m_Demux.frames.frameNum() - 1);
                 assert(last_valid_vid_frame >= 0);
-                const int64_t vid0_fin = convertTimebaseVidToStream(m_Demux.frames.list(last_valid_vid_frame).pts, stream);
+                const auto& vid0 = m_Demux.frames.list(last_valid_vid_frame);
+                const int64_t vid0_fin = convertTimebaseVidToStream(vid0.pts + vid0.duration, stream);
                 const int64_t vid1_start = convertTimebaseVidToStream(vidFramePos->pts, stream);
                 const int64_t vid_start = (frame_is_in_range.first) ? vid1_start : vid2_start;
                 if (vid_start - vid0_fin > aud1_start - stream->aud0_fin) {
@@ -2776,36 +2844,42 @@ AVDemuxStream *RGYInputAvcodec::getPacketStreamData(const AVPacket *pkt) {
 //subPacketTemporalBufferにたまっている字幕パケットをソートして送出する
 void RGYInputAvcodec::sortAndPushSubtitlePacket() {
     for (auto& st : m_Demux.stream) {
-        std::vector<int64_t> ptsList; // オリジナルのptsを保存しておく
-        ptsList.reserve(st.subPacketTemporalBuffer.size());
-        for (const auto& pkt : st.subPacketTemporalBuffer) {
-            ptsList.push_back(pkt->pts);
-        }
-        std::sort(st.subPacketTemporalBuffer.begin(), st.subPacketTemporalBuffer.end(), [](const auto pkt1, const auto pkt2) {
-            return pkt1->pts < pkt2->pts;
-        });
-        int ptsMismatchStart = -1;
-        int ptsMismatchFin = -1;
-        for (int i = 0; i < (int)ptsList.size(); ++i) {
-            if (ptsList[i] != st.subPacketTemporalBuffer[i]->pts) {
-                if (ptsMismatchStart < 0) ptsMismatchStart = i;
-                ptsMismatchFin = i;
+        // ビットマップ字幕(PGS, DVB等)はDisplay Set内のセグメントが意図的に異なるPTSを持つ
+        // (PDS/ODSはプリロード用に早いPTS、PCSは表示タイミングのPTS)
+        // PTSソートするとDisplay Setの順序が壊れるためスキップ
+        const auto *desc = avcodec_descriptor_get(st.stream->codecpar->codec_id);
+        const bool isTextSub = desc && (desc->props & AV_CODEC_PROP_TEXT_SUB);
+        if (st.stream->codecpar->codec_type == AVMEDIA_TYPE_SUBTITLE && isTextSub) {
+            std::vector<int64_t> ptsList;
+            ptsList.reserve(st.subPacketTemporalBuffer.size());
+            for (const auto& pkt : st.subPacketTemporalBuffer) {
+                ptsList.push_back(pkt->pts);
+            }
+            std::sort(st.subPacketTemporalBuffer.begin(), st.subPacketTemporalBuffer.end(), [](const auto pkt1, const auto pkt2) {
+                return pkt1->pts < pkt2->pts;
+            });
+            int ptsMismatchStart = -1;
+            int ptsMismatchFin = -1;
+            for (int i = 0; i < (int)ptsList.size(); ++i) {
+                if (ptsList[i] != st.subPacketTemporalBuffer[i]->pts) {
+                    if (ptsMismatchStart < 0) ptsMismatchStart = i;
+                    ptsMismatchFin = i;
+                }
+            }
+            if (ptsMismatchStart >= 0) {
+                tstring sortMes;
+                sortMes += strsprintf(_T("subtitle packet pts sorted for track #%d\nsubtitle input  pts :"), st.index);
+                for (int i = ptsMismatchStart; i <= ptsMismatchFin; ++i) {
+                    sortMes += strsprintf(_T("%lld "), (long long int)ptsList[i]);
+                }
+                sortMes += strsprintf(_T("\nsubtitle sorted pts :"));
+                for (int i = ptsMismatchStart; i <= ptsMismatchFin; ++i) {
+                    sortMes += strsprintf(_T("%lld "), (long long int)st.subPacketTemporalBuffer[i]->pts);
+                }
+                sortMes += _T("\n");
+                AddMessage(RGY_LOG_DEBUG, sortMes);
             }
         }
-        if (ptsMismatchStart >= 0) {
-            tstring sortMes;
-            sortMes += strsprintf(_T("subtitle packet pts sorted for track #%d\nsubtitle input  pts :"), st.index);
-            for (int i = ptsMismatchStart; i <= ptsMismatchFin; ++i) {
-                sortMes += strsprintf(_T("%lld "), (long long int)ptsList[i]);
-            }
-            sortMes += strsprintf(_T("\nsubtitle sorted pts :"));
-            for (int i = ptsMismatchStart; i <= ptsMismatchFin; ++i) {
-                sortMes += strsprintf(_T("%lld "), (long long int)st.subPacketTemporalBuffer[i]->pts);
-            }
-            sortMes += _T("\n");
-            AddMessage(RGY_LOG_DEBUG, sortMes);
-        }
-        
         for (auto& pkt : st.subPacketTemporalBuffer) {
             m_Demux.qStreamPktL1.push_back(pkt);
         }
@@ -3225,10 +3299,10 @@ void RGYInputAvcodec::CheckAndMoveStreamPacketList() {
         return;
     }
     const AVRational vid_pkt_timebase = (m_Demux.video.stream) ? m_Demux.video.stream->time_base : av_inv_q(m_Demux.video.nAvgFramerate);
-    // 低遅延モードの時は、2秒音声を先読みし、音声処理は早く終わらせておき、muxキューに積んでおく
-    const auto audioReadOffsetSec = 5.0;
-    const auto audioReadOffsetPTS = (m_Demux.format.lowLatency) 
-        ? std::max<int64_t>((int64_t)(av_q2d(av_inv_q(vid_pkt_timebase)) * audioReadOffsetSec + 0.5), 4)
+    // 低遅延モードでは必要な分だけ音声を先読みする。
+    // 音声copy主体のときに深く先読みすると、入力終了後の終了遅延が大きくなる。
+    const auto audioReadOffsetPTS = (m_Demux.format.lowLatency && m_Demux.format.audioReadOffsetSec > 0.0)
+        ? std::max<int64_t>((int64_t)(av_q2d(av_inv_q(vid_pkt_timebase)) * m_Demux.format.audioReadOffsetSec + 0.5), 4)
         : 0;
     //出力するパケットを選択する
     while (!m_Demux.qStreamPktL1.empty()) {

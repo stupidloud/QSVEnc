@@ -161,7 +161,8 @@ static const auto QSV_FEATURE_RC_EXT_TO_STR = make_array<std::pair<QSVEncFeature
     QSVFEATURE_2_STR(ENC_FEATURE_EXT_VIDEO_SIGNAL_INFO),
     QSVFEATURE_2_STR(ENC_FEATURE_EXT_CHROMALOC),
     QSVFEATURE_2_STR(ENC_FEATURE_EXT_TUNE_ENC_QUALITY),
-    QSVFEATURE_2_STR(ENC_FEATURE_EXT_HYPER_MODE)
+    QSVFEATURE_2_STR(ENC_FEATURE_EXT_HYPER_MODE),
+    QSVFEATURE_2_STR(ENC_FEATURE_EXT_AI_ENC_CTRL)
 );
 
 MAP_PAIR_0_1(qsv_feature_rc_ext, enm, QSVEncFeatureRCExt, str, tstring, QSV_FEATURE_RC_EXT_TO_STR, ENC_FEATURE_RCEXT_NONE, _T("UNKNOWN"));
@@ -205,7 +206,9 @@ static const auto QSV_FEATURE_PARAMS_TO_STR = make_array<std::pair<QSVEncFeature
     QSVFEATURE_2_STR(ENC_FEATURE_HEVC_TSKIP),
     QSVFEATURE_2_STR(ENC_FEATURE_HYPER_MODE),
     QSVFEATURE_2_STR(ENC_FEATURE_SCENARIO_INFO),
-    QSVFEATURE_2_STR(ENC_FEATURE_TUNE_ENCODE_QUALITY)
+    QSVFEATURE_2_STR(ENC_FEATURE_TUNE_ENCODE_QUALITY),
+    QSVFEATURE_2_STR(ENC_FEATURE_AI_ENC_CTRL),
+    QSVFEATURE_2_STR(ENC_FEATURE_REPARTITION_CHECK)
 );
 
 MAP_PAIR_0_1(qsv_feature_params, enm, QSVEncFeatureParams, str, tstring, QSV_FEATURE_PARAMS_TO_STR, ENC_FEATURE_PARAMS_NONE, _T("UNKNOWN"));
@@ -324,7 +327,7 @@ mfxVersion get_mfx_libsw_version() {
 
 QSVVideoParam::QSVVideoParam(const mfxVersion mfxver_) :
     mfxVer(mfxver_), isVppParam(false), videoPrmVpp(), videoPrm(), buf(), videoSignalInfo(), chromaLocInfo(), spsbuf(), ppsbuf(), spspps(),
-    cop(), cop2(), cop3(), copVp8(), vp9Prm(), hevcPrm(), av1BitstreamPrm(), av1ResolutionPrm(), av1TilePrm(), hyperModePrm(), tuneEncQualityPrm() {
+    cop(), cop2(), cop3(), copVp8(), vp9Prm(), hevcPrm(), av1BitstreamPrm(), av1ResolutionPrm(), av1TilePrm(), hyperModePrm(), tuneEncQualityPrm(), aiEncCtrlPrm(), aiEncCtrlEnabled(false) {
     INIT_MFX_EXT_BUFFER(videoSignalInfo, MFX_EXTBUFF_VIDEO_SIGNAL_INFO);
     INIT_MFX_EXT_BUFFER(chromaLocInfo, MFX_EXTBUFF_CHROMA_LOC_INFO);
     memset(spsbuf, 0, sizeof(spsbuf));
@@ -346,6 +349,7 @@ QSVVideoParam::QSVVideoParam(const mfxVersion mfxver_) :
     INIT_MFX_EXT_BUFFER(av1TilePrm, MFX_EXTBUFF_AV1_TILE_PARAM);
     INIT_MFX_EXT_BUFFER(hyperModePrm, MFX_EXTBUFF_HYPER_MODE_PARAM);
     INIT_MFX_EXT_BUFFER(tuneEncQualityPrm, MFX_EXTBUFF_TUNE_ENCODE_QUALITY);
+    INIT_MFX_EXT_BUFFER(aiEncCtrlPrm, MFX_EXTBUFF_AI_ENC_CTRL);
 }
 
 QSVVideoParam::QSVVideoParam(const QSVVideoParam& o) {
@@ -371,6 +375,7 @@ QSVVideoParam& QSVVideoParam::operator=(const QSVVideoParam &o) {
     av1TilePrm = o.av1TilePrm;
     hyperModePrm = o.hyperModePrm;
     tuneEncQualityPrm = o.tuneEncQualityPrm;
+    aiEncCtrlPrm = o.aiEncCtrlPrm;
 
     memcpy(spsbuf, o.spsbuf, sizeof(spsbuf));
     memcpy(ppsbuf, o.ppsbuf, sizeof(ppsbuf));
@@ -413,6 +418,9 @@ QSVVideoParam& QSVVideoParam::operator=(const QSVVideoParam &o) {
             break;
         case MFX_EXTBUFF_TUNE_ENCODE_QUALITY:
             buf.push_back((mfxExtBuffer *)&tuneEncQualityPrm);
+            break;
+        case MFX_EXTBUFF_AI_ENC_CTRL:
+            buf.push_back((mfxExtBuffer *)&aiEncCtrlPrm);
             break;
         default:
             break;
@@ -478,6 +486,10 @@ void QSVVideoParam::setAllExtParams(const uint32_t CodecId, const QSVEncFeatures
         && check_lib_version(mfxVer, MFX_LIB_VERSION_2_9)
         && (features & ENC_FEATURE_EXT_TUNE_ENC_QUALITY)) {
         buf.push_back((mfxExtBuffer *)&tuneEncQualityPrm);
+    }
+    if (check_lib_version(mfxVer, MFX_LIB_VERSION_2_16)
+        && (features & ENC_FEATURE_EXT_AI_ENC_CTRL)) {
+        buf.push_back((mfxExtBuffer *)&aiEncCtrlPrm);
     }
 
     RGY_MEMSET_ZERO(videoPrm);
@@ -643,7 +655,7 @@ std::vector<RGY_CSP> CheckDecFeaturesInternal(MFXVideoSession& session, mfxVersi
     return supportedCsp;
 }
 
-mfxU64 CheckVppFeaturesInternal(MFXVideoSession& session, mfxVersion mfxVer) {
+mfxU64 CheckVppFeaturesInternal(MFXVideoSession& session, mfxVersion mfxVer, const mfxVideoParam& baseVideoPrm) {
     using namespace std;
 
     mfxU64 result = 0x00;
@@ -709,31 +721,15 @@ mfxU64 CheckVppFeaturesInternal(MFXVideoSession& session, mfxVersion mfxVer) {
     vector<mfxExtBuffer*> buf;
     buf.push_back((mfxExtBuffer *)nullptr);
 
-    mfxVideoParam videoPrm;
-    RGY_MEMSET_ZERO(videoPrm);
-
+    auto videoPrm = baseVideoPrm;
     videoPrm.NumExtParam = (mfxU16)buf.size();
     videoPrm.ExtParam = (buf.size()) ? &buf[0] : NULL;
-    videoPrm.AsyncDepth           = 3;
-    videoPrm.IOPattern            = (bHardware) ? MFX_IOPATTERN_IN_VIDEO_MEMORY | MFX_IOPATTERN_OUT_VIDEO_MEMORY : MFX_IOPATTERN_IN_SYSTEM_MEMORY | MFX_IOPATTERN_OUT_SYSTEM_MEMORY;
-    videoPrm.vpp.In.FrameRateExtN = 30000;
-    videoPrm.vpp.In.FrameRateExtD = 1001;
-    videoPrm.vpp.In.FourCC        = MFX_FOURCC_NV12;
-    videoPrm.vpp.In.ChromaFormat  = MFX_CHROMAFORMAT_YUV420;
-    videoPrm.vpp.In.PicStruct     = MFX_PICSTRUCT_PROGRESSIVE;
-    videoPrm.vpp.In.AspectRatioW  = 1;
-    videoPrm.vpp.In.AspectRatioH  = 1;
-    videoPrm.vpp.In.Width         = 1280;
-    videoPrm.vpp.In.Height        = 720;
-    videoPrm.vpp.In.CropX         = 0;
-    videoPrm.vpp.In.CropY         = 0;
-    videoPrm.vpp.In.CropW         = 1280;
-    videoPrm.vpp.In.CropH         = 720;
-    memcpy(&videoPrm.vpp.Out, &videoPrm.vpp.In, sizeof(videoPrm.vpp.In));
-    videoPrm.vpp.Out.Width        = 1920;
-    videoPrm.vpp.Out.Height       = 1080;
-    videoPrm.vpp.Out.CropW        = 1920;
-    videoPrm.vpp.Out.CropH        = 1080;
+    if (videoPrm.AsyncDepth == 0) {
+        videoPrm.AsyncDepth = 3;
+    }
+    if (videoPrm.IOPattern == 0) {
+        videoPrm.IOPattern = (bHardware) ? MFX_IOPATTERN_IN_VIDEO_MEMORY | MFX_IOPATTERN_OUT_VIDEO_MEMORY : MFX_IOPATTERN_IN_SYSTEM_MEMORY | MFX_IOPATTERN_OUT_SYSTEM_MEMORY;
+    }
 
     auto check_feature = [&](mfxExtBuffer *structIn, mfxVersion requiredVer, mfxU64 featureNoErr, mfxU64 featureWarn) {
         if (check_lib_version(mfxVer, requiredVer)) {
@@ -773,7 +769,39 @@ mfxU64 CheckVppFeaturesInternal(MFXVideoSession& session, mfxVersion mfxVer) {
     return result;
 }
 
+static mfxVideoParam CreateDefaultVppFeatureQueryParam(const int bitdepth) {
+    mfxVideoParam videoPrm;
+    RGY_MEMSET_ZERO(videoPrm);
+    videoPrm.AsyncDepth           = 3;
+    videoPrm.vpp.In.FrameRateExtN = 30000;
+    videoPrm.vpp.In.FrameRateExtD = 1001;
+    videoPrm.vpp.In.FourCC        = (bitdepth > 8) ? MFX_FOURCC_P010 : MFX_FOURCC_NV12;
+    videoPrm.vpp.In.ChromaFormat  = MFX_CHROMAFORMAT_YUV420;
+    videoPrm.vpp.In.PicStruct     = MFX_PICSTRUCT_PROGRESSIVE;
+    videoPrm.vpp.In.AspectRatioW  = 1;
+    videoPrm.vpp.In.AspectRatioH  = 1;
+    videoPrm.vpp.In.Width         = 1280;
+    videoPrm.vpp.In.Height        = 720;
+    videoPrm.vpp.In.CropX         = 0;
+    videoPrm.vpp.In.CropY         = 0;
+    videoPrm.vpp.In.CropW         = 1280;
+    videoPrm.vpp.In.CropH         = 720;
+    videoPrm.vpp.In.BitDepthLuma   = (mfxU16)((bitdepth > 8) ? bitdepth : 0);
+    videoPrm.vpp.In.BitDepthChroma = (mfxU16)((bitdepth > 8) ? bitdepth : 0);
+    videoPrm.vpp.In.Shift          = (mfxU16)((bitdepth > 8) ? 1 : 0);
+    memcpy(&videoPrm.vpp.Out, &videoPrm.vpp.In, sizeof(videoPrm.vpp.In));
+    videoPrm.vpp.Out.Width        = 1920;
+    videoPrm.vpp.Out.Height       = 1080;
+    videoPrm.vpp.Out.CropW        = 1920;
+    videoPrm.vpp.Out.CropH        = 1080;
+    return videoPrm;
+}
+
 mfxU64 CheckVppFeatures(MFXVideoSession& session) {
+    return CheckVppFeatures(session, CreateDefaultVppFeatureQueryParam(8));
+}
+
+mfxU64 CheckVppFeatures(MFXVideoSession& session, const mfxVideoParam& videoPrm) {
     mfxU64 feature = 0x00;
     mfxVersion ver = MFX_LIB_VERSION_0_0;
     session.QueryVersion(&ver);
@@ -786,13 +814,17 @@ mfxU64 CheckVppFeatures(MFXVideoSession& session) {
         feature |= VPP_FEATURE_DETAIL_ENHANCEMENT;
         feature |= VPP_FEATURE_PROC_AMP;
     } else {
-        feature = CheckVppFeaturesInternal(session, ver);
+        feature = CheckVppFeaturesInternal(session, ver, videoPrm);
     }
 
     return feature;
 }
 
 mfxU64 CheckVppFeatures(const QSVDeviceNum deviceNum, std::shared_ptr<RGYLog> log) {
+    return CheckVppFeatures(deviceNum, log, CreateDefaultVppFeatureQueryParam(8));
+}
+
+mfxU64 CheckVppFeatures(const QSVDeviceNum deviceNum, std::shared_ptr<RGYLog> log, const mfxVideoParam& queryVideoPrm) {
     mfxU64 feature = 0x00;
     MemType memType = HW_MEMORY;
     std::unique_ptr<CQSVHWDevice> hwdev;
@@ -818,7 +850,9 @@ mfxU64 CheckVppFeatures(const QSVDeviceNum deviceNum, std::shared_ptr<RGYLog> lo
             feature |= VPP_FEATURE_PROC_AMP;
         } else {
             log->write(RGY_LOG_DEBUG, RGY_LOGT_DEV, _T("InitSession: initialized allocator.\n"));
-            feature = CheckVppFeaturesInternal(session, ver);
+            auto videoPrm = queryVideoPrm;
+            videoPrm.IOPattern = (memType != SYSTEM_MEMORY) ? MFX_IOPATTERN_IN_VIDEO_MEMORY | MFX_IOPATTERN_OUT_VIDEO_MEMORY : MFX_IOPATTERN_IN_SYSTEM_MEMORY | MFX_IOPATTERN_OUT_SYSTEM_MEMORY;
+            feature = CheckVppFeaturesInternal(session, ver, videoPrm);
         }
     }
 
@@ -1034,6 +1068,7 @@ QSVEncFeatures CheckEncodeFeature(MFXVideoSession& session, const int ratecontro
         check_ext_buff(ENC_FEATURE_EXT_VIDEO_SIGNAL_INFO,  &qsvprm.videoSignalInfo,    MFX_LIB_VERSION_1_3);
         check_ext_buff(ENC_FEATURE_EXT_TUNE_ENC_QUALITY,   &qsvprm.tuneEncQualityPrm,  MFX_LIB_VERSION_2_9, ENABLE_QSV_TUNE_QUERY);
         check_ext_buff(ENC_FEATURE_EXT_HYPER_MODE,         &qsvprm.hyperModePrm,       MFX_LIB_VERSION_2_5, ENABLE_HYPER_MODE && checkHyperMode);
+        check_ext_buff(ENC_FEATURE_EXT_AI_ENC_CTRL,        &qsvprm.aiEncCtrlPrm,       MFX_LIB_VERSION_2_16);
 
 
         // 各パラメータについてチェック
@@ -1122,6 +1157,7 @@ QSVEncFeatures CheckEncodeFeature(MFXVideoSession& session, const int ratecontro
             CHECK_FEATURE(qsvprm.cop3.AdaptiveLTR,                ENC_FEATURE_ADAPTIVE_LTR,           MFX_CODINGOPTION_ON,         MFX_LIB_VERSION_2_4);
             CHECK_FEATURE(qsvprm.cop3.AdaptiveRef,                ENC_FEATURE_ADAPTIVE_REF,           MFX_CODINGOPTION_ON,         MFX_LIB_VERSION_2_4);
             CHECK_FEATURE(qsvprm.cop3.AdaptiveCQM,                ENC_FEATURE_ADAPTIVE_CQM,           MFX_CODINGOPTION_ON,         MFX_LIB_VERSION_2_2);
+            CHECK_FEATURE(qsvprm.cop3.RepartitionCheckEnable,     ENC_FEATURE_REPARTITION_CHECK,      MFX_CODINGOPTION_ON,         MFX_LIB_VERSION_1_23);
             CHECK_FEATURE(qsvprm.cop3.EnableQPOffset,             ENC_FEATURE_PYRAMID_QP_OFFSET,      MFX_CODINGOPTION_ON,         MFX_LIB_VERSION_1_19);
             if (codec == RGY_CODEC_HEVC) {
                 CHECK_FEATURE(qsvprm.cop3.GPB,                    ENC_FEATURE_DISABLE_GPB,            MFX_CODINGOPTION_ON,         MFX_LIB_VERSION_1_19);
@@ -1169,6 +1205,9 @@ QSVEncFeatures CheckEncodeFeature(MFXVideoSession& session, const int ratecontro
         }
         if (result & ENC_FEATURE_EXT_HYPER_MODE) {
             CHECK_FEATURE(qsvprm.hyperModePrm.Mode, ENC_FEATURE_HYPER_MODE, MFX_HYPERMODE_ON, MFX_LIB_VERSION_2_5);
+        }
+        if (result & ENC_FEATURE_EXT_AI_ENC_CTRL) {
+            CHECK_FEATURE(qsvprm.aiEncCtrlPrm.AdaptiveTargetUsage, ENC_FEATURE_AI_ENC_CTRL, MFX_CODINGOPTION_ON, MFX_LIB_VERSION_2_16);
         }
 #pragma warning(pop)
         //付随オプション
@@ -1655,32 +1694,54 @@ std::vector<std::pair<QSVEncFeatureData, tstring>> MakeFeatureListStr(const QSVD
 }
 
 tstring MakeVppFeatureStr(const QSVDeviceNum deviceNum, FeatureListStrType type, std::shared_ptr<RGYLog> log) {
-    uint64_t features = CheckVppFeatures(deviceNum, log);
+    const auto features8bit  = CheckVppFeatures(deviceNum, log, CreateDefaultVppFeatureQueryParam(8));
+    const auto features10bit = CheckVppFeatures(deviceNum, log, CreateDefaultVppFeatureQueryParam(10));
     const TCHAR *MARK_YES_NO[] = { _T(" x"), _T(" o") };
     tstring str;
     if (type == FEATURE_LIST_STR_TYPE_HTML) {
         str += _T("<table class=simpleOrange>");
+        str += _T("<tr><th></th><th>8bit</th><th>10bit</th></tr>\n");
+    } else if (type == FEATURE_LIST_STR_TYPE_CSV) {
+        str += _T("Feature,8bit,10bit\n");
+    } else {
+        str += strsprintf(_T("%-21s %5s %5s\n"), _T(""), _T("8bit"), _T("10bit"));
     }
     for (const FEATURE_DESC *ptr = list_vpp_feature; ptr->desc; ptr++) {
         if (type == FEATURE_LIST_STR_TYPE_HTML) {
             str += _T("<tr><td>");
-        }
-        str += ptr->desc;
-        switch (type) {
-        case FEATURE_LIST_STR_TYPE_CSV: str += _T(","); break;
-        case FEATURE_LIST_STR_TYPE_HTML: str += _T("</td>"); break;
-        default: break;
-        }
-        if (type == FEATURE_LIST_STR_TYPE_HTML) {
-            str += (features & ptr->value) ? _T("<td class=ok>") : _T("<td class=fail>");
-        }
-        if (type == FEATURE_LIST_STR_TYPE_TXT) {
-            str += MARK_YES_NO[ptr->value == (features & ptr->value)];
+            str += ptr->desc;
+            str += _T("</td>");
+        } else if (type == FEATURE_LIST_STR_TYPE_CSV) {
+            str += ptr->desc;
+            str += _T(",");
         } else {
-            str += QSV_FEATURE_MARK_YES_NO[ptr->value == (features & ptr->value)];
+            str += strsprintf(_T("%-21s"), ptr->desc);
         }
+
+        const auto add_feature_value = [&](const uint64_t features) {
+            if (type == FEATURE_LIST_STR_TYPE_HTML) {
+                str += (features & ptr->value) ? _T("<td class=ok>") : _T("<td class=fail>");
+            }
+            if (type == FEATURE_LIST_STR_TYPE_TXT) {
+                str += MARK_YES_NO[ptr->value == (features & ptr->value)];
+            } else {
+                str += QSV_FEATURE_MARK_YES_NO[ptr->value == (features & ptr->value)];
+            }
+            if (type == FEATURE_LIST_STR_TYPE_HTML) {
+                str += _T("</td>");
+            } else if (type == FEATURE_LIST_STR_TYPE_CSV) {
+                str += _T(",");
+            }
+        };
+        add_feature_value(features8bit);
+        add_feature_value(features10bit);
+
         if (type == FEATURE_LIST_STR_TYPE_HTML) {
-            str += _T("</td></tr>");
+            str += _T("</tr>");
+        } else if (type == FEATURE_LIST_STR_TYPE_CSV) {
+            if (str.length() > 0 && str.back() == _T(',')) {
+                str.pop_back();
+            }
         }
         str += _T("\n");
     }

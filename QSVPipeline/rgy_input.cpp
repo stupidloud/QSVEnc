@@ -33,6 +33,11 @@
 #include "rgy_filesystem.h"
 #include "cpu_info.h"
 
+static bool output_is_pipe(const RGYParamCommon *common) {
+    return 0 == _tcscmp(common->outputFilename.c_str(), _T("-"))
+        || common->outputFilename.c_str() == _tcsstr(common->outputFilename.c_str(), _T(R"(\\.\pipe\)"));
+}
+
 static const auto RGY_CSP_TO_Y4MHEADER_CSP = make_array<std::pair<RGY_CSP, const char *>>(
     std::make_pair(RGY_CSP_YV12,      "420mpeg2"),
     std::make_pair(RGY_CSP_YV12,      "420jpeg"),
@@ -427,6 +432,7 @@ static RGY_ERR initOtherReaders(
         inputInfoAVAudioReader.threadParamInput = ctrl->threadParams.get(RGYThreadType::INPUT);
         inputInfoAVAudioReader.timestampPassThrough = common->timestampPassThrough;
         inputInfoAVAudioReader.lowLatency = ctrl->lowLatency;
+        inputInfoAVAudioReader.audioReadOffsetSec = (ctrl->lowLatency) ? ((output_is_pipe(common)) ? 0.0 : 2.0) : 0.0;
         inputInfoAVAudioReader.hevcbsf = common->hevcbsf;
 
         shared_ptr<RGYInput> audioReader(new RGYInputAvcodec());
@@ -473,6 +479,7 @@ RGY_ERR initReaders(
     const bool vpp_afs,
     const bool vpp_rff,
     const bool vpp_require_hdr_metadata,
+    const bool vpp_ivtc_expand_active,
     RGYPoolAVPacket *poolPkt,
     RGYPoolAVFrame *poolFrame,
     RGYListRef<RGYFrameDataQP> *qpTableListRef,
@@ -612,6 +619,7 @@ RGY_ERR initReaders(
     case RGY_INPUT_FMT_VPY_MT:
         inputPrmVpy.vsdir = ctrl->vsdir;
         inputPrmVpy.seekRatio = common->seekRatio;
+        inputPrmVpy.assumeScriptDir = ctrl->vpyAssumeScriptDir;
         pInputPrm = &inputPrmVpy;
         log->write(RGY_LOG_DEBUG, RGY_LOGT_IN, _T("vpy reader selected.\n"));
         pFileReader.reset(new RGYInputVpy());
@@ -663,6 +671,7 @@ RGY_ERR initReaders(
         inputInfoAVCuvid.queueInfo = (perfMonitor) ? perfMonitor->GetQueueInfoPtr() : nullptr;
         inputInfoAVCuvid.HWDecCodecCsp = &HWDecCodecCsp;
         inputInfoAVCuvid.videoDetectPulldown = !vpp_rff && !vpp_afs && common->AVSyncMode == RGY_AVSYNC_AUTO;
+        inputInfoAVCuvid.suppressPulldownMutation = vpp_ivtc_expand_active;
         inputInfoAVCuvid.parseHDRmetadata = common->maxCll == maxCLLSource || common->masterDisplay == masterDisplaySource || vpp_require_hdr_metadata;
         inputInfoAVCuvid.hdr10plusMetadataCopy = common->hdr10plusMetadataCopy || vpp_require_hdr_metadata;
         inputInfoAVCuvid.doviRpuMetadataCopy = common->doviRpuMetadataCopy || vpp_require_hdr_metadata;
@@ -670,6 +679,7 @@ RGY_ERR initReaders(
         inputInfoAVCuvid.qpTableListRef = qpTableListRef;
         inputInfoAVCuvid.inputOpt = common->inputOpt;
         inputInfoAVCuvid.lowLatency = ctrl->lowLatency;
+        inputInfoAVCuvid.audioReadOffsetSec = (ctrl->lowLatency) ? ((output_is_pipe(common)) ? 0.0 : 2.0) : 0.0;
         inputInfoAVCuvid.timestampPassThrough = common->timestampPassThrough;
         inputInfoAVCuvid.hevcbsf = common->hevcbsf;
         inputInfoAVCuvid.avswDecoder = inprm->avswDecoder;

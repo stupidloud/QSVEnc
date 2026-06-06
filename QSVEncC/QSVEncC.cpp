@@ -53,6 +53,7 @@
 #include "rgy_resource.h"
 #include "rgy_env.h"
 #include "rgy_opencl.h"
+#include "rgy_opencl_perf.h"
 
 #if ENABLE_AVSW_READER
 extern "C" {
@@ -1231,6 +1232,9 @@ int run(int argc, TCHAR *argv[]) {
     }
 
     pPipeline->Close();
+    if (!Params.ctrl.parallelEnc.isChild()) {
+        cl_perf_generate_report(Params.ctrl.clPerfDumpDir, Params.ctrl.clPerfDisasmTool, Params.ctrl.clPerfOclocPath, Params.ctrl.clPerfRgaPath, Params.ctrl.pythonPath);
+    }
     pPipeline->PrintMes(RGY_LOG_INFO, _T("\nProcessing finished\n"));
     return sts;
 }

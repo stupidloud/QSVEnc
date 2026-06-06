@@ -59,6 +59,11 @@ enum {
     MFX_DEINTERLACE_IT_MANUAL   = 4, //inverse telecine, manual select
     MFX_DEINTERLACE_AUTO_SINGLE = 5,
     MFX_DEINTERLACE_AUTO_DOUBLE = 6,
+    MFX_DEINTERLACE_ADVANCED    = 7,
+    MFX_DEINTERLACE_ADVANCED_NOREF = 8,
+    MFX_DEINTERLACE_ADVANCED_SCD = 9,
+    MFX_DEINTERLACE_FULL_FR_OUT = 10,
+    MFX_DEINTERLACE_HALF_FR_OUT = 11,
 };
 
 enum class RGYMFX_DEINTERLACE_MODE : uint32_t {
@@ -256,6 +261,7 @@ struct sVppParams {
     MFXVppAIFrameInterpolation aiFrameInterpolation;
 
     bool percPreEnc;
+    int mfxInsertCLCopy;
 
     sVppParams();
     ~sVppParams() {};
@@ -295,6 +301,12 @@ enum class QSVFunctionMode {
     Auto,
     PG,
     FF,
+};
+
+struct QSVAIEncCtrl {
+    bool enable;
+    std::optional<bool> saliencyEncoder;
+    std::optional<bool> adaptiveTargetUsage;
 };
 
 struct sInputParams {
@@ -404,7 +416,7 @@ struct sInputParams {
 
     QSVAV1Params av1;
 
-    tstring    pythonPath;
+    QSVAIEncCtrl aiEncCtrl;
 
     bool       bBenchmark;
     mfxU32     nBenchQuality; //ベンチマークの対象
@@ -577,9 +589,15 @@ const CX_DESC list_deinterlace[] = {
     { _T("bob_bff"),   MFX_DEINTERLACE_BOB | (int)RGYMFX_DEINTERLACE_MODE::BFF },
 #if ENABLE_ADVANCED_DEINTERLACE
     { _T("it-manual"), MFX_DEINTERLACE_IT_MANUAL   },
-    { _T("auto"),      MFX_DEINTERLACE_AUTO_SINGLE },
-    { _T("auto-bob"),  MFX_DEINTERLACE_AUTO_DOUBLE },
 #endif
+    { _T("auto"),      MFX_DEINTERLACE_AUTO_SINGLE },
+    { _T("auto_double"), MFX_DEINTERLACE_AUTO_DOUBLE },
+    { _T("auto-bob"),  MFX_DEINTERLACE_AUTO_DOUBLE },
+    { _T("advanced"), MFX_DEINTERLACE_ADVANCED },
+    { _T("advanced_noref"), MFX_DEINTERLACE_ADVANCED_NOREF },
+    { _T("advanced_scd"), MFX_DEINTERLACE_ADVANCED_SCD },
+    { _T("simple_bob"), MFX_DEINTERLACE_FULL_FR_OUT },
+    { _T("simple"), MFX_DEINTERLACE_HALF_FR_OUT },
     { NULL, 0 }
 };
 
@@ -921,6 +939,7 @@ const CX_DESC list_vpp_sub_shaping[] = {
 };
 
 const CX_DESC list_vpp_mfx_denoise_mode[] = {
+    { _T("legacy"),          MFX_DENOISE_MODE_LEGACY },
     { _T("auto"),            MFX_DENOISE_MODE_DEFAULT  },
     { _T("auto_bdrate"),     MFX_DENOISE_MODE_INTEL_HVS_AUTO_BDRATE },
     { _T("auto_subjective"), MFX_DENOISE_MODE_INTEL_HVS_AUTO_SUBJECTIVE },

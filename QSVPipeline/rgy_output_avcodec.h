@@ -109,6 +109,7 @@ struct AVMuxFormat {
     const TCHAR          *filename;             //出力ファイル名
     AVFormatContext      *formatCtx;            //出力ファイルのformatContext
     char                  metadataStr[256];     //出力ファイルのエンコーダ名
+    std::string           muxerCmdline;         //encoding_toolに追記するコマンドライン
     const AVOutputFormat *outputFmt;            //出力ファイルのoutputFormat
 
 #if USE_CUSTOM_IO
@@ -355,7 +356,7 @@ struct AVOutputStreamPrm {
     tstring encodeCodec;        //音声をエンコードするコーデック
     tstring encodeCodecPrm;     //音声をエンコードするコーデックのパラメータ
     tstring encodeCodecProfile; //音声をエンコードするコーデックのパラメータ
-    int     bitrate;            //ビットレートの指定
+    std::vector<AudioBitrate> encodeBitrate; //ビットレートの指定
     std::pair<bool, int> quality; //品質の指定 (値が設定されているかと値)
     int     samplingRate;       //サンプリング周波数の指定
     tstring filter;             //音声フィルタ
@@ -371,7 +372,7 @@ struct AVOutputStreamPrm {
         encodeCodec(RGY_AVCODEC_COPY),
         encodeCodecPrm(),
         encodeCodecProfile(),
-        bitrate(0),
+        encodeBitrate(),
         quality({ false, RGY_AUDIO_QUALITY_DEFAULT }),
         samplingRate(0),
         filter(),
@@ -402,6 +403,7 @@ struct AvcodecWriterPrm {
     bool                         chapterNoTrim;           //チャプターにtrimを反映しない
     vector<AttachmentSource>     attachments;             //attachment
     int                          audioResampler;          //音声のresamplerの選択
+    bool                         audioEncodeOtherCodecOnly; //音声を他のコーデックにエンコードするだけ
     uint32_t                     audioIgnoreDecodeError;  //音声デコード時に発生したエラーを無視して、無音に置き換える
     int                          bufSizeMB;               //出力バッファサイズ
     int                          threadOutput;            //出力スレッド数
@@ -425,6 +427,7 @@ struct AvcodecWriterPrm {
     tstring                      avcodec_videnc_prms;    //avcodec映像エンコーダパラメータ
     std::vector<tstring>         videoMetadata;           //動画のmetadata
     std::vector<tstring>         formatMetadata;          //formatのmetadata
+    tstring                      muxerCmdline;            //encoding_toolに追記するコマンドライン
     bool                         afs;                     //入力が自動フィールドシフト
     bool                         disableMp4Opt;           //mp4出力時のmuxの最適化を無効にする
     bool                         debugDirectAV1Out;       //AV1出力のデバッグ用
@@ -454,6 +457,7 @@ struct AvcodecWriterPrm {
         chapterNoTrim(false),
         attachments(),
         audioResampler(0),
+        audioEncodeOtherCodecOnly(false),
         audioIgnoreDecodeError(0),
         bufSizeMB(0),
         threadOutput(0),
@@ -477,6 +481,7 @@ struct AvcodecWriterPrm {
         avcodec_videnc_prms(),
         videoMetadata(),
         formatMetadata(),
+        muxerCmdline(),
         afs(false),
         disableMp4Opt(false),
         debugDirectAV1Out(false),
@@ -591,6 +596,9 @@ protected:
     //音声のプロファイル(文字列)を取得する
     tstring AudioGetCodecProfileStr(int profile, AVCodecID codecId);
 
+    //音声のビットレートを取得する
+    int AudioGetBitrate(const std::vector<AudioBitrate> &encodeBitrate, const RGYChannelLayout *channelLayout) const;
+
     //H.264ストリームからPAFFのフィールドの長さを返す
     uint32_t getH264PAFFFieldLength(const uint8_t *ptr, uint32_t size, int *isIDR);
 
@@ -608,7 +616,7 @@ protected:
     RGY_ERR InitAudioResampler(AVMuxAudio *muxAudio, int channels, const RGYChannelLayout *channel_layout, int sample_rate, AVSampleFormat sample_fmt);
 
     //音声の初期化
-    RGY_ERR InitAudio(AVMuxAudio *muxAudio, AVOutputStreamPrm *inputAudio, uint32_t audioIgnoreDecodeError, bool audioDispositionSet, const tstring& muxTsLogFileBase);
+    RGY_ERR InitAudio(AVMuxAudio *muxAudio, AVOutputStreamPrm *inputAudio, uint32_t audioIgnoreDecodeError, bool audioDispositionSet, bool audioEncodeOtherCodecOnly, const tstring& muxTsLogFileBase);
 
     //Bitstream Filterの初期化
     AVBSFContext* InitStreamBsf(const tstring& bsfName, const AVStream* streamIn);

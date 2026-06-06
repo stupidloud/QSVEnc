@@ -1,4 +1,4 @@
-﻿---------------------------------------------------
+---------------------------------------------------
 
 
 	QSVEnc + QSVEncC
@@ -19,7 +19,8 @@ https://github.com/rigaya/QSVEnc/blob/master/QSVEncC_Options.ja.md
 【基本動作環境】
 Windows 10/11 (x86/x64) (QSVEnc.auo / QSVEncC.exe x86版)
 Windows 10/11 (x64) (QSVEncC.exe x64版)
-Aviutl 1.00 以降 (QSVEnc.auo)
+AviUtl 1.00/1.10 (QSVEnc.auo)
+AviUtl 2.00 beta19 以降 (QSVEnc.auo2)
 
 【ハードウェアエンコード動作環境】
 上記「基本動作環境」に加え、
@@ -313,6 +314,124 @@ API v1.1  … Intel Media SDK v2.0
 
 
 【どうでもいいメモ】
+2026.05.31 (8.14)
+[QSVEncC]
+- --vpp-rtgmcの高速化。
+- OpenCLカーネルのパフォーマンスタイムライン表示オプション --cl-perf-timeline を追加。
+- 高品質deringフィルタ --vpp-hqdering を追加。
+- アニメ向け微細halo抑制フィルタ --vpp-finedehalo を追加。
+- デブロックフィルタ --vpp-deblock を追加。
+- 色位相ずれ補正フィルタ --vpp-chromashift を追加。
+- 色調補正フィルタ --vpp-colorfix を追加。
+- フリッカー低減フィルタ --vpp-deflicker を追加。
+- --vpp-dehalo, --vpp-ivtc, --vpp-warpsharp, --vpp-msmooth, --vpp-msharpen, --vpp-maa の機能拡張オプションを追加。
+
+2026.05.23 (8.13)
+[QSVEncC]
+- 24/30/60混合VFR出力に対応した逆テレシネフィルタ --vpp-kfm を追加。
+  AmatsukazeのKFMのアルゴリズムの一部移植。
+- 高品質インタレ解除フィルタ --vpp-rtgmc を追加。
+- degrainフィルタ --vpp-degrain を追加。
+- --vpp-nnedi を新実装に切り替え高速化。
+  - prescreenオプションのパラメータを変更した点に注意。
+- --vpp-resize に gauss を追加。
+- インタレ解除時の色空間指定 --vpp-deint-csp を追加。
+- OpenCLカーネル性能ダンプとレポート自動生成 --cl-perf-dump を追加。
+- OpenCLフィルタの要求フレーム数指定などを改善。
+- Intel Graphics Driver 32.0.101.8801 の HEVC + Bframes + LookaheadDepth GPU hangを回避。
+
+[QSVEnc.auo]
+- --vpp-rtgmc, --vpp-kfm, --vpp-degrain, --vpp-nnedi などの設定欄を追加。
+
+2026.05.17 (8.12)
+[QSVEncC]
+- アニメ向けエイリアス抑制フィルタ --vpp-maa を追加。
+- --vpp-ivtc の処理を更新。
+- --vpp-ivtc でフリーズする場合があったのを修正。
+- --vpp-smooth の simd16 における高速化。( #288 )
+- --vpp-pmd の高速化。( #288 )
+- Linux で Intel Xe カーネルドライバ使用時の対応を改善。
+- 音声パケットがファイルヘッダ書き込み前に muxer に渡され、出力に失敗する場合があったのを修正。
+
+[QSVEnc.auo]
+- neroaacenc で 2pass 出力ができない問題を修正。
+
+2026.05.01 (8.11)
+[QSVEncC]
+- インタレ解除フィルタ --vpp-ivtc を追加。mixed モードにも対応。
+- インタレ解除フィルタ --vpp-bwdif を追加。
+- Blu-ray / MPEG-TS入力で、ビットマップ字幕の焼き込みが正しく動作するように改善。
+- 音声処理がない場合でも、vpp-subburn に字幕が渡るよう修正。
+- libopusで 5.1 / 7.1 などのエンコードができない問題を修正。
+
+[QSVEnc.auo]
+- --vpp-ivtc, --vpp-bwdif, --vpp-msharpen, --vpp-msmooth の設定欄を追加。
+
+2026.04.18 (8.10)
+[QSVEncC]
+- --vpp-unsharpの高速化。 ( #288 )
+- vpp-tweakでpow関数呼び出しが不要な場合の高速化。( #288 )
+- vpp-knnのインデックス計算ミスを修正。( #288 )
+- vpp-nlmeansのインデックス計算ミスを修正。( #288 )
+- --vpp-libplacebo-shaderにsigmoid系のオプションを追加。 ( #286 )
+- --vpp-libplacebo-shaderに入力色空間を指定するオプションを追加。( #286 )
+- res指定が必要そうな条件を見つけたら、警告を表示するように。( #286 )
+- --lowlatency指定時は、自動的に出力スレッドを無効化するように。
+- パイプ時の遅延短縮。
+- device情報キャッシュファイルの拡張。
+- BOMが外れていたのを修正。
+- WriteFileHeaderの開始時のログ出力を追加。
+- タスクの開始/終了のデバッグ出力を追加。
+- NVEncの更新を反映。
+- 不要なコードの削減、改行コードの修正。
+
+2026.04.11 (8.09)
+[QSVEncC]
+- --vpp-msmooth, --vpp-msharpen を追加。 ( #283 )
+- libass の無効ビルドを可能に。
+- libplacebo と libvmaf を static link できるように。
+- Linux で VMAF をビルド・実行できるように。
+- AviSynthPlus/vapoursynth のヘッダを meson.build で準備するように。 ( #285 )
+
+2026.03.31 (8.08)
+- vpy 読み込みで dll/so を開くのに失敗した場合のエラーメッセージの拡充。( #284 )
+
+2026.03.28 (8.07)
+[QSVEncC]
+- VPPのqueryを8bit/10bitで分けて行うようにした。(#174, #278)
+- 音声のマルチチャンネルレイアウト判定を改善。
+
+2026.03.15 (8.06)
+[QSVEncC]
+- DTS:X(dtsx)がコピーできない問題を修正。(#256)
+
+2026.03.10 (8.05)
+[QSVEncC]
+- libvplを2.16に更新。
+- 音声ビットレート指定をチャンネルごとに指定できるように。(--audio-bitrate)
+- mux時にencoding_toolsにエンコーダのオプションを記入するオプションを追加。(--muxer-add-cmd)
+- --vpp-denoiseにlegacyモードを追加し、一部環境でエラー終了していた問題を修正。
+- repartition-checkの対応可否を判定して自動無効化するように。
+- RGB処理の取り扱いを改善。
+- Linux向けパッケージでffmpeg関連soへの依存を削除、ffmpeg 8.0ベースに。
+- Linuxでのvapoursynthの読み込みを修正。
+- LinuxのマルチGPU環境で、SIGPIPE(141)でエラー終了する可能性があったのを修正。
+
+[QSVEnc.auo]
+- 追加コマンド欄を追加。
+
+2026.01.03 (8.04)
+[QSVEncC]
+- Vapoursynth API V4に対応。
+- 入力の音声コーデックが--audio-codec指定と同じ場合は--audio-copyし、異なる場合のみエンコードするオプションを追加。 (--audio-encode-other-codec-only )
+
+[QSVEnc.auo]
+- 簡易アンインストーラを追加。
+  プラグインフォルダの QSVEnc_uninstall.bat をダブルクリックで実行すると、下記確認画面で出ます。
+- ログを(独自ウィンドウでなく)AviUtl2標準のログウィンドウに出力するように。
+- [その他の設定]に、自動ログ保存の設定を追加。
+- ベンチマークモードを追加。
+
 2025.11.09 (8.03)
 [QSVEncC]
 - AV1で--qp-offsetが使用できなかった問題を修正。( #273 )

@@ -131,7 +131,7 @@ tstring gen_cmd_help_vppmfx() {
         _T("     use vpp denoise, short form will set strength(%d - %d)\n")
         _T("    params\n")
         _T("      mode=<string>         denoise mode\n")
-        _T("        auto(default), auto_bdrate, auto_subjective, auto_adjust, pre, post\n")
+        _T("        legacy(default), auto, auto_bdrate, auto_subjective, auto_adjust, pre, post\n")
         _T("      strength=<int>        set strength(%d - %d)\n"),
         QSV_VPP_DENOISE_MIN, QSV_VPP_DENOISE_MAX,
         QSV_VPP_DENOISE_MIN, QSV_VPP_DENOISE_MAX);
@@ -146,15 +146,19 @@ tstring gen_cmd_help_vppmfx() {
     str += strsprintf(_T("")
         _T("                                 - none     disable deinterlace\n")
         _T("                                 - normal   normal deinterlace\n")
+        _T("                                 - bob      double framerate\n")
         _T("                                 - it       inverse telecine\n")
 #if ENABLE_ADVANCED_DEINTERLACE
         _T("                                 - it-manual <string>\n")
         _T("                                     \"32\", \"2332\", \"repeat\", \"41\"\n")
-#endif
-        _T("                                 - bob      double framerate\n")
-#if ENABLE_ADVANCED_DEINTERLACE
         _T("                                 - auto     auto deinterlace\n")
-        _T("                                 - auto-bob auto bob deinterlace\n")
+        _T("                                 - auto_double auto bob deinterlace\n")
+        _T("                                 - auto-bob  alias of auto_double\n")
+        _T("                                 - advanced advanced deinterlace\n")
+        _T("                                 - advanced_noref advanced deinterlace (no refs)\n")
+        _T("                                 - advanced_scd advanced deinterlace (scene change detection)\n")
+        _T("                                 - simple    deinterlace only mode\n")
+        _T("                                 - simple_bob deinterlace only mode\n")
 #endif
 #if ENABLE_FPS_CONVERSION
         _T("   --vpp-fps-conv <string>      set fps conversion mode\n")
@@ -170,7 +174,13 @@ tstring gen_cmd_help_vppmfx() {
         _T("       scd=<bool>     enable scene change detection\n")
         _T("         default: false\n"));
     str += strsprintf(_T("")
-        _T("   --vpp-perc-pre-enc           enable perceptual pre enc filter\n"));
+        _T("   --vpp-perc-pre-enc           enable perceptual pre enc filter\n")
+        _T("   --vpp-mfx-insert-clcopy [<int>]\n")
+        _T("                                insert OpenCL copy after the last MFX filter block\n")
+        _T("                                 - 0: disabled (default)\n")
+        _T("                                 - 1: enable only when d3d11 support is disabled\n")
+        _T("                                      (used when value is omitted)\n")
+        _T("                                 - 2: enable even when d3d11 support is enabled\n"));
     return str;
 }
 
@@ -348,6 +358,10 @@ tstring encoder_help() {
         _T("   --(no-)extbrc                enables extbrc\n")
         _T("   --(no-)mbbrc                 enables per macro block rate control\n")
         _T("                                 default: auto\n")
+        _T("   --ai-enc-ctrl [<string>=<value>][,<string>=<value>]...\n")
+        _T("                               enables AI encoding control\n")
+        _T("                                 - saliency=<value>, adaptive=<value>\n")
+        _T("                                 - value: on, off\n")
         _T("   --ref <int>                  reference frames\n")
         _T("                                  default %d (auto)\n")
         _T("-b,--bframes <int>              number of sequential b frames\n")
@@ -472,10 +486,6 @@ tstring encoder_help() {
 
     str += _T("\n");
     str += gen_cmd_help_ctrl();
-    str += strsprintf(_T("\n")
-        _T("   --python <string>            set python path for --perf-monitor-plot\n")
-        _T("                                 default: python\n")
-        );
     str += strsprintf(_T("\n")
         _T("   --benchmark <string>         run in benchmark mode\n")
         _T("                                 and write result in txt file\n")
@@ -729,7 +739,7 @@ int parse_one_vppmfx_option(const TCHAR *option_name, const TCHAR *strInput[], i
         i++;
         int value = get_value_from_chr(list_deinterlace, strInput[i]);
         if (PARSE_ERROR_FLAG == value) {
-            print_cmd_error_invalid_value(option_name, strInput[i]);
+            print_cmd_error_invalid_value(option_name, strInput[i], list_deinterlace);
             return 1;
         }
         vppmfx->bEnable = true;
@@ -821,6 +831,23 @@ int parse_one_vppmfx_option(const TCHAR *option_name, const TCHAR *strInput[], i
     }
     if (0 == _tcscmp(option_name, _T("no-vpp-perc-pre-enc"))) {
         vppmfx->percPreEnc = false;
+        return 0;
+    }
+    if (0 == _tcscmp(option_name, _T("vpp-mfx-insert-clcopy"))) {
+        vppmfx->mfxInsertCLCopy = 1;
+        if (i + 1 < nArgNum && strInput[i + 1][0] != _T('-')) {
+            i++;
+            int value = 0;
+            if (1 != _stscanf_s(strInput[i], _T("%d"), &value) || value < 0 || value > 2) {
+                print_cmd_error_invalid_value(option_name, strInput[i]);
+                return 1;
+            }
+            vppmfx->mfxInsertCLCopy = value;
+        }
+        return 0;
+    }
+    if (0 == _tcscmp(option_name, _T("no-vpp-mfx-insert-clcopy"))) {
+        vppmfx->mfxInsertCLCopy = 0;
         return 0;
     }
     return -10;
@@ -1553,6 +1580,58 @@ int ParseOneOption(const TCHAR *option_name, const TCHAR* strInput[], int& i, in
         pParams->bMBBRC = false;
         return 0;
     }
+    if (0 == _tcscmp(option_name, _T("ai-enc-ctrl"))) {
+        i++;
+        if (i + 1 >= nArgNum || strInput[i + 1][0] == _T('-')) {
+            return 0;
+        }
+        pParams->aiEncCtrl.enable = true;
+        const auto paramList = std::vector<std::string>{ "saliency", "adaptive" };
+        for (const auto &param : split(strInput[i], _T(","))) {
+            auto pos = param.find_first_of(_T("="));
+            if (pos != std::string::npos) {
+                auto param_arg = param.substr(0, pos);
+                auto param_val = param.substr(pos + 1);
+                param_arg = tolowercase(param_arg);
+                if (param_arg == _T("enable")) {
+                    bool b = false;
+                    if (!cmd_string_to_bool(&b, param_val)) {
+                        pParams->aiEncCtrl.enable = b;
+                    } else {
+                        print_cmd_error_invalid_value(tstring(option_name) + _T(" ") + param_arg + _T("="), param_val);
+                        return 1;
+                    }
+                    continue;
+                }
+                if (param_arg == _T("saliency")) {
+                    bool b = false;
+                    if (!cmd_string_to_bool(&b, param_val)) {
+                        pParams->aiEncCtrl.saliencyEncoder = b;
+                    } else {
+                        print_cmd_error_invalid_value(tstring(option_name) + _T(" ") + param_arg + _T("="), param_val);
+                        return 1;
+                    }
+                    continue;
+                }
+                if (param_arg == _T("adaptive")) {
+                    bool b = false;
+                    if (!cmd_string_to_bool(&b, param_val)) {
+                        pParams->aiEncCtrl.adaptiveTargetUsage = b;
+                    } else {
+                        print_cmd_error_invalid_value(tstring(option_name) + _T(" ") + param_arg + _T("="), param_val);
+                        return 1;
+                    }
+                    continue;
+                }
+                print_cmd_error_unknown_opt_param(option_name, param_arg, paramList);
+                return 1;
+            } else {
+                print_cmd_error_unknown_opt_param(option_name, param, paramList);
+                return 1;
+            }
+        }
+        return 0;
+    }
     if (0 == _tcscmp(option_name, _T("intra-refresh-cycle"))) {
         i++;
         try {
@@ -1941,11 +2020,6 @@ int ParseOneOption(const TCHAR *option_name, const TCHAR* strInput[], int& i, in
         }
         return 0;
     }
-    if (0 == _tcscmp(option_name, _T("python"))) {
-        i++;
-        pParams->pythonPath = strInput[i];
-        return 0;
-    }
     if (0 == _tcscmp(option_name, _T("timer-period-tuning"))) {
         pParams->bDisableTimerPeriodTuning = false;
         return 0;
@@ -2194,7 +2268,7 @@ int parse_cmd(sInputParams *pParams, const char *cmda, bool ignore_parse_err) {
 #endif
 
 
-tstring gen_cmd(const sVppParams *param, const sVppParams *defaultPrm, RGY_VPP_RESIZE_ALGO resize_algo, bool save_disabled_prm) {
+tstring gen_cmd(const sVppParams *param, const sVppParams *defaultPrm, RGY_VPP_RESIZE_ALGO resize_algo, bool save_disabled_prm, RGYDisableGenCmdFlags disable_flags) {
 #define OPT_FLOAT(str, opt, prec) if ((param->opt) != (defaultPrm->opt)) cmd << _T(" ") << (str) << _T(" ") << std::setprecision(prec) << (param->opt);
 #define OPT_NUM(str, opt) if ((param->opt) != (defaultPrm->opt)) cmd << _T(" ") << (str) << _T(" ") << (int)(param->opt);
 #define OPT_LST(str, opt, list) if ((param->opt) != (defaultPrm->opt)) cmd << _T(" ") << (str) << _T(" ") << get_chr_from_value(list, (param->opt));
@@ -2209,8 +2283,8 @@ tstring gen_cmd(const sVppParams *param, const sVppParams *defaultPrm, RGY_VPP_R
 #define OPT_TSTR(str, opt) if (param->opt.length() > 0) cmd << _T(" ") << str << _T(" ") << param->opt.c_str();
 #define OPT_CHAR(str, opt) if ((param->opt) && _tcslen(param->opt)) cmd << _T(" ") << str << _T(" ") << char_to_tstring(param->opt);
 #define OPT_STR(str, opt) if (param->opt.length() > 0) cmd << _T(" ") << str << _T(" ") << char_to_tstring(param->opt).c_str();
-#define OPT_CHAR_PATH(str, opt) if ((param->opt) && _tcslen(param->opt)) cmd << _T(" ") << str << _T(" \"") << (param->opt) << _T("\"");
-#define OPT_STR_PATH(str, opt) if (param->opt.length() > 0) cmd << _T(" ") << str << _T(" \"") << (param->opt.c_str()) << _T("\"");
+#define OPT_CHAR_PATH(str, opt) if (!rgy_disable_gen_cmd(disable_flags, RGYDisableGenCmdFlags::FilePath) && (param->opt) && _tcslen(param->opt)) cmd << _T(" ") << str << _T(" \"") << (param->opt) << _T("\"");
+#define OPT_STR_PATH(str, opt) if (!rgy_disable_gen_cmd(disable_flags, RGYDisableGenCmdFlags::FilePath) && param->opt.length() > 0) cmd << _T(" ") << str << _T(" \"") << (param->opt.c_str()) << _T("\"");
 
 #define ADD_NUM(str, opt) if ((param->opt) != (defaultPrm->opt)) tmp << _T(",") << (str) << _T("=") << (param->opt);
 #define ADD_LST(str, opt, list) if ((param->opt) != (defaultPrm->opt)) tmp << _T(",") << (str) << _T("=") << get_chr_from_value(list, (param->opt));
@@ -2258,6 +2332,7 @@ tstring gen_cmd(const sVppParams *param, const sVppParams *defaultPrm, RGY_VPP_R
     OPT_LST(_T("--vpp-fps-conv"), fpsConversion, list_vpp_fps_conversion);
     OPT_LST(_T("--vpp-image-stab"), imageStabilizer, list_vpp_image_stabilizer);
     OPT_BOOL(_T("--vpp-perc-pre-enc"), _T("--no-vpp-perc-pre-enc"), percPreEnc);
+    OPT_NUM(_T("--vpp-mfx-insert-clcopy"), mfxInsertCLCopy);
 
 #if 0
     if (param->colorspace != defaultPrm->colorspace) {
@@ -2357,7 +2432,7 @@ tstring gen_cmd(const sVppParams *param, const sVppParams *defaultPrm, RGY_VPP_R
 
 #pragma warning (push)
 #pragma warning (disable: 4127)
-tstring gen_cmd(const sInputParams *pParams, bool save_disabled_prm) {
+tstring gen_cmd(const sInputParams *pParams, bool save_disabled_prm, RGYDisableGenCmdFlags disable_flags) {
     std::basic_stringstream<TCHAR> tmp;
     std::basic_stringstream<TCHAR> cmd;
     sInputParams encPrmDefault;
@@ -2397,8 +2472,8 @@ tstring gen_cmd(const sInputParams *pParams, bool save_disabled_prm) {
 }
 #define OPT_CHAR(str, opt) if ((pParams->opt) && (pParams->opt[0] != 0)) cmd << _T(" ") << str << _T(" ") << (pParams->opt);
 #define OPT_STR(str, opt) if (pParams->opt.length() > 0) cmd << _T(" ") << str << _T(" ") << (pParams->opt.c_str());
-#define OPT_CHAR_PATH(str, opt) if ((pParams->opt) && (pParams->opt[0] != 0)) cmd << _T(" ") << str << _T(" \"") << (pParams->opt) << _T("\"");
-#define OPT_STR_PATH(str, opt) if (pParams->opt.length() > 0) cmd << _T(" ") << str << _T(" \"") << (pParams->opt.c_str()) << _T("\"");
+#define OPT_CHAR_PATH(str, opt) if (!rgy_disable_gen_cmd(disable_flags, RGYDisableGenCmdFlags::FilePath) && (pParams->opt) && (pParams->opt[0] != 0)) cmd << _T(" ") << str << _T(" \"") << (pParams->opt) << _T("\"");
+#define OPT_STR_PATH(str, opt) if (!rgy_disable_gen_cmd(disable_flags, RGYDisableGenCmdFlags::FilePath) && pParams->opt.length() > 0) cmd << _T(" ") << str << _T(" \"") << (pParams->opt.c_str()) << _T("\"");
 
     OPT_NUM(_T("-d"), device);
     if (pParams->codec == RGY_CODEC_AVCODEC) {
@@ -2407,7 +2482,7 @@ tstring gen_cmd(const sInputParams *pParams, bool save_disabled_prm) {
         cmd << _T(" -c ") << get_chr_from_value(list_codec_rgy, pParams->codec);
     }
 
-    cmd << gen_cmd(&pParams->input, &encPrmDefault.input, &pParams->inprm, &encPrmDefault.inprm, save_disabled_prm);
+    cmd << gen_cmd(&pParams->input, &encPrmDefault.input, &pParams->inprm, &encPrmDefault.inprm, save_disabled_prm, disable_flags);
 
     OPT_LST(_T("--output-depth"), outputDepth, list_output_depth);
     OPT_LST(_T("--output-csp"), outputCsp, list_output_csp);
@@ -2565,6 +2640,23 @@ tstring gen_cmd(const sInputParams *pParams, bool save_disabled_prm) {
     OPT_LST(_T("--scenario-info"), scenarioInfo, list_scenario_info);
     OPT_BOOL_OPT(_T("--extbrc"), _T("--no-extbrc"), extBRC);
     OPT_BOOL_OPT(_T("--mbbrc"), _T("--no-mbbrc"), bMBBRC);
+    if (save_disabled_prm || pParams->aiEncCtrl.enable != encPrmDefault.aiEncCtrl.enable) {
+        tmp.str(tstring());
+        if (!pParams->aiEncCtrl.enable && save_disabled_prm) {
+            tmp << _T(",enable=false");
+        }
+        if (pParams->aiEncCtrl.enable || save_disabled_prm) {
+            if (pParams->aiEncCtrl.saliencyEncoder.has_value()) {
+                tmp << _T(",saliency=") << (pParams->aiEncCtrl.saliencyEncoder.value() ? _T("on") : _T("off"));
+            }
+            if (pParams->aiEncCtrl.adaptiveTargetUsage.has_value()) {
+                tmp << _T(",adaptive=") << (pParams->aiEncCtrl.adaptiveTargetUsage.value() ? _T("on") : _T("off"));
+            }
+        }
+        if (!tmp.str().empty()) {
+            cmd << _T(" --ai-enc-ctrl ") << tmp.str().substr(1);
+        }
+    }
     OPT_BOOL_OPT(_T("--adapt-ref"), _T("--no-adapt-ref"), adaptiveRef);
     OPT_BOOL_OPT(_T("--adapt-ltr"), _T("--no-adapt-ltr"), adaptiveLTR);
     OPT_BOOL_OPT(_T("--adapt-cqm"), _T("--no-adapt-cqm"), adaptiveCQM);
@@ -2611,9 +2703,9 @@ tstring gen_cmd(const sInputParams *pParams, bool save_disabled_prm) {
     OPT_LST(_T("--session-thread-priority"), nSessionThreadPriority, list_priority);
 #endif //#if ENABLE_SESSION_THREAD_CONFIG
 
-    cmd << gen_cmd(&pParams->common, &encPrmDefault.common, save_disabled_prm);
-    cmd << gen_cmd(&pParams->vppmfx, &encPrmDefault.vppmfx, pParams->vpp.resize_algo, save_disabled_prm);
-    cmd << gen_cmd(&pParams->vpp, &encPrmDefault.vpp, save_disabled_prm);
+    cmd << gen_cmd(&pParams->common, &encPrmDefault.common, save_disabled_prm, disable_flags);
+    cmd << gen_cmd(&pParams->vppmfx, &encPrmDefault.vppmfx, pParams->vpp.resize_algo, save_disabled_prm, disable_flags);
+    cmd << gen_cmd(&pParams->vpp, &encPrmDefault.vpp, save_disabled_prm, disable_flags);
 
 #if defined(_WIN32) || defined(_WIN64)
     OPT_NUM(_T("--mfx-thread"), nSessionThreads);
@@ -2621,7 +2713,9 @@ tstring gen_cmd(const sInputParams *pParams, bool save_disabled_prm) {
     OPT_BOOL(_T("--gpu-copy"), _T(""), gpuCopy);
     OPT_NUM(_T("--input-buf"), nInputBufSize);
 
-    cmd << gen_cmd(&pParams->ctrl, &encPrmDefault.ctrl, save_disabled_prm);
+    if (!rgy_disable_gen_cmd(disable_flags, RGYDisableGenCmdFlags::CtrlPrms)) {
+        cmd << gen_cmd(&pParams->ctrl, &encPrmDefault.ctrl, save_disabled_prm, disable_flags);
+    }
 
     OPT_BOOL(_T("--timer-period-tuning"), _T("--no-timer-period-tuning"), bDisableTimerPeriodTuning);
     return cmd.str();

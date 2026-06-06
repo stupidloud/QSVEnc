@@ -49,7 +49,7 @@ tstring get_str_of_tune_bitmask(const uint32_t mask) {
 
 VppDenoise::VppDenoise() :
     enable(false),
-    mode(MFX_DENOISE_MODE_DEFAULT),
+    mode(MFX_DENOISE_MODE_LEGACY),
     strength(20) {
 
 }
@@ -122,7 +122,8 @@ sVppParams::sVppParams() :
     detail(),
     aiSuperRes(),
     aiFrameInterpolation(),
-    percPreEnc(false) {
+    percPreEnc(false),
+    mfxInsertCLCopy(0) {
 
 }
 
@@ -324,7 +325,7 @@ sInputParams::sInputParams() :
     hevc_tier(0),
     hevc_gpb(),
     av1(),
-    pythonPath(),
+    aiEncCtrl(),
     bBenchmark(false),
     nBenchQuality(QSV_DEFAULT_BENCH) {
     memset(pQPOffset, 0, sizeof(pQPOffset));
