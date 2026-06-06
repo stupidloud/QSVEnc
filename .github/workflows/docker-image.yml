@@ -39,9 +39,9 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           URL=$(gh api repos/rigaya/QSVEnc/releases/latest \
-            --jq '.assets[] | select(.name | endswith("Ubuntu22.04_amd64.deb")) | .browser_download_url')
+            --jq '.assets[] | select(.name | test("^qsvencc_.*_amd64\\.deb$")) | .browser_download_url')
           if [ -z "$URL" ]; then
-            echo "未找到 Ubuntu22.04_amd64.deb 资产" >&2
+            echo "未找到 qsvencc_*_amd64.deb 资产" >&2
             exit 1
           fi
           echo "url=$URL" >> "$GITHUB_OUTPUT"
