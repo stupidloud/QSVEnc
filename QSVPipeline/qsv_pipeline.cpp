@@ -124,10 +124,12 @@ RGY_DISABLE_WARNING_POP
 #include "rgy_filter_msharpen.h"
 #include "rgy_filter_cas.h"
 #include "rgy_filter_warpsharp.h"
+#include "rgy_filter_detailsharpen.h"
 #include "rgy_filter_deband.h"
 #include "rgy_filter_ssim.h"
 #include "rgy_filter_overlay.h"
 #include "rgy_filter_curves.h"
+#include "rgy_filter_softlight.h"
 #include "rgy_filter_tweak.h"
 #include "rgy_output_avcodec.h"
 #include "rgy_bitstream.h"
@@ -1916,7 +1918,12 @@ RGY_ERR CQSVPipeline::InitOutput(sInputParams *inputParams) {
     if (!m_pmfxENC) {
         outFrameInfo->videoPrm.mfx.CodecId = MFX_CODEC_RAW; //エンコードしない場合は出力コーデックはraw(=0)
     }
-    const auto outputVideoInfo = (outFrameInfo->isVppParam) ? videooutputinfo(outFrameInfo->videoPrmVpp.vpp.Out) : videooutputinfo(outFrameInfo->videoPrm.mfx, m_encParams.videoSignalInfo, m_encParams.chromaLocInfo);
+    auto outputVideoInfo = (outFrameInfo->isVppParam) ? videooutputinfo(outFrameInfo->videoPrmVpp.vpp.Out) : videooutputinfo(outFrameInfo->videoPrm.mfx, m_encParams.videoSignalInfo, m_encParams.chromaLocInfo);
+    if (m_pmfxENC
+        && m_encVUI.chromaloc != RGY_CHROMALOC_AUTO
+        && m_encVUI.chromaloc != RGY_CHROMALOC_UNSPECIFIED) {
+        outputVideoInfo.vui.chromaloc = m_encVUI.chromaloc;
+    }
     if (outputVideoInfo.codec == RGY_CODEC_RAW) {
         inputParams->common.AVMuxTarget &= ~RGY_MUX_VIDEO;
     }
@@ -2390,10 +2397,12 @@ std::vector<VppType> CQSVPipeline::InitFiltersCreateVppList(const sInputParams *
     if (inputParam->vpp.msharpen.enable)   filterPipeline.push_back(VppType::CL_MSHARPEN);
     if (inputParam->vpp.cas.enable)        filterPipeline.push_back(VppType::CL_CAS);
     if (inputParam->vpp.warpsharp.enable)  filterPipeline.push_back(VppType::CL_WARPSHARP);
+    if (inputParam->vpp.detailsharpen.enable) filterPipeline.push_back(VppType::CL_DETAILSHARPEN);
     if (inputParam->vpp.maa.enable)        filterPipeline.push_back(VppType::CL_MAA);
     if (inputParam->vppmfx.detail.enable)  filterPipeline.push_back(VppType::MFX_DETAIL_ENHANCE);
     if (inputParam->vppmfx.mirrorType != MFX_MIRRORING_DISABLED) filterPipeline.push_back(VppType::MFX_MIRROR);
     if (inputParam->vpp.transform.enable)  filterPipeline.push_back(VppType::CL_TRANSFORM);
+    if (inputParam->vpp.softlight.enable)  filterPipeline.push_back(VppType::CL_SOFTLIGHT);
     if (inputParam->vpp.curves.enable)     filterPipeline.push_back(VppType::CL_CURVES);
     if (inputParam->vpp.tweak.enable)      filterPipeline.push_back(VppType::CL_TWEAK);
     if (inputParam->vpp.deband.enable)     filterPipeline.push_back(VppType::CL_DEBAND);
@@ -3685,6 +3694,26 @@ RGY_ERR CQSVPipeline::AddFilterOpenCL(std::vector<std::unique_ptr<RGYFilter>>& c
         clfilters.push_back(std::move(filter));
         return RGY_ERR_NONE;
     }
+    //detailsharpen
+    if (vppType == VppType::CL_DETAILSHARPEN) {
+        unique_ptr<RGYFilter> filter(new RGYFilterDetailSharpen(m_cl));
+        shared_ptr<RGYFilterParamDetailSharpen> param(new RGYFilterParamDetailSharpen());
+        param->detailsharpen = params->vpp.detailsharpen;
+        param->frameIn = inputFrame;
+        param->frameOut = inputFrame;
+        param->baseFps = m_encFps;
+        param->bOutOverwrite = false;
+        auto sts = filter->init(param, m_pQSVLog);
+        if (sts != RGY_ERR_NONE) {
+            return sts;
+        }
+        //入力フレーム情報を更新
+        inputFrame = param->frameOut;
+        m_encFps = param->baseFps;
+        //登録
+        clfilters.push_back(std::move(filter));
+        return RGY_ERR_NONE;
+    }
     //warpsharp
     if (vppType == VppType::CL_WARPSHARP) {
         unique_ptr<RGYFilter> filter(new RGYFilterWarpsharp(m_cl));
@@ -3710,6 +3739,27 @@ RGY_ERR CQSVPipeline::AddFilterOpenCL(std::vector<std::unique_ptr<RGYFilter>>& c
         unique_ptr<RGYFilter> filter(new RGYFilterCurves(m_cl));
         shared_ptr<RGYFilterParamCurves> param(new RGYFilterParamCurves());
         param->curves = params->vpp.curves;
+        param->vuiInfo = vuiInfo;
+        param->frameIn = inputFrame;
+        param->frameOut = inputFrame;
+        param->baseFps = m_encFps;
+        param->bOutOverwrite = true;
+        auto sts = filter->init(param, m_pQSVLog);
+        if (sts != RGY_ERR_NONE) {
+            return sts;
+        }
+        //入力フレーム情報を更新
+        inputFrame = param->frameOut;
+        m_encFps = param->baseFps;
+        //登録
+        clfilters.push_back(std::move(filter));
+        return RGY_ERR_NONE;
+    }
+    //softlight
+    if (vppType == VppType::CL_SOFTLIGHT) {
+        unique_ptr<RGYFilter> filter(new RGYFilterSoftLight(m_cl));
+        shared_ptr<RGYFilterParamSoftLight> param(new RGYFilterParamSoftLight());
+        param->softlight = params->vpp.softlight;
         param->vuiInfo = vuiInfo;
         param->frameIn = inputFrame;
         param->frameOut = inputFrame;

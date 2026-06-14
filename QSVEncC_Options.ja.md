@@ -266,10 +266,12 @@
   - [--vpp-msharpen \[\<param1\>=\<value1\>\[,\<param2\>=\<value2\>\]...\]](#--vpp-msharpen-param1value1param2value2)
   - [--vpp-cas \[\<param1\>=\<value1\>\[,\<param2\>=\<value2\>\]...\]](#--vpp-cas-param1value1param2value2)
   - [--vpp-warpsharp \[\<param1\>=\<value1\>\[,\<param2\>=\<value2\>\]...\]](#--vpp-warpsharp-param1value1param2value2)
+  - [--vpp-detailsharpen \[\<param1\>=\<value1\>\[,\<param2\>=\<value2\>\]...\]](#--vpp-detailsharpen-param1value1param2value2)
   - [--vpp-maa \[\<param1\>=\<value1\>\[,\<param2\>=\<value2\>\]...\]](#--vpp-maa-param1value1param2value2)
   - [--vpp-detail-enhance \<int\>](#--vpp-detail-enhance-int)
   - [--vpp-rotate \<int\>](#--vpp-rotate-int)
   - [--vpp-transform \[\<param1\>=\<value1\>\[,\<param2\>=\<value2\>\]...\]](#--vpp-transform-param1value1param2value2)
+  - [--vpp-softlight \[\<param1\>=\<value1\>\]\[,\<param2\>=\<value2\>\],...](#--vpp-softlight-param1value1param2value2)
   - [--vpp-curves \[\<param1\>=\<value1\>\]\[,\<param2\>=\<value2\>\],...](#--vpp-curves-param1value1param2value2)
   - [--vpp-tweak \[\<param1\>=\<value1\>\[,\<param2\>=\<value2\>\]...\]](#--vpp-tweak-param1value1param2value2)
   - [--vpp-deband \[\<param1\>=\<value1\>\[,\<param2\>=\<value2\>\]...\]](#--vpp-deband-param1value1param2value2)
@@ -1850,9 +1852,11 @@ vppフィルタの適用順は固定で、コマンドラインの順序によ�
   - [--vpp-msharpen](#--vpp-msharpen-param1value1param2value2)
   - [--vpp-cas](#--vpp-cas-param1value1param2value2)
   - [--vpp-warpsharp](#--vpp-warpsharp-param1value1param2value2)
+  - [--vpp-detailsharpen](#--vpp-detailsharpen-param1value1param2value2)
   - [--vpp-maa](#--vpp-maa-param1value1param2value2)
   - [--vpp-detail-enhance ](#--vpp-detail-enhance-int)
   - [--vpp-transform/rotate](#--vpp-rotate-int)
+  - [--vpp-softlight](#--vpp-softlight-param1value1param2value2)
   - [--vpp-curves](#--vpp-curves-param1value1param2value2)
   - [--vpp-tweak](#--vpp-tweak-param1value1param2value2)
   - [--vpp-deband](#--vpp-deband-param1value1param2value2)
@@ -3737,6 +3741,37 @@ DCTリンギング低減フィルタ。輝度成分に補正を適用し、色�
   --vpp-warpsharp depth=8,depth_min=4,depth_max=12,edge_thr=192,gamma=0.7
   ```
 
+### --vpp-detailsharpen [&lt;param1&gt;=&lt;value1&gt;[,&lt;param2&gt;=&lt;value2&gt;]...]
+微細なディテールを強調するシャープニングフィルタ。大きな輪郭への強調を抑えつつ、テクスチャや低振幅成分を持ち上げる。
+
+- **パラメータ**
+  - z=&lt;float&gt;  (default=4.0, 0.001 - 64.0)  
+    ゼロ点。値を大きくすると、小さな輝度差をより弱く扱う。
+
+  - sstr=&lt;float&gt;  (default=1.5, 0.0 - 16.0)  
+    強調の強さ。値を大きくするとディテールがより強く持ち上がる。
+
+  - power=&lt;float&gt;  (default=4.0, 1.0 - 16.0)  
+    非線形強調の指数。値を大きくすると中程度の振幅のディテールをより優先する。
+
+  - ldmp=&lt;float&gt;  (default=1.0, 0.0 - 1000.0)  
+    低振幅成分の抑制。値を大きくするとノイズに近い小さな変化をより抑える。
+
+  - mode=&lt;int&gt;  (default=1, 0 - 1)  
+    blur の種類。0 で 3x3 Gauss、1 で 3x3 Box。
+
+  - med=&lt;bool&gt;  (default=false)  
+    blur に 3x3 median を追加適用する。
+
+- 使用例
+  ```
+  例: デフォルト設定
+  --vpp-detailsharpen
+
+  例: Gauss blur と median を使い、やや強める
+  --vpp-detailsharpen z=3,sstr=2.0,power=3,mode=0,med=true
+  ```
+
 ### --vpp-maa [&lt;param1&gt;=&lt;value1&gt;[,&lt;param2&gt;=&lt;value2&gt;]...]
 アニメ・セル画調の映像向けの masked anti-aliasing を行う。方向別9コストのAAとエッジマスクを組み合わせ、非エッジ部分を壊さずに斜め線のジャギーを低減する。
 
@@ -3794,6 +3829,36 @@ GPUによるディテールの強調を行う。0 - 100 の間でディテール
   - flip_y=&lt;bool&gt;
   
   - transpose=&lt;bool&gt;
+
+### --vpp-softlight [&lt;param1&gt;=&lt;value1&gt;][,&lt;param2&gt;=&lt;value2&gt;],...
+フレーム全体の統計に基づく軽い色被り中和・明度正規化・コントラスト/彩度強調を行うフィルタ。
+
+- **パラメータ**
+  - mode=&lt;string&gt; (default=neutralize)
+    - neutralize: 色被りを中和し、元の明るさを維持する。
+    - lightness: 明るさを正規化し、元の色相・彩度を維持する。
+    - neutralize_boost_sat: 色被り中和に加えて彩度を強調する。
+    - neutralize_full: 色と明るさを中和し、明るさ復元を行わない。
+    - neutralize_boost: neutralize_full にRGBコントラスト強調を加える。
+    - boost: RGBコントラスト強調のみを行う。
+    - saturation: 彩度強調のみを行う。
+
+  - formula=&lt;string&gt; (default=pegtop)
+    - pegtop
+    - illusionshu
+    - w3c
+
+  - skipblack=&lt;bool&gt; (default=false)
+    平均値計算から純黒画素を除外する。レターボックス等の暗部が多いソース向け。
+
+- 使用例
+  ```
+  例:
+  --vpp-softlight
+  --vpp-softlight mode=lightness
+  --vpp-softlight mode=boost,formula=w3c
+  --vpp-softlight mode=neutralize,skipblack=true
+  ```
 
 ### --vpp-curves [&lt;param1&gt;=&lt;value1&gt;][,&lt;param2&gt;=&lt;value2&gt;],...  
 指定した変換カーブに基づく色調整を行うフィルタ。

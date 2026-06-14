@@ -59,8 +59,9 @@ class RGYFilterParamRtgmc : public RGYFilterParam {
 public:
     VppRtgmc rtgmc;
     rgy_rational<int> timebase;
+    bool sharedAnalysisMode;
 
-    RGYFilterParamRtgmc() : rtgmc(), timebase() {}
+    RGYFilterParamRtgmc() : rtgmc(), timebase(), sharedAnalysisMode(false) {}
     virtual ~RGYFilterParamRtgmc() {}
     virtual tstring print() const override { return rtgmc.print(); }
 };
@@ -103,6 +104,20 @@ protected:
         std::shared_ptr<RGYFrameData> forward;
         RGYOpenCLEvent backwardEvent;
         RGYOpenCLEvent forwardEvent;
+        bool hasInlineParams;
+        std::array<RGYDegrainCompensateInlineParams, 3> backwardInlineParams;
+        std::array<RGYDegrainCompensateInlineParams, 3> forwardInlineParams;
+
+        RtgmcPendingCompRef() :
+            key(),
+            backward(),
+            forward(),
+            backwardEvent(),
+            forwardEvent(),
+            hasInlineParams(false),
+            backwardInlineParams(),
+            forwardInlineParams() {
+        }
     };
 
     struct RtgmcPendingEdiRef {
@@ -135,9 +150,41 @@ protected:
         std::deque<RtgmcPendingFrameRef> composeBaseRefs;
     };
 
+public:
+    struct RtgmcSharedAnalysisData {
+        RGYFilterDegrain *analyzeFilter;
+        std::deque<RtgmcPendingEdiRef> *pendingEdiRefs;
+        std::array<RtgmcSourceCacheFrame, 256> *sourceCache;
+        std::deque<RtgmcPendingCompRef> *pendingCompRefs;
+        std::deque<RtgmcPendingFrameRef> *pendingNoiseRefs;
+        std::shared_ptr<RGYCLSharedFramePool> sharedFramePool;
+
+        RtgmcSharedAnalysisData() : analyzeFilter(nullptr), pendingEdiRefs(nullptr),
+            sourceCache(nullptr), pendingCompRefs(nullptr), pendingNoiseRefs(nullptr), sharedFramePool() {}
+    };
+
+    void setSharedAnalysisData(const RtgmcSharedAnalysisData &data);
+    RtgmcSharedAnalysisData getSharedAnalysisData();
+
+    struct RtgmcCapturedIntermediate {
+        std::shared_ptr<RGYCLFrame> frame;
+        RGYFrameInfo frameInfo;
+        RGYOpenCLEvent event;
+    };
+
+    void enableIntermediateCapture(bool enable);
+    const std::vector<RtgmcCapturedIntermediate>& getCapturedIntermediates() const;
+    void clearCapturedIntermediates();
+    void pushIntermediateInput(const RtgmcCapturedIntermediate &input);
+
+protected:
     virtual RGY_ERR run_filter(const RGYFrameInfo *pInputFrame, RGYFrameInfo **ppOutputFrames, int *pOutputFrameNum,
         RGYOpenCLQueue &queue, const std::vector<RGYOpenCLEvent> &wait_events, RGYOpenCLEvent *event) override;
     virtual void close() override;
+public:
+    virtual void resetTemporalState() override;
+    int requiredPrimingSourceFrames() const;
+protected:
 
     RGY_ERR checkParam(const std::shared_ptr<RGYFilterParamRtgmc> &prm);
     RGY_ERR initFilters(const std::shared_ptr<RGYFilterParamRtgmc> &prm);
@@ -215,6 +262,13 @@ protected:
     size_t m_drainFilterIdx;
     bool m_draining;
     bool m_drainComplete;
+    int m_debugResetAtFrame;
+    int m_nFrame;
     bool m_attachRetouchCompRefs;
     bool m_enablePostTR2Limit;
+    bool m_sharedAnalysisMode;
+    RtgmcSharedAnalysisData m_sharedData;
+    bool m_captureIntermediate;
+    std::vector<RtgmcCapturedIntermediate> m_capturedIntermediates;
+    std::deque<RtgmcCapturedIntermediate> m_pendingIntermediateInputs;
 };

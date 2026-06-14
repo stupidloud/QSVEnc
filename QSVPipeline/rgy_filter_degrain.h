@@ -40,13 +40,17 @@ class RGYFilterParamDegrain : public RGYFilterParam {
 public:
     VppDegrain degrain;
     bool attachAnalysisData;
+    bool zeroCopyCache;
 
-    RGYFilterParamDegrain() : degrain(), attachAnalysisData(true) {};
+    RGYFilterParamDegrain() : degrain(), attachAnalysisData(true), zeroCopyCache(false) {};
     virtual ~RGYFilterParamDegrain() {};
     virtual tstring print() const override {
         auto str = degrain.print();
         if (!attachAnalysisData && degrain.mode == VppDegrainMode::Analyze) {
             str += _T(", direct-result");
+        }
+        if (zeroCopyCache) {
+            str += _T(", zero-copy-cache");
         }
         return str;
     };
@@ -66,14 +70,24 @@ public:
     bool setDirectAnalyzeResultSet(const RGYDegrainAnalyzeResultSet &resultSet);
     void clearDirectAnalyzeResult();
 
+    RGY_ERR feedFrameOnly(const RGYFrameInfo *pInputFrame, RGYOpenCLQueue &queue, const std::vector<RGYOpenCLEvent> &wait_events, RGYOpenCLEvent *event = nullptr);
+    bool outputReady() const;
+    RGY_ERR buildCompensateInlineParams(std::array<RGYDegrainCompensateInlineParams, 3> &paramsOut, RGYFrameInfo *outputFrameIdentity, RGYOpenCLQueue &queue);
+    bool drainReady() const;
+    RGY_ERR drainBuildInlineParams(std::array<RGYDegrainCompensateInlineParams, 3> &paramsOut, RGYFrameInfo *outputFrameIdentity, RGYOpenCLQueue &queue);
+
 protected:
     virtual RGY_ERR run_filter(const RGYFrameInfo *pInputFrame, RGYFrameInfo **ppOutputFrames, int *pOutputFrameNum,
         RGYOpenCLQueue &queue, const std::vector<RGYOpenCLEvent> &wait_events, RGYOpenCLEvent *event) override;
     virtual void close() override;
+public:
+    virtual void resetTemporalState() override;
+protected:
 
     RGY_ERR checkParam(const std::shared_ptr<RGYFilterParamDegrain> &prm);
     RGY_ERR allocCacheFrames(const RGYFrameInfo &frameInfo);
     RGY_ERR pushCacheFrame(const RGYFrameInfo *pInputFrame, RGYOpenCLQueue &queue, const std::vector<RGYOpenCLEvent> &wait_events, RGYOpenCLEvent *event = nullptr);
+    const RGYFrameInfo *cacheFrame(int frame) const;
     RGY_ERR emitSourceFrame(const RGYFrameInfo *pCurrentFrame, RGYFrameInfo **ppOutputFrames, int *pOutputFrameNum,
         RGYOpenCLQueue &queue, const std::vector<RGYOpenCLEvent> &wait_events, RGYOpenCLEvent *event);
     RGY_ERR emitDebugFrame(const RGYFilterDegrainFrameSet &frames, VppDegrainMode mode,
@@ -92,6 +106,7 @@ protected:
     RGY_ERR attachAnalysisData(const RGYFrameInfo *sourceFrame, RGYFrameInfo *outputFrame,
         int currentFrame, RGYOpenCLQueue &queue, const RGYOpenCLEvent &frameCopyEvent, RGYOpenCLEvent *event);
     RGY_ERR prepareAnalysisState(const RGYFilterDegrainFrameSet &frames, RGYOpenCLQueue &queue, const std::vector<RGYOpenCLEvent> &wait_events);
+    RGY_ERR prepareFallbackAnalysisState(const RGYFilterDegrainProcessFrameSet &frames, int currentFrame, RGYOpenCLQueue &queue, const std::vector<RGYOpenCLEvent> &wait_events);
     RGY_ERR prepareAnalysisStateMotionSearch(const RGYFrameInfo &planeCur, const std::array<RGYFrameInfo, RGY_DEGRAIN_MAX_TEMPORAL_DIRECTIONS> &refPlanes,
         RGYOpenCLQueue &queue, const std::vector<RGYOpenCLEvent> &wait_events);
     RGY_ERR runSourceMode(const RGYFilterDegrainFrameSet &frames, RGYFrameInfo **ppOutputFrames, int *pOutputFrameNum,
@@ -168,7 +183,9 @@ protected:
     RGY_ERR allocAnalysisBuffers(const std::shared_ptr<RGYFilterParamDegrain> &prm);
     bool modeImplemented(VppDegrainMode mode) const;
     bool modeRequiresAnalysis(VppDegrainMode mode) const;
+    bool hasDirectAnalyzeResult() const;
     bool useAnalysisLumaCache() const;
+    bool prefetchAnalysisLumaCache() const;
     RGYFilterDegrainFrameSet resolveFrameSet(int currentFrame) const;
     const RGYFrameInfo *resolveAnalysisLumaSourceFrame(int frameIndex) const;
     RGYFilterDegrainFrameSet resolveAnalysisFrameSet(int currentFrame) const;
@@ -224,6 +241,8 @@ protected:
     };
 
     std::array<std::unique_ptr<RGYCLFrame>, DEGRAIN_CACHE_SIZE> m_cacheFrames;
+    std::array<RGYFrameInfo, DEGRAIN_CACHE_SIZE> m_cacheFrameRefs;
+    std::array<std::shared_ptr<RGYCLFrame>, DEGRAIN_CACHE_SIZE> m_cacheFrameOwners;
     RGYOpenCLProgramAsync m_degrain;
     RGYOpenCLProgramAsync m_degrainChroma;
     RGYOpenCLProgramAsync m_degrainPel1;

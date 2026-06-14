@@ -540,6 +540,34 @@ RGY_ERR RGYFilterDegrain::allocAnalysisBuffers(const std::shared_ptr<RGYFilterPa
             }
         }
     }
+
+    const bool shouldPrewarmSideDataPool = prm->degrain.mode == VppDegrainMode::Analyze
+        && prm->attachAnalysisData
+        && m_sideDataBufferPool
+        && m_analysis.mvBytes > 0
+        && m_analysis.sadBytes > 0;
+    if (shouldPrewarmSideDataPool) {
+        static constexpr size_t DEGRAIN_SIDE_DATA_POOL_PREWARM_FRAMES = 64;
+        const size_t prewarmFrames = std::min<size_t>(
+            DEGRAIN_SIDE_DATA_POOL_PREWARM_FRAMES,
+            (size_t)std::max(1, prm->degrain.delta + prm->degrain.tr0 + 4));
+        auto prewarmBuffer = [&](const size_t size, const cl_mem_flags flags, const TCHAR *name) {
+            if (size == 0) {
+                return;
+            }
+            for (size_t i = 0; i < prewarmFrames; i++) {
+                auto buf = m_cl->createBuffer(size, flags);
+                if (!buf) {
+                    AddMessage(RGY_LOG_WARN, _T("degrain side data pool prewarm for %s buffer failed at %zu/%zu.\n"),
+                        name, i + 1, prewarmFrames);
+                    break;
+                }
+                m_sideDataBufferPool->recycle(std::move(buf), {});
+            }
+        };
+        prewarmBuffer(m_analysis.mvBytes, CL_MEM_READ_WRITE, _T("MV"));
+        prewarmBuffer(m_analysis.sadBytes, CL_MEM_READ_WRITE, _T("SAD"));
+    }
     return RGY_ERR_NONE;
 }
 
@@ -548,7 +576,7 @@ const RGYFrameInfo *RGYFilterDegrain::resolveAnalysisLumaSourceFrame(const int f
         return nullptr;
     }
     const int clampedFrame = clamp(frameIndex, 0, m_inputCount - 1);
-    return &m_cacheFrames[cacheIndex(clampedFrame)]->frame;
+    return cacheFrame(clampedFrame);
 }
 
 RGYFilterDegrainFrameSet RGYFilterDegrain::resolveAnalysisFrameSet(const int currentFrame) const {
@@ -830,14 +858,14 @@ RGY_ERR RGYFilterDegrain::attachAnalysisData(const RGYFrameInfo *sourceFrame, RG
     }
 
     auto mv = (m_sideDataBufferPool)
-        ? m_sideDataBufferPool->acquire(m_analysis.mvBytes, CL_MEM_READ_WRITE)
+        ? m_sideDataBufferPool->acquire(m_analysis.mvBytes, CL_MEM_READ_WRITE, &queue)
         : m_cl->createBuffer(m_analysis.mvBytes, CL_MEM_READ_WRITE);
     if (!mv) {
         AddMessage(RGY_LOG_ERROR, _T("failed to allocate degrain frame MV side data buffer.\n"));
         return RGY_ERR_MEMORY_ALLOC;
     }
     auto sad = (m_sideDataBufferPool)
-        ? m_sideDataBufferPool->acquire(m_analysis.sadBytes, CL_MEM_READ_WRITE)
+        ? m_sideDataBufferPool->acquire(m_analysis.sadBytes, CL_MEM_READ_WRITE, &queue)
         : m_cl->createBuffer(m_analysis.sadBytes, CL_MEM_READ_WRITE);
     if (!sad) {
         AddMessage(RGY_LOG_ERROR, _T("failed to allocate degrain frame SAD side data buffer.\n"));
@@ -1527,6 +1555,23 @@ RGY_ERR RGYFilterDegrain::prepareAnalysisState(const RGYFilterDegrainFrameSet &f
     }
     logAnalysisSamples(_T("local"), frames.cur, queue);
     return RGY_ERR_NONE;
+}
+
+RGY_ERR RGYFilterDegrain::prepareFallbackAnalysisState(const RGYFilterDegrainProcessFrameSet &frames, const int currentFrame,
+    RGYOpenCLQueue &queue, const std::vector<RGYOpenCLEvent> &wait_events) {
+    auto analysisFrames = frames.analysis;
+    if (useAnalysisLumaCache() && !degrainGetAttachedSearchLuma(frames.render.cur)) {
+        auto prm = std::dynamic_pointer_cast<RGYFilterParamDegrain>(m_param);
+        if (!prm) {
+            return RGY_ERR_INVALID_PARAM;
+        }
+        auto err = ensureAnalysisLumaGenerated(currentFrame + prm->degrain.delta, queue, wait_events);
+        if (err != RGY_ERR_NONE) {
+            return err;
+        }
+        analysisFrames = resolveAnalysisFrameSet(currentFrame);
+    }
+    return prepareAnalysisState(analysisFrames, queue, wait_events);
 }
 
 RGY_ERR RGYFilterDegrain::runAnalyzeMode(const RGYFilterDegrainProcessFrameSet &frames, const int currentFrame, RGYFrameInfo **ppOutputFrames, int *pOutputFrameNum,

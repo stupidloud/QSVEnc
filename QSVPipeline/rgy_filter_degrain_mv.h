@@ -272,6 +272,34 @@ struct RGYDegrainWindowRampState {
     }
 };
 
+struct RGYDegrainCompensateInlineParams {
+    const uint8_t *cur;
+    int cur_pitch;
+    const uint8_t *refBack;
+    const uint8_t *refForw;
+    int refDirBack;
+    int refDirForw;
+    const RGYDegrainMV *mv;
+    const RGYDegrainSAD *sad;
+    int blocksX;
+    int blocksY;
+    int blockSize;
+    int overlap;
+    int step;
+    int coveredWidth;
+    int coveredHeight;
+    int planeScaleX;
+    int planeScaleY;
+    uint32_t thsad;
+    uint32_t disableMask;
+    const float *windowRamp;
+    int width;
+    int height;
+    int refs;
+    int pel;
+    int subpelInterp;
+};
+
 struct RGYDegrainTemporalMixPlanState {
     std::unique_ptr<RGYCLBuf> plan;
     RGYOpenCLEvent event;
@@ -542,11 +570,9 @@ private:
 
 class RGYDegrainBufferPool {
 public:
-    static constexpr size_t MAX_POOL_BUFFERS = 128;
-
     RGYDegrainBufferPool(std::shared_ptr<RGYOpenCLContext> context);
     ~RGYDegrainBufferPool();
-    std::unique_ptr<RGYCLBuf> acquire(size_t size, cl_mem_flags flags);
+    std::unique_ptr<RGYCLBuf> acquire(size_t size, cl_mem_flags flags, RGYOpenCLQueue *queue = nullptr);
     void recycle(std::unique_ptr<RGYCLBuf>&& buf, const RGYOpenCLEvent &readyEvent);
     void clear();
 
@@ -556,10 +582,9 @@ private:
         RGYOpenCLEvent readyEvent;
     };
 
-    void waitAndDropFront();
-
     std::shared_ptr<RGYOpenCLContext> m_cl;
     std::deque<Entry> m_buffers;
+    std::vector<std::pair<size_t, cl_mem_flags>> m_knownSizes;
 };
 
 uint32_t rgy_degrain_scale_sad_threshold(const VppDegrain &degrain, const RGYFrameInfo &frameInfo, int prmThreshold, bool includeChroma = false);

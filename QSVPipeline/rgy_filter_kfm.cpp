@@ -81,8 +81,19 @@ static constexpr int KFM_VFR_SOURCE_TRIM_LOOKBEHIND = 8;
 static constexpr int KFM_VFR_DEINT60_TRIM_LOOKBEHIND = 16;
 static constexpr int KFM_UCF_NOISE_LIMIT_NMIN = 1;
 static constexpr int KFM_UCF_NOISE_LIMIT_RANGE = 128;
+static constexpr int KFM_UCF_SHARED_ANALYSIS_SOURCE_DELAY = 2;
+static constexpr int KFM_UCF_LAZY_SOURCE_CACHE_MARGIN = 512;
 static constexpr double KFM_UCF_GAUSS_P = 2.5;
 static constexpr double KFM_UCF_GAUSS_CROP_EPS = 0.0001;
+
+static void resetKfmFrameState(RGYFrameInfo& frame) {
+    frame.timestamp = 0;
+    frame.duration = 0;
+    frame.picstruct = RGY_PICSTRUCT_UNKNOWN;
+    frame.flags = RGY_FRAME_FLAG_NONE;
+    frame.inputFrameId = -1;
+    frame.dataList.clear();
+}
 
 static double kfmUcfGaussValue(const double value, const double p) {
     const auto param = std::min(std::max(p, 0.1), 100.0);
@@ -146,6 +157,11 @@ static int kfmPow2Shift(int scale) {
 
 static bool kfmDeint60BranchEnabled() {
     const char *env = std::getenv("QSVENC_KFM_ENABLE_DEINT60_BRANCH");
+    return env != nullptr && env[0] == '1' && env[1] == '\0';
+}
+
+static bool kfmForceEagerRtgmc() {
+    const char *env = std::getenv("QSVENC_KFM_FORCE_EAGER_RTGMC");
     return env != nullptr && env[0] == '1' && env[1] == '\0';
 }
 
@@ -264,21 +280,15 @@ RGYFilterKfm::RGYFilterKfm(shared_ptr<RGYOpenCLContext> context) :
     m_kfmSourceSlotFree(),
     m_kfmSourceSlotRetired(),
     m_sourceCache(),
-    m_deint60Cache(),
-    m_before60Cache(),
-    m_after60Cache(),
+    m_deint60Lane(),
+    m_before60Lane(),
+    m_after60Lane(),
     m_ucfNoiseCache(),
     m_pendingUcfNoiseResults(),
     m_fmCountBufPool(),
     m_ucfNoiseResultBufPool(),
     m_ucfNoiseResultCache(),
     m_pendingUcfNoiseDump(),
-    m_deint60SubmittedSourceFrames(0),
-    m_before60SubmittedSourceFrames(0),
-    m_after60SubmittedSourceFrames(0),
-    m_deint60CacheCopyEvent(),
-    m_before60CacheCopyEvent(),
-    m_after60CacheCopyEvent(),
     m_staticFlag(),
     m_staticWorkFrames(),
     m_analyzeFlags(),
@@ -347,6 +357,439 @@ RGYFilterKfm::~RGYFilterKfm() {
     close();
 }
 
+RGYFilterKfm::KfmRtgmcLane::KfmRtgmcLane() :
+    m_owner(nullptr),
+    m_rtgmc(nullptr),
+    m_stage(nullptr),
+    m_cacheLabel(nullptr),
+    m_dumpStaticFlag(false),
+    m_cache(),
+    m_intermediateGenerations(),
+    m_submittedFrames(0),
+    m_nextFeedSourceIndex(-1),
+    m_nextOutputN60(0),
+    m_hotUntilSourceIndex(-1),
+    m_cacheFloorN60(0),
+    m_feedCount(0),
+    m_cacheCopyEvent() {
+}
+
+void RGYFilterKfm::KfmRtgmcLane::init(RGYFilterKfm *owner, RGYFilterRtgmc *rtgmc, const char *stage, const TCHAR *cacheLabel, bool dumpStaticFlag) {
+    m_owner = owner;
+    m_rtgmc = rtgmc;
+    m_stage = stage;
+    m_cacheLabel = cacheLabel;
+    m_dumpStaticFlag = dumpStaticFlag;
+    reset();
+}
+
+void RGYFilterKfm::KfmRtgmcLane::clear() {
+    m_cache.clear();
+    m_intermediateGenerations.clear();
+    m_submittedFrames = 0;
+    m_cacheCopyEvent = RGYOpenCLEvent();
+}
+
+void RGYFilterKfm::KfmRtgmcLane::reset() {
+    clear();
+    m_nextFeedSourceIndex = -1;
+    m_nextOutputN60 = 0;
+    m_hotUntilSourceIndex = -1;
+    m_cacheFloorN60 = 0;
+    m_feedCount = 0;
+    m_resetCounts.fill(0);
+}
+
+RGY_ERR RGYFilterKfm::KfmRtgmcLane::feed(const RGYFrameInfo *frame, RGYOpenCLQueue &queue, const std::vector<RGYOpenCLEvent> &wait_events, int *cachedFrames) {
+    if (cachedFrames) {
+        *cachedFrames = 0;
+    }
+    if (!m_rtgmc) {
+        return RGY_ERR_NONE;
+    }
+
+    int rtgmcOutNum = 0;
+    RGYFrameInfo *rtgmcOutFrames[8] = { 0 };
+    RGYOpenCLEvent rtgmcEvent;
+    if (frame && frame->ptr[0]) {
+        m_feedCount++;
+    }
+    auto sts = m_rtgmc->filter(const_cast<RGYFrameInfo *>(frame), rtgmcOutFrames, &rtgmcOutNum, queue, wait_events, &rtgmcEvent);
+    if (sts != RGY_ERR_NONE) {
+        return sts;
+    }
+
+    std::vector<RGYOpenCLEvent> cacheWaitEvents;
+    if (rtgmcEvent() != nullptr) {
+        cacheWaitEvents.push_back(rtgmcEvent);
+    }
+    for (int i = 0; i < rtgmcOutNum; i++) {
+        RGYOpenCLEvent cacheEvent;
+        sts = cacheFrame(rtgmcOutFrames[i], queue, cacheWaitEvents, &cacheEvent);
+        if (sts != RGY_ERR_NONE) {
+            return sts;
+        }
+        if (cacheEvent() != nullptr) {
+            m_cacheCopyEvent = cacheEvent;
+        }
+        if (cachedFrames) {
+            (*cachedFrames)++;
+        }
+    }
+    return RGY_ERR_NONE;
+}
+
+RGY_ERR RGYFilterKfm::KfmRtgmcLane::drain(RGYOpenCLQueue &queue, int maxDrainIterations, int *cachedFrames) {
+    if (cachedFrames) {
+        *cachedFrames = 0;
+    }
+    if (!m_rtgmc) {
+        return RGY_ERR_NONE;
+    }
+    for (int iter = 0; !m_rtgmc->drainComplete(); iter++) {
+        if (iter >= maxDrainIterations) {
+            m_owner->AddMessage(RGY_LOG_ERROR, _T("KFM %S RTGMC drain did not complete after %d iterations.\n"), m_stage, maxDrainIterations);
+            return RGY_ERR_INVALID_CALL;
+        }
+        int drainedFrames = 0;
+        auto sts = feed(nullptr, queue, {}, &drainedFrames);
+        if (sts != RGY_ERR_NONE) {
+            return sts;
+        }
+        if (cachedFrames) {
+            *cachedFrames += drainedFrames;
+        }
+    }
+    return RGY_ERR_NONE;
+}
+
+RGY_ERR RGYFilterKfm::KfmRtgmcLane::drainTo(int n60end, RGYOpenCLQueue &queue) {
+    if (!m_rtgmc) {
+        return RGY_ERR_NONE;
+    }
+    const auto maxDrainIterations = std::max(256, m_owner ? m_owner->m_cachedSourceFrames * 4 + 256 : 256);
+    for (int iter = 0; m_nextOutputN60 < n60end && !m_rtgmc->drainComplete(); iter++) {
+        if (iter >= maxDrainIterations) {
+            m_owner->AddMessage(RGY_LOG_ERROR, _T("KFM %S RTGMC demand drain did not reach n60=%d after %d iterations.\n"),
+                m_stage, n60end, maxDrainIterations);
+            return RGY_ERR_INVALID_CALL;
+        }
+        auto sts = feed(nullptr, queue, {});
+        if (sts != RGY_ERR_NONE) {
+            return sts;
+        }
+        m_nextOutputN60 = m_submittedFrames;
+    }
+    return (m_nextOutputN60 >= n60end) ? RGY_ERR_NONE : RGY_ERR_MORE_DATA;
+}
+
+RGY_ERR RGYFilterKfm::KfmRtgmcLane::ensureRange(int n60begin, int n60end, RGYOpenCLQueue &queue) {
+    if (!m_rtgmc || n60begin >= n60end) {
+        return RGY_ERR_NONE;
+    }
+    n60begin = std::max(0, n60begin);
+    n60end = std::max(n60begin, n60end);
+
+    int firstMissingN60 = -1;
+    for (int n60 = n60begin; n60 < n60end; n60++) {
+        if (!find(n60, nullptr)) {
+            firstMissingN60 = n60;
+            break;
+        }
+    }
+    if (firstMissingN60 < 0) {
+        return RGY_ERR_NONE;
+    }
+
+    const int sourceBegin = n60begin >> 1;
+    const bool cold = m_nextFeedSourceIndex < 0;
+    // 欠けている最初のフレームが現在の出力位置より先 (末尾欠けのみ) なら
+    // 巻き戻し不要で前進 feed のキャッチアップで埋まる。MORE_DATA 後の
+    // リトライをフル reset 扱いにすると、source 到着待ちのたびに
+    // re-priming が走ってしまう。
+    const bool rewind = m_nextOutputN60 > firstMissingN60;
+    // 注意: 「feed 位置が要求開始 source を越えている」ことは reset 理由にしない。
+    // RTGMC はパイプライン遅延を持つため feed は出力より常に先行する。出力は
+    // feed 順に必ず生成されるので、出力位置が要求以前なら前進 feed で到達できる。
+    const bool feedPastRequest = false;
+    const bool nextFeedTrimmed = !cold && m_owner && m_nextFeedSourceIndex < m_owner->m_cachedSourceFrames && !m_owner->findSourceByIndexExact(m_nextFeedSourceIndex);
+    // 前方の需要は「現在位置からのキャッチアップ feed」と「reset + priming」の
+    // 安い方を選ぶ。hot 窓超過を一律 reset にすると、60p サイクルが頻出する
+    // コンテンツで数フレームの前進のたびに re-priming が走り大幅に遅くなる。
+    const int sourceEndFeed = (n60end - 1) >> 1;
+    const int catchupCost = !cold ? std::max(0, sourceEndFeed - m_nextFeedSourceIndex + 1) : INT_MAX;
+    const int resetCost = sourceEndFeed - std::max(0, sourceBegin - (m_rtgmc ? m_rtgmc->requiredPrimingSourceFrames() : 0)) + 1;
+    const bool farJump = !cold && catchupCost > resetCost;
+    if (cold || rewind || feedPastRequest || farJump || nextFeedTrimmed) {
+        m_resetCounts[cold ? 0 : (rewind ? 1 : (feedPastRequest ? 2 : (farJump ? 3 : 4)))]++;
+        m_rtgmc->resetTemporalState();
+        m_cache.clear();
+        m_cacheCopyEvent = RGYOpenCLEvent();
+        const int primingFrames = m_rtgmc->requiredPrimingSourceFrames();
+        const int primeStart = std::max(0, sourceBegin - primingFrames);
+        m_nextFeedSourceIndex = primeStart;
+        m_submittedFrames = primeStart * 2;
+        m_nextOutputN60 = m_submittedFrames;
+        m_hotUntilSourceIndex = -1;
+    }
+
+    m_cacheFloorN60 = n60begin;
+    while (m_nextOutputN60 < n60end) {
+        if (!m_owner) {
+            return RGY_ERR_INVALID_CALL;
+        }
+        if (m_nextFeedSourceIndex >= m_owner->m_cachedSourceFrames) {
+            if (m_owner->m_analyzerFinalized) {
+                return drainTo(n60end, queue);
+            }
+            return RGY_ERR_MORE_DATA;
+        }
+        const auto *source = m_owner->findSourceByIndexExact(m_nextFeedSourceIndex);
+        if (!source || !source->frame || !source->frame->frame.ptr[0]) {
+            if (m_owner->m_analyzerFinalized) {
+                return drainTo(n60end, queue);
+            }
+            return RGY_ERR_MORE_DATA;
+        }
+        std::vector<RGYOpenCLEvent> waitEvents;
+        if (source->event() != nullptr) {
+            waitEvents.push_back(source->event);
+        }
+        uint64_t intermediateGeneration = 0;
+        if (sharedDeint60AnalysisLane()) {
+            auto ensureSts = m_owner->ensureDeint60IntermediateForSource(source->sourceIndex, queue);
+            if (ensureSts != RGY_ERR_NONE) {
+                return ensureSts;
+            }
+            if (!m_owner->pushDeint60Intermediates(m_rtgmc, source->sourceIndex, &intermediateGeneration)) {
+                m_owner->AddMessage(RGY_LOG_WARN, _T("KFM %S RTGMC skipped sourceIndex=%d because deint60 intermediates were not ready.\n"),
+                    m_stage, source->sourceIndex);
+                return RGY_ERR_MORE_DATA;
+            }
+        }
+        auto sts = feed(&source->frame->frame, queue, waitEvents);
+        if (sts != RGY_ERR_NONE) {
+            return sts;
+        }
+        if (sharedDeint60AnalysisLane()) {
+            markIntermediateGeneration(source->sourceIndex, intermediateGeneration);
+        }
+        if (m_owner && m_rtgmc == m_owner->m_deint60Rtgmc.get()) {
+            m_owner->captureDeint60Intermediates(source->sourceIndex);
+        }
+        m_nextFeedSourceIndex++;
+        m_nextOutputN60 = m_submittedFrames;
+    }
+    m_hotUntilSourceIndex = std::max(m_hotUntilSourceIndex, m_nextFeedSourceIndex + HOT_KEEP_SOURCE_FRAMES - 1);
+    return RGY_ERR_NONE;
+}
+
+RGY_ERR RGYFilterKfm::KfmRtgmcLane::feedHot(RGYOpenCLQueue &queue) {
+    if (!m_rtgmc || !m_owner || m_nextFeedSourceIndex < 0 || m_nextFeedSourceIndex > m_hotUntilSourceIndex) {
+        return RGY_ERR_NONE;
+    }
+    const auto *source = m_owner->findSourceByIndexExact(m_nextFeedSourceIndex);
+    if (!source || !source->frame || !source->frame->frame.ptr[0]) {
+        return RGY_ERR_NONE;
+    }
+    std::vector<RGYOpenCLEvent> waitEvents;
+    if (source->event() != nullptr) {
+        waitEvents.push_back(source->event);
+    }
+    uint64_t intermediateGeneration = 0;
+    if (sharedDeint60AnalysisLane()) {
+        auto ensureSts = m_owner->ensureDeint60IntermediateForSource(source->sourceIndex, queue);
+        if (ensureSts != RGY_ERR_NONE) {
+            return RGY_ERR_NONE;
+        }
+        if (!m_owner->pushDeint60Intermediates(m_rtgmc, source->sourceIndex, &intermediateGeneration)) {
+            m_owner->AddMessage(RGY_LOG_WARN, _T("KFM %S RTGMC hot feed stopped at sourceIndex=%d because deint60 intermediates were not ready.\n"),
+                m_stage, source->sourceIndex);
+            return RGY_ERR_NONE;
+        }
+    }
+    auto sts = feed(&source->frame->frame, queue, waitEvents);
+    if (sts != RGY_ERR_NONE) {
+        return sts;
+    }
+    if (sharedDeint60AnalysisLane()) {
+        markIntermediateGeneration(source->sourceIndex, intermediateGeneration);
+    }
+    if (m_owner && m_rtgmc == m_owner->m_deint60Rtgmc.get()) {
+        m_owner->captureDeint60Intermediates(source->sourceIndex);
+    }
+    m_nextFeedSourceIndex++;
+    m_nextOutputN60 = m_submittedFrames;
+    return RGY_ERR_NONE;
+}
+
+RGY_ERR RGYFilterKfm::KfmRtgmcLane::cacheFrame(const RGYFrameInfo *frame, RGYOpenCLQueue &queue, const std::vector<RGYOpenCLEvent> &wait_events, RGYOpenCLEvent *event) {
+    if (!frame || !frame->ptr[0]) {
+        return RGY_ERR_NONE;
+    }
+    if (!m_owner || !m_stage || !m_stage[0] || !m_cacheLabel || !m_owner->m_staticFlag) {
+        return RGY_ERR_INVALID_CALL;
+    }
+
+    if (m_owner && (m_rtgmc == m_owner->m_before60Rtgmc.get() || m_rtgmc == m_owner->m_after60Rtgmc.get()) && frame->inputFrameId >= 0) {
+        const int frameN60Base = frame->inputFrameId * 2;
+        if (m_submittedFrames < frameN60Base || m_submittedFrames > frameN60Base + 1) {
+            m_submittedFrames = frameN60Base;
+        }
+    }
+
+    KfmCachedDeint60 entry;
+    entry.n60 = m_submittedFrames++;
+    if (entry.n60 < m_cacheFloorN60) {
+        return RGY_ERR_NONE;
+    }
+    entry.inputFrameId = frame->inputFrameId;
+    entry.timestamp = frame->timestamp;
+    entry.duration = frame->duration;
+    entry.frame = m_owner->acquireKfmFrame(*frame, m_cacheLabel);
+    if (!entry.frame) {
+        return RGY_ERR_MEMORY_ALLOC;
+    }
+
+    auto mergeWaitEvents = wait_events;
+    const int sourceIndex = entry.n60 >> 1;
+    const auto *source = m_owner->findSourceByIndexExact(sourceIndex);
+    if (!source) {
+        m_owner->AddMessage(RGY_LOG_ERROR, _T("KFM source frame is missing for %S output n60=%d, sourceIndex=%d, inputFrameId=%d.\n"),
+            m_stage, entry.n60, sourceIndex, frame->inputFrameId);
+        return RGY_ERR_INVALID_CALL;
+    }
+    if (source->event() != nullptr) {
+        mergeWaitEvents.push_back(source->event);
+    }
+
+    const auto rawStage = m_dumpStaticFlag ? std::string("rtgmc60-raw") : (std::string(m_stage) + "-raw");
+    auto sts = m_owner->dumpStageFrame(rawStage.c_str(), frame, entry.n60, queue, wait_events);
+    if (sts != RGY_ERR_NONE) {
+        return sts;
+    }
+
+    RGYOpenCLEvent staticEvent;
+    sts = m_owner->analyzeStaticFlag(source->sourceIndex, queue, mergeWaitEvents, &staticEvent);
+    if (sts != RGY_ERR_NONE) {
+        return sts;
+    }
+    if (staticEvent() != nullptr) {
+        mergeWaitEvents.push_back(staticEvent);
+    }
+    if (m_dumpStaticFlag) {
+        sts = m_owner->dumpStageFrame("static-flag", &m_owner->m_staticFlag->frame, sourceIndex, queue,
+            (staticEvent() != nullptr) ? std::vector<RGYOpenCLEvent>{ staticEvent } : mergeWaitEvents);
+        if (sts != RGY_ERR_NONE) {
+            return sts;
+        }
+    }
+    sts = m_owner->mergeStatic(&entry.frame->frame, frame, &source->frame->frame, queue, mergeWaitEvents, &entry.event);
+    if (sts != RGY_ERR_NONE) {
+        m_owner->AddMessage(RGY_LOG_ERROR, _T("failed to merge/cache KFM %S frame: %s.\n"), m_stage, get_err_mes(sts));
+        return sts;
+    }
+    if (event && entry.event() != nullptr) {
+        *event = entry.event;
+    }
+    m_owner->writeFrameInfoDump(m_stage, &entry.frame->frame);
+    sts = m_owner->dumpStageFrame(m_stage, &entry.frame->frame, entry.n60, queue,
+        (entry.event() != nullptr) ? std::vector<RGYOpenCLEvent>{ entry.event } : std::vector<RGYOpenCLEvent>());
+    if (sts != RGY_ERR_NONE) {
+        return sts;
+    }
+
+    m_cache.push_back(std::move(entry));
+    m_owner->trimDeint60Cache(m_cache);
+    return RGY_ERR_NONE;
+}
+
+const RGYFilterKfm::KfmCachedDeint60 *RGYFilterKfm::KfmRtgmcLane::find(int n60, std::vector<RGYOpenCLEvent> *wait_events) const {
+    for (auto it = m_cache.rbegin(); it != m_cache.rend(); ++it) {
+        if (it->n60 == n60) {
+            if (wait_events && it->event() != nullptr) {
+                wait_events->push_back(it->event);
+            }
+            return &(*it);
+        }
+    }
+    return nullptr;
+}
+
+void RGYFilterKfm::KfmRtgmcLane::trim(int n60floor, size_t cacheLimit) {
+    while (!m_cache.empty() && m_cache.front().n60 < n60floor) {
+        m_cache.pop_front();
+    }
+    while (m_cache.size() > cacheLimit && !m_cache.empty() && m_cache.front().n60 < n60floor) {
+        m_cache.pop_front();
+    }
+}
+
+int RGYFilterKfm::KfmRtgmcLane::requiredPrimingSourceFrames() const {
+    return m_rtgmc ? m_rtgmc->requiredPrimingSourceFrames() : 0;
+}
+
+bool RGYFilterKfm::KfmRtgmcLane::sharedDeint60AnalysisLane() const {
+    return m_owner && (m_rtgmc == m_owner->m_before60Rtgmc.get() || m_rtgmc == m_owner->m_after60Rtgmc.get());
+}
+
+void RGYFilterKfm::KfmRtgmcLane::markIntermediateGeneration(int sourceIndex, uint64_t generation) {
+    if (sourceIndex < 0) {
+        return;
+    }
+    for (auto& entry : m_intermediateGenerations) {
+        if (entry.first == sourceIndex) {
+            entry.second = generation;
+            return;
+        }
+    }
+    m_intermediateGenerations.push_back(std::make_pair(sourceIndex, generation));
+    while (!m_intermediateGenerations.empty() && m_intermediateGenerations.front().first + HOT_KEEP_SOURCE_FRAMES * 4 < m_nextFeedSourceIndex) {
+        m_intermediateGenerations.pop_front();
+    }
+}
+
+void RGYFilterKfm::KfmRtgmcLane::rewindIfIntermediateChanged(int sourceIndex, uint64_t generation) {
+    if (!m_rtgmc || sourceIndex < 0) {
+        return;
+    }
+    const auto used = std::find_if(m_intermediateGenerations.begin(), m_intermediateGenerations.end(), [sourceIndex](const std::pair<int, uint64_t>& entry) {
+        return entry.first == sourceIndex;
+    });
+    if (used == m_intermediateGenerations.end() || used->second == generation) {
+        return;
+    }
+    const int rewindN60 = sourceIndex * 2;
+    const bool hasGeneratedRange = std::any_of(m_cache.begin(), m_cache.end(), [rewindN60](const KfmCachedDeint60& entry) {
+        return entry.n60 >= rewindN60;
+    }) || m_nextFeedSourceIndex > sourceIndex;
+    if (!hasGeneratedRange) {
+        used->second = generation;
+        return;
+    }
+
+    m_rtgmc->resetTemporalState();
+    for (auto it = m_cache.begin(); it != m_cache.end();) {
+        if (it->n60 >= rewindN60) {
+            it = m_cache.erase(it);
+        } else {
+            ++it;
+        }
+    }
+    for (auto it = m_intermediateGenerations.begin(); it != m_intermediateGenerations.end();) {
+        if (it->first >= sourceIndex) {
+            it = m_intermediateGenerations.erase(it);
+        } else {
+            ++it;
+        }
+    }
+    const int primeStart = std::max(0, sourceIndex - requiredPrimingSourceFrames());
+    m_nextFeedSourceIndex = primeStart;
+    m_submittedFrames = primeStart * 2;
+    m_nextOutputN60 = m_submittedFrames;
+    m_hotUntilSourceIndex = -1;
+}
+
 RGY_ERR RGYFilterKfm::loadPrograms(const RGYFilterParamKfm& prm) {
     const auto bitDepth = RGY_CSP_BIT_DEPTH[prm.frameOut.csp];
     const auto options = strsprintf("-D Type=%s -D bit_depth=%d",
@@ -365,7 +808,9 @@ std::shared_ptr<RGYCLFrame> RGYFilterKfm::acquireKfmFrame(const RGYFrameInfo& in
     auto frame = m_kfmFramePool->acquire(info, flags);
     if (!frame) {
         AddMessage(RGY_LOG_ERROR, _T("failed to allocate KFM %s frame.\n"), label ? label : _T("cache"));
+        return frame;
     }
+    resetKfmFrameState(frame->frame);
     return frame;
 }
 
@@ -382,8 +827,8 @@ std::shared_ptr<RGYFilterKfm::KfmSourceSlot> RGYFilterKfm::acquireKfmSourceSlot(
         auto slot = std::move(*pooled);
         m_kfmSourceSlotFree.erase(pooled);
         slot->readyEvent.reset();
-        slot->sourceFrame->frame.dataList.clear();
-        slot->paddedFrame->frame.dataList.clear();
+        resetKfmFrameState(slot->sourceFrame->frame);
+        resetKfmFrameState(slot->paddedFrame->frame);
         return slot;
     }
 
@@ -451,6 +896,8 @@ std::shared_ptr<RGYFilterKfm::KfmSourceSlot> RGYFilterKfm::acquireKfmSourceSlot(
     slot->paddedFrame = paddedFrame;
     slot->sourceFrame = sourceFrame;
     slot->flags = flags;
+    resetKfmFrameState(slot->sourceFrame->frame);
+    resetKfmFrameState(slot->paddedFrame->frame);
     return slot;
 }
 
@@ -483,14 +930,9 @@ void RGYFilterKfm::collectRetiredKfmSourceSlots() {
             ++it;
         }
     }
-    trimFreeKfmSourceSlots();
 }
 
 void RGYFilterKfm::trimFreeKfmSourceSlots() {
-    const auto keep = std::max<size_t>(16, std::min<size_t>(sourceCacheLimit(), 256) + 8);
-    while (m_kfmSourceSlotFree.size() > keep) {
-        m_kfmSourceSlotFree.pop_front();
-    }
 }
 
 void RGYFilterKfm::clearKfmSourceSlotPool(bool wait) {
@@ -634,9 +1076,9 @@ RGY_ERR RGYFilterKfm::initAnalyzer(const RGYFilterParamKfm& prm) {
     m_maskBranchBufferIndex = 0;
     m_patchCombeBufferIndex = 0;
     m_stageDumpMaxFrames = 0;
-    m_deint60SubmittedSourceFrames = 0;
-    m_before60SubmittedSourceFrames = 0;
-    m_after60SubmittedSourceFrames = 0;
+    m_deint60Lane.reset();
+    m_before60Lane.reset();
+    m_after60Lane.reset();
     m_ucfNoiseCache.clear();
     m_pendingUcfNoiseResults.clear();
     m_ucfNoiseResultBufPool.clear();
@@ -930,7 +1372,7 @@ RGY_ERR RGYFilterKfm::dumpStageFrame(const char *stage, const RGYFrameInfo *fram
     return RGY_ERR_NONE;
 }
 
-RGY_ERR RGYFilterKfm::initRtgmc(const std::shared_ptr<RGYFilterParamKfm>& prm, std::unique_ptr<RGYFilterRtgmc>& rtgmc, bool updateOutputParam, int useFlag) {
+RGY_ERR RGYFilterKfm::initRtgmc(const std::shared_ptr<RGYFilterParamKfm>& prm, std::unique_ptr<RGYFilterRtgmc>& rtgmc, bool updateOutputParam, int useFlag, bool sharedAnalysisMode) {
     auto rtgmcParam = std::make_shared<RGYFilterParamRtgmc>();
     rtgmcParam->rtgmc.enable = true;
     rtgmcParam->rtgmc.preset = prm->kfm.preset;
@@ -945,6 +1387,7 @@ RGY_ERR RGYFilterKfm::initRtgmc(const std::shared_ptr<RGYFilterParamKfm>& prm, s
     rtgmcParam->baseFps = prm->baseFps;
     rtgmcParam->timebase = prm->timebase;
     rtgmcParam->bOutOverwrite = false;
+    rtgmcParam->sharedAnalysisMode = sharedAnalysisMode;
 
     rtgmc = std::make_unique<RGYFilterRtgmc>(m_cl);
     auto sts = rtgmc->init(rtgmcParam, m_pLog);
@@ -1037,21 +1480,23 @@ RGY_ERR RGYFilterKfm::init(shared_ptr<RGYFilterParam> pParam, shared_ptr<RGYLog>
         }
         m_before60Rtgmc.reset();
         m_after60Rtgmc.reset();
-        m_before60Cache.clear();
-        m_after60Cache.clear();
-        m_before60SubmittedSourceFrames = 0;
-        m_after60SubmittedSourceFrames = 0;
-        m_before60CacheCopyEvent = RGYOpenCLEvent();
-        m_after60CacheCopyEvent = RGYOpenCLEvent();
+        m_before60Lane.init(this, nullptr, "before60", _T("before60"), false);
+        m_after60Lane.init(this, nullptr, "after60", _T("after60"), false);
         if (prm->kfm.ucf) {
-            sts = initRtgmc(prm, m_before60Rtgmc, false, 1);
+            m_rtgmc->enableIntermediateCapture(true);
+            sts = initRtgmc(prm, m_before60Rtgmc, false, 1, true);
             if (sts != RGY_ERR_NONE) {
                 return sts;
             }
-            sts = initRtgmc(prm, m_after60Rtgmc, false, 2);
+            sts = initRtgmc(prm, m_after60Rtgmc, false, 2, true);
             if (sts != RGY_ERR_NONE) {
                 return sts;
             }
+            auto sharedData = m_rtgmc->getSharedAnalysisData();
+            m_before60Rtgmc->setSharedAnalysisData(sharedData);
+            m_after60Rtgmc->setSharedAnalysisData(sharedData);
+            m_before60Lane.init(this, m_before60Rtgmc.get(), "before60", _T("before60"), false);
+            m_after60Lane.init(this, m_after60Rtgmc.get(), "after60", _T("after60"), false);
         }
         sts = initAnalyzer(*prm);
         if (sts != RGY_ERR_NONE) {
@@ -1094,12 +1539,9 @@ RGY_ERR RGYFilterKfm::init(shared_ptr<RGYFilterParam> pParam, shared_ptr<RGYLog>
     m_deint60Rtgmc.reset();
     m_before60Rtgmc.reset();
     m_after60Rtgmc.reset();
-    m_before60Cache.clear();
-    m_after60Cache.clear();
-    m_before60SubmittedSourceFrames = 0;
-    m_after60SubmittedSourceFrames = 0;
-    m_before60CacheCopyEvent = RGYOpenCLEvent();
-    m_after60CacheCopyEvent = RGYOpenCLEvent();
+    m_deint60Lane.init(this, nullptr, "deint60", _T("deint60 cache"), true);
+    m_before60Lane.init(this, nullptr, "before60", _T("before60"), false);
+    m_after60Lane.init(this, nullptr, "after60", _T("after60"), false);
     if (prm->kfm.mode == VppKfmMode::P24) {
         AddMessage(RGY_LOG_INFO, _T("--vpp-kfm mode=24 uses the Phase3 24p render bring-up path.\n"));
     } else if (prm->kfm.mode == VppKfmMode::VFR) {
@@ -1150,19 +1592,32 @@ RGY_ERR RGYFilterKfm::init(shared_ptr<RGYFilterParam> pParam, shared_ptr<RGYLog>
             AddMessage(RGY_LOG_ERROR, _T("failed to allocate KFM static flag frame.\n"));
             return RGY_ERR_MEMORY_ALLOC;
         }
-        m_deint60Cache.clear();
-        m_deint60SubmittedSourceFrames = 0;
-        m_deint60CacheCopyEvent = RGYOpenCLEvent();
+        m_deint60Lane.init(this, m_deint60Rtgmc.get(), "deint60", _T("deint60 cache"), true);
     }
     if (prm->kfm.ucf) {
-        sts = initRtgmc(prm, m_before60Rtgmc, false, 1);
+        RGYFilterRtgmc::RtgmcSharedAnalysisData sharedData;
+        bool useSharedAnalysisMode = false;
+        if (m_deint60Rtgmc) {
+            sharedData = m_deint60Rtgmc->getSharedAnalysisData();
+            useSharedAnalysisMode = sharedData.analyzeFilter != nullptr;
+            if (useSharedAnalysisMode) {
+                m_deint60Rtgmc->enableIntermediateCapture(true);
+            }
+        }
+        sts = initRtgmc(prm, m_before60Rtgmc, false, 1, useSharedAnalysisMode);
         if (sts != RGY_ERR_NONE) {
             return sts;
         }
-        sts = initRtgmc(prm, m_after60Rtgmc, false, 2);
+        sts = initRtgmc(prm, m_after60Rtgmc, false, 2, useSharedAnalysisMode);
         if (sts != RGY_ERR_NONE) {
             return sts;
         }
+        if (useSharedAnalysisMode) {
+            m_before60Rtgmc->setSharedAnalysisData(sharedData);
+            m_after60Rtgmc->setSharedAnalysisData(sharedData);
+        }
+        m_before60Lane.init(this, m_before60Rtgmc.get(), "before60", _T("before60"), false);
+        m_after60Lane.init(this, m_after60Rtgmc.get(), "after60", _T("after60"), false);
         if (!m_staticFlag) {
             m_staticFlag = m_cl->createFrameBuffer(prm->frameOut);
             if (!m_staticFlag) {
@@ -1315,6 +1770,9 @@ size_t RGYFilterKfm::deint60CacheLimit() const {
     if (!prm || !m_deint60Rtgmc) {
         return 32;
     }
+    if (lazyDeint60Enabled(*prm)) {
+        return 32;
+    }
     if (prm->kfm.timing == VppKfmTiming::Strict) {
         return std::numeric_limits<size_t>::max();
     }
@@ -1329,7 +1787,15 @@ int RGYFilterKfm::sourceCacheTrimFloor() const {
     if (!prm || prm->kfm.mode != VppKfmMode::VFR || m_nextSwitchN60 <= 0) {
         return 0;
     }
-    auto trimFloor = std::max(0, (m_nextSwitchN60 >> 1) - KFM_VFR_SOURCE_TRIM_LOOKBEHIND);
+    int lazyLookbehind = 0;
+    if (lazyDeint60Enabled(*prm) && m_deint60Rtgmc) {
+        lazyLookbehind = m_deint60Rtgmc->requiredPrimingSourceFrames();
+        if (prm->kfm.ucf && (m_before60Rtgmc || m_after60Rtgmc)) {
+            lazyLookbehind += std::max(m_before60Lane.requiredPrimingSourceFrames(), m_after60Lane.requiredPrimingSourceFrames())
+                + KFM_UCF_SHARED_ANALYSIS_SOURCE_DELAY + 4 + KFM_UCF_LAZY_SOURCE_CACHE_MARGIN;
+        }
+    }
+    auto trimFloor = std::max(0, (m_nextSwitchN60 >> 1) - KFM_VFR_SOURCE_TRIM_LOOKBEHIND - lazyLookbehind);
     for (const auto& pending : m_pendingUcfNoiseResults) {
         if (pending.sourceIndex >= 0) {
             trimFloor = std::min(trimFloor, pending.sourceIndex);
@@ -1353,157 +1819,52 @@ int RGYFilterKfm::deint60CacheTrimFloor() const {
     return std::max(0, m_nextSwitchN60 - KFM_VFR_DEINT60_TRIM_LOOKBEHIND);
 }
 
+bool RGYFilterKfm::lazyDeint60Enabled(const RGYFilterParamKfm& prm) const {
+    return prm.kfm.mode == VppKfmMode::VFR && !kfmForceEagerRtgmc();
+}
+
 RGY_ERR RGYFilterKfm::runDeint60Branch(const RGYFrameInfo *frame, RGYOpenCLQueue &queue, const std::vector<RGYOpenCLEvent> &wait_events, int *cachedFrames) {
-    if (cachedFrames) {
-        *cachedFrames = 0;
-    }
-    if (!m_deint60Rtgmc) {
-        return RGY_ERR_NONE;
-    }
-
-    int deint60OutNum = 0;
-    RGYFrameInfo *deint60OutFrames[8] = { 0 };
-    RGYOpenCLEvent deint60Event;
-    auto sts = m_deint60Rtgmc->filter(const_cast<RGYFrameInfo *>(frame), deint60OutFrames, &deint60OutNum, queue, wait_events, &deint60Event);
-    if (sts != RGY_ERR_NONE) {
-        return sts;
-    }
-
-    std::vector<RGYOpenCLEvent> cacheWaitEvents;
-    if (deint60Event() != nullptr) {
-        cacheWaitEvents.push_back(deint60Event);
-    }
-    for (int i = 0; i < deint60OutNum; i++) {
-        RGYOpenCLEvent cacheEvent;
-        sts = cacheDeint60Frame(deint60OutFrames[i], queue, cacheWaitEvents, &cacheEvent);
-        if (sts != RGY_ERR_NONE) {
-            return sts;
-        }
-        if (cacheEvent() != nullptr) {
-            m_deint60CacheCopyEvent = cacheEvent;
-        }
-        if (cachedFrames) {
-            (*cachedFrames)++;
-        }
-    }
-    return RGY_ERR_NONE;
+    return m_deint60Lane.feed(frame, queue, wait_events, cachedFrames);
 }
 
 RGY_ERR RGYFilterKfm::drainDeint60Branch(RGYOpenCLQueue &queue, int *cachedFrames) {
-    if (cachedFrames) {
-        *cachedFrames = 0;
-    }
-    if (!m_deint60Rtgmc) {
-        return RGY_ERR_NONE;
-    }
     const auto maxDrainIterations = std::max(256, m_cachedSourceFrames * 4 + 256);
-    for (int iter = 0; !m_deint60Rtgmc->drainComplete(); iter++) {
-        if (iter >= maxDrainIterations) {
-            AddMessage(RGY_LOG_ERROR, _T("KFM deint60 RTGMC drain did not complete after %d iterations.\n"), maxDrainIterations);
-            return RGY_ERR_INVALID_CALL;
-        }
-        int drainedFrames = 0;
-        auto sts = runDeint60Branch(nullptr, queue, {}, &drainedFrames);
-        if (sts != RGY_ERR_NONE) {
-            return sts;
-        }
-        if (cachedFrames) {
-            *cachedFrames += drainedFrames;
-        }
-    }
-    return RGY_ERR_NONE;
-}
-
-RGY_ERR RGYFilterKfm::cacheDeint60Frame(const RGYFrameInfo *frame, RGYOpenCLQueue &queue, const std::vector<RGYOpenCLEvent> &wait_events, RGYOpenCLEvent *event) {
-    if (!frame || !frame->ptr[0]) {
-        return RGY_ERR_NONE;
-    }
-
-    KfmCachedDeint60 entry;
-    entry.n60 = m_deint60SubmittedSourceFrames++;
-    entry.inputFrameId = frame->inputFrameId;
-    entry.timestamp = frame->timestamp;
-    entry.duration = frame->duration;
-    entry.frame = acquireKfmFrame(*frame, _T("deint60 cache"));
-    if (!entry.frame) {
-        return RGY_ERR_MEMORY_ALLOC;
-    }
-    auto mergeWaitEvents = wait_events;
-    const int sourceIndex = entry.n60 >> 1;
-    const auto *source = findSourceByIndexExact(sourceIndex);
-    if (!source) {
-        AddMessage(RGY_LOG_ERROR, _T("KFM source frame is missing for deint60 output n60=%d, sourceIndex=%d, inputFrameId=%d.\n"),
-            entry.n60, sourceIndex, frame->inputFrameId);
-        return RGY_ERR_INVALID_CALL;
-    }
-    if (source->event() != nullptr) {
-        mergeWaitEvents.push_back(source->event);
-    }
-    auto sts = dumpStageFrame("rtgmc60-raw", frame, entry.n60, queue, wait_events);
-    if (sts != RGY_ERR_NONE) {
-        return sts;
-    }
-    RGYOpenCLEvent staticEvent;
-    sts = analyzeStaticFlag(source->sourceIndex, queue, mergeWaitEvents, &staticEvent);
-    if (sts != RGY_ERR_NONE) {
-        return sts;
-    }
-    if (staticEvent() != nullptr) {
-        mergeWaitEvents.push_back(staticEvent);
-    }
-    sts = dumpStageFrame("static-flag", &m_staticFlag->frame, sourceIndex, queue,
-        (staticEvent() != nullptr) ? std::vector<RGYOpenCLEvent>{ staticEvent } : mergeWaitEvents);
-    if (sts != RGY_ERR_NONE) {
-        return sts;
-    }
-    sts = mergeStatic(&entry.frame->frame, frame, &source->frame->frame, queue, mergeWaitEvents, &entry.event);
-    if (sts != RGY_ERR_NONE) {
-        AddMessage(RGY_LOG_ERROR, _T("failed to merge/cache KFM deint60 frame: %s.\n"), get_err_mes(sts));
-        return sts;
-    }
-    if (event && entry.event() != nullptr) {
-        *event = entry.event;
-    }
-    writeFrameInfoDump("deint60", &entry.frame->frame);
-    sts = dumpStageFrame("deint60", &entry.frame->frame, entry.n60, queue,
-        (entry.event() != nullptr) ? std::vector<RGYOpenCLEvent>{ entry.event } : std::vector<RGYOpenCLEvent>());
-    if (sts != RGY_ERR_NONE) {
-        return sts;
-    }
-
-    m_deint60Cache.push_back(std::move(entry));
-    trimDeint60Cache(m_deint60Cache);
-    return RGY_ERR_NONE;
+    return m_deint60Lane.drain(queue, maxDrainIterations, cachedFrames);
 }
 
 RGY_ERR RGYFilterKfm::runUcfRtgmcBranches(const RGYFrameInfo *frame, RGYOpenCLQueue &queue, const std::vector<RGYOpenCLEvent> &wait_events) {
     if (!m_before60Rtgmc && !m_after60Rtgmc) {
-        return RGY_ERR_NONE;
+        return runUcfNoiseAnalysisFromSource(frame, queue, wait_events);
     }
     if (!frame || !frame->ptr[0]) {
-        auto sts = drainUcfRtgmcBranch(m_before60Rtgmc.get(), "before60", queue,
-            m_before60Cache, m_before60SubmittedSourceFrames, m_before60CacheCopyEvent);
+        auto sts = drainUcfRtgmcBranch(m_before60Lane, queue);
         if (sts != RGY_ERR_NONE) {
             return sts;
         }
-        return drainUcfRtgmcBranch(m_after60Rtgmc.get(), "after60", queue,
-            m_after60Cache, m_after60SubmittedSourceFrames, m_after60CacheCopyEvent);
+        sts = drainUcfRtgmcBranch(m_after60Lane, queue);
+        if (sts != RGY_ERR_NONE) {
+            return sts;
+        }
+        return runUcfNoiseAnalysisFromSource(frame, queue, wait_events);
     }
 
-    auto sts = runUcfRtgmcBranch(m_before60Rtgmc.get(), "before60", frame, queue, wait_events,
-        m_before60Cache, m_before60SubmittedSourceFrames, m_before60CacheCopyEvent);
+    auto sts = runUcfRtgmcBranch(m_before60Lane, frame, queue, wait_events);
     if (sts != RGY_ERR_NONE) {
         return sts;
     }
-    sts = runUcfRtgmcBranch(m_after60Rtgmc.get(), "after60", frame, queue, wait_events,
-        m_after60Cache, m_after60SubmittedSourceFrames, m_after60CacheCopyEvent);
+    sts = runUcfRtgmcBranch(m_after60Lane, frame, queue, wait_events);
     if (sts != RGY_ERR_NONE) {
         return sts;
     }
+    return runUcfNoiseAnalysisFromSource(frame, queue, wait_events);
+}
+
+RGY_ERR RGYFilterKfm::runUcfNoiseAnalysisFromSource(const RGYFrameInfo *frame, RGYOpenCLQueue &queue, const std::vector<RGYOpenCLEvent> &wait_events) {
     const auto prm = std::dynamic_pointer_cast<RGYFilterParamKfm>(m_param);
     if (!prm || !frame || !frame->ptr[0]) {
         return RGY_ERR_NONE;
     }
+    auto sts = RGY_ERR_NONE;
     const int sourceIndex = m_sourceCache.empty() ? m_cachedSourceFrames - 1 : m_sourceCache.back().sourceIndex;
     for (int parity = 0; parity < 2; parity++) {
         const int fieldIndex = sourceIndex * 2 + parity;
@@ -1555,137 +1916,201 @@ RGY_ERR RGYFilterKfm::runUcfRtgmcBranches(const RGYFrameInfo *frame, RGYOpenCLQu
     return RGY_ERR_NONE;
 }
 
-RGY_ERR RGYFilterKfm::runUcfRtgmcBranch(RGYFilterRtgmc *rtgmc, const char *stage, const RGYFrameInfo *frame,
-    RGYOpenCLQueue &queue, const std::vector<RGYOpenCLEvent> &wait_events,
-    std::deque<KfmCachedDeint60>& cache, int& submittedFrames, RGYOpenCLEvent& cacheCopyEvent) {
-    if (!rtgmc) {
+RGY_ERR RGYFilterKfm::ensureUcfRtgmcRange(KfmUcfLaneType laneType, int n60begin, int n60end, RGYOpenCLQueue &queue) {
+    if (laneType == KFM_UCF_LANE_NONE || n60begin >= n60end) {
         return RGY_ERR_NONE;
     }
-
-    int rtgmcOutNum = 0;
-    RGYFrameInfo *rtgmcOutFrames[8] = { 0 };
-    RGYOpenCLEvent rtgmcEvent;
-    auto sts = rtgmc->filter(const_cast<RGYFrameInfo *>(frame), rtgmcOutFrames, &rtgmcOutNum, queue, wait_events, &rtgmcEvent);
-    if (sts != RGY_ERR_NONE) {
-        return sts;
+    // eager (FORCE_EAGER or non-lazy) では intake で全フレーム feed 済みのため ensure 不要。
+    // ここで ensureRange を呼ぶと進行中の eager パイプラインを resetTemporalState で
+    // 破壊して再 priming が発生する (長尺の eager 実行で性能劣化と出力差の原因になる)。
+    const auto prm = std::dynamic_pointer_cast<RGYFilterParamKfm>(m_param);
+    if (!prm || !lazyDeint60Enabled(*prm)) {
+        return RGY_ERR_NONE;
     }
-
-    std::vector<RGYOpenCLEvent> cacheWaitEvents;
-    if (rtgmcEvent() != nullptr) {
-        cacheWaitEvents.push_back(rtgmcEvent);
+    auto *lane = (laneType == KFM_UCF_LANE_BEFORE) ? &m_before60Lane : &m_after60Lane;
+    if (!m_deint60Rtgmc || (laneType == KFM_UCF_LANE_BEFORE && !m_before60Rtgmc) || (laneType == KFM_UCF_LANE_AFTER && !m_after60Rtgmc)) {
+        return RGY_ERR_NONE;
     }
-    for (int i = 0; i < rtgmcOutNum; i++) {
-        RGYOpenCLEvent cacheEvent;
-        sts = cacheUcfRtgmcFrame(stage, rtgmcOutFrames[i], queue, cacheWaitEvents, cache, submittedFrames, &cacheEvent);
+    const int sourceBegin = std::max(0, n60begin) >> 1;
+    const int primeStart = std::max(0, sourceBegin - lane->requiredPrimingSourceFrames());
+    const int sourceEndDelay = (laneType == KFM_UCF_LANE_AFTER) ? KFM_UCF_SHARED_ANALYSIS_SOURCE_DELAY : 0;
+    const int sourceEnd = std::max(primeStart, divCeil(std::max(0, n60end), 2) + sourceEndDelay);
+    if (!m_analyzerFinalized && m_cachedSourceFrames < sourceEnd) {
+        return RGY_ERR_MORE_DATA;
+    }
+    for (int sourceIndex = primeStart; sourceIndex < sourceEnd; sourceIndex++) {
+        if (hasDeint60Intermediate(sourceIndex)) {
+            continue;
+        }
+        auto sts = ensureDeint60IntermediateForSource(sourceIndex, queue);
         if (sts != RGY_ERR_NONE) {
             return sts;
         }
-        if (cacheEvent() != nullptr) {
-            cacheCopyEvent = cacheEvent;
+        if (!hasDeint60Intermediate(sourceIndex)) {
+            AddMessage(RGY_LOG_WARN, _T("KFM UCF RTGMC could not prepare deint60 intermediates for sourceIndex=%d.\n"),
+                sourceIndex);
+            return RGY_ERR_MORE_DATA;
+        }
+    }
+    const int sideN60End = (laneType == KFM_UCF_LANE_AFTER) ? std::max(n60end, sourceEnd * 2) : n60end;
+    auto sts = lane->ensureRange(n60begin, sideN60End, queue);
+    if (sts != RGY_ERR_NONE) {
+        return sts;
+    }
+    for (int n60 = n60begin; n60 < n60end; n60++) {
+        if (!lane->find(n60, nullptr)) {
+            return RGY_ERR_MORE_DATA;
         }
     }
     return RGY_ERR_NONE;
 }
 
-RGY_ERR RGYFilterKfm::drainUcfRtgmcBranch(RGYFilterRtgmc *rtgmc, const char *stage, RGYOpenCLQueue &queue,
-    std::deque<KfmCachedDeint60>& cache, int& submittedFrames, RGYOpenCLEvent& cacheCopyEvent) {
-    if (!rtgmc) {
+void RGYFilterKfm::captureDeint60Intermediates(int sourceIndex) {
+    if (!m_deint60Rtgmc || sourceIndex < 0) {
+        return;
+    }
+    const auto& captured = m_deint60Rtgmc->getCapturedIntermediates();
+    if (!captured.empty()) {
+        for (auto& group : m_deint60IntermediateQueue) {
+            if (group.sourceIndex == sourceIndex) {
+                group.generation++;
+                group.intermediates = captured;
+                m_before60Lane.rewindIfIntermediateChanged(sourceIndex, group.generation);
+                m_after60Lane.rewindIfIntermediateChanged(sourceIndex, group.generation);
+                m_deint60Rtgmc->clearCapturedIntermediates();
+                return;
+            }
+        }
+        KfmMainIntermediateGroup group;
+        group.sourceIndex = sourceIndex;
+        group.generation = 1;
+        group.intermediates = captured;
+        m_deint60IntermediateQueue.push_back(std::move(group));
+        trimDeint60Intermediates();
+    }
+    m_deint60Rtgmc->clearCapturedIntermediates();
+}
+
+bool RGYFilterKfm::hasDeint60Intermediate(int sourceIndex, uint64_t *generation) const {
+    if (generation) {
+        *generation = 0;
+    }
+    if (sourceIndex < 0) {
+        return false;
+    }
+    const auto it = std::find_if(m_deint60IntermediateQueue.begin(), m_deint60IntermediateQueue.end(), [sourceIndex](const KfmMainIntermediateGroup& group) {
+        return group.sourceIndex == sourceIndex && !group.intermediates.empty();
+    });
+    if (it == m_deint60IntermediateQueue.end()) {
+        return false;
+    }
+    if (generation) {
+        *generation = it->generation;
+    }
+    return true;
+}
+
+bool RGYFilterKfm::hasDeint60Intermediates(int sourceBegin, int sourceEnd) const {
+    for (int sourceIndex = sourceBegin; sourceIndex < sourceEnd; sourceIndex++) {
+        if (!hasDeint60Intermediate(sourceIndex)) {
+            return false;
+        }
+    }
+    return true;
+}
+
+RGY_ERR RGYFilterKfm::ensureDeint60IntermediateForSource(int sourceIndex, RGYOpenCLQueue &queue) {
+    if (sourceIndex < 0) {
         return RGY_ERR_NONE;
     }
+    if (hasDeint60Intermediate(sourceIndex)) {
+        return RGY_ERR_NONE;
+    }
+    if (!m_deint60Rtgmc) {
+        return RGY_ERR_MORE_DATA;
+    }
+    purgeDeint60Intermediates(sourceIndex, sourceIndex + 1);
+    auto& deint60Cache = m_deint60Lane.cache();
+    for (auto it = deint60Cache.begin(); it != deint60Cache.end();) {
+        if (sourceIndex * 2 <= it->n60 && it->n60 < (sourceIndex + 1) * 2) {
+            it = deint60Cache.erase(it);
+        } else {
+            ++it;
+        }
+    }
+    auto sts = m_deint60Lane.ensureRange(sourceIndex * 2, (sourceIndex + 1) * 2, queue);
+    if (sts != RGY_ERR_NONE) {
+        return sts;
+    }
+    if (!hasDeint60Intermediate(sourceIndex)) {
+        AddMessage(RGY_LOG_WARN, _T("KFM UCF RTGMC could not prepare deint60 intermediates for sourceIndex=%d.\n"), sourceIndex);
+        return RGY_ERR_MORE_DATA;
+    }
+    return RGY_ERR_NONE;
+}
+
+bool RGYFilterKfm::pushDeint60Intermediates(RGYFilterRtgmc *rtgmc, int sourceIndex, uint64_t *generation) {
+    if (generation) {
+        *generation = 0;
+    }
+    if (!rtgmc || sourceIndex < 0) {
+        return false;
+    }
+    for (const auto& group : m_deint60IntermediateQueue) {
+        if (group.sourceIndex == sourceIndex && !group.intermediates.empty()) {
+            for (const auto& captured : group.intermediates) {
+                rtgmc->pushIntermediateInput(captured);
+            }
+            if (generation) {
+                *generation = group.generation;
+            }
+            return true;
+        }
+    }
+    const char *stage = (rtgmc == m_before60Rtgmc.get()) ? "before60" : ((rtgmc == m_after60Rtgmc.get()) ? "after60" : "unknown");
+    AddMessage(RGY_LOG_WARN, _T("KFM %S RTGMC shared-analysis intermediates missing for sourceIndex=%d; feed postponed.\n"),
+        stage, sourceIndex);
+    return false;
+}
+
+void RGYFilterKfm::purgeDeint60Intermediates(int sourceBegin, int sourceEnd) {
+    sourceBegin = std::max(0, sourceBegin);
+    sourceEnd = std::max(sourceBegin, sourceEnd);
+    for (auto it = m_deint60IntermediateQueue.begin(); it != m_deint60IntermediateQueue.end();) {
+        if (sourceBegin <= it->sourceIndex && it->sourceIndex < sourceEnd) {
+            m_before60Lane.rewindIfIntermediateChanged(it->sourceIndex, it->generation + 1);
+            m_after60Lane.rewindIfIntermediateChanged(it->sourceIndex, it->generation + 1);
+            it = m_deint60IntermediateQueue.erase(it);
+        } else {
+            ++it;
+        }
+    }
+}
+
+void RGYFilterKfm::trimDeint60Intermediates() {
+    const int keepSourceFrames = std::max<int>(32, (int)sourceCacheLimit());
+    while (!m_deint60IntermediateQueue.empty() && m_deint60IntermediateQueue.front().sourceIndex + keepSourceFrames < m_cachedSourceFrames) {
+        m_deint60IntermediateQueue.pop_front();
+    }
+}
+
+RGY_ERR RGYFilterKfm::runUcfRtgmcBranch(KfmRtgmcLane& lane, const RGYFrameInfo *frame,
+    RGYOpenCLQueue &queue, const std::vector<RGYOpenCLEvent> &wait_events) {
+    return lane.feed(frame, queue, wait_events);
+}
+
+RGY_ERR RGYFilterKfm::drainUcfRtgmcBranch(KfmRtgmcLane& lane, RGYOpenCLQueue &queue) {
     const auto maxDrainIterations = std::max(256, m_cachedSourceFrames * 4 + 256);
-    for (int iter = 0; !rtgmc->drainComplete(); iter++) {
-        if (iter >= maxDrainIterations) {
-            AddMessage(RGY_LOG_ERROR, _T("KFM %S RTGMC drain did not complete after %d iterations.\n"), stage, maxDrainIterations);
-            return RGY_ERR_INVALID_CALL;
-        }
-        auto sts = runUcfRtgmcBranch(rtgmc, stage, nullptr, queue, {}, cache, submittedFrames, cacheCopyEvent);
-        if (sts != RGY_ERR_NONE) {
-            return sts;
-        }
-    }
-    return RGY_ERR_NONE;
-}
-
-RGY_ERR RGYFilterKfm::cacheUcfRtgmcFrame(const char *stage, const RGYFrameInfo *frame, RGYOpenCLQueue &queue,
-    const std::vector<RGYOpenCLEvent> &wait_events, std::deque<KfmCachedDeint60>& cache, int& submittedFrames, RGYOpenCLEvent *event) {
-    if (!frame || !frame->ptr[0]) {
-        return RGY_ERR_NONE;
-    }
-    if (!stage || !stage[0] || !m_staticFlag) {
-        return RGY_ERR_INVALID_CALL;
-    }
-
-    KfmCachedDeint60 entry;
-    entry.n60 = submittedFrames++;
-    entry.inputFrameId = frame->inputFrameId;
-    entry.timestamp = frame->timestamp;
-    entry.duration = frame->duration;
-    entry.frame = acquireKfmFrame(*frame, char_to_tstring(stage).c_str());
-    if (!entry.frame) {
-        return RGY_ERR_MEMORY_ALLOC;
-    }
-
-    auto mergeWaitEvents = wait_events;
-    const int sourceIndex = entry.n60 >> 1;
-    const auto *source = findSourceByIndexExact(sourceIndex);
-    if (!source) {
-        AddMessage(RGY_LOG_ERROR, _T("KFM source frame is missing for %S output n60=%d, sourceIndex=%d, inputFrameId=%d.\n"),
-            stage, entry.n60, sourceIndex, frame->inputFrameId);
-        return RGY_ERR_INVALID_CALL;
-    }
-    if (source->event() != nullptr) {
-        mergeWaitEvents.push_back(source->event);
-    }
-
-    const auto rawStage = std::string(stage) + "-raw";
-    auto sts = dumpStageFrame(rawStage.c_str(), frame, entry.n60, queue, wait_events);
-    if (sts != RGY_ERR_NONE) {
-        return sts;
-    }
-
-    RGYOpenCLEvent staticEvent;
-    sts = analyzeStaticFlag(source->sourceIndex, queue, mergeWaitEvents, &staticEvent);
-    if (sts != RGY_ERR_NONE) {
-        return sts;
-    }
-    if (staticEvent() != nullptr) {
-        mergeWaitEvents.push_back(staticEvent);
-    }
-    sts = mergeStatic(&entry.frame->frame, frame, &source->frame->frame, queue, mergeWaitEvents, &entry.event);
-    if (sts != RGY_ERR_NONE) {
-        AddMessage(RGY_LOG_ERROR, _T("failed to merge/cache KFM %S frame: %s.\n"), stage, get_err_mes(sts));
-        return sts;
-    }
-    if (event && entry.event() != nullptr) {
-        *event = entry.event;
-    }
-    writeFrameInfoDump(stage, &entry.frame->frame);
-    sts = dumpStageFrame(stage, &entry.frame->frame, entry.n60, queue,
-        (entry.event() != nullptr) ? std::vector<RGYOpenCLEvent>{ entry.event } : std::vector<RGYOpenCLEvent>());
-    if (sts != RGY_ERR_NONE) {
-        return sts;
-    }
-
-    cache.push_back(std::move(entry));
-    trimDeint60Cache(cache);
-    return RGY_ERR_NONE;
+    return lane.drain(queue, maxDrainIterations);
 }
 
 const RGYFrameInfo *RGYFilterKfm::findDeint60Frame(int n60, std::vector<RGYOpenCLEvent> *wait_events) const {
-    const auto *entry = findCachedDeint60Frame(m_deint60Cache, n60, wait_events);
+    const auto *entry = findCachedDeint60Frame(m_deint60Lane, n60, wait_events);
     return entry && entry->frame ? &entry->frame->frame : nullptr;
 }
 
-const RGYFilterKfm::KfmCachedDeint60 *RGYFilterKfm::findCachedDeint60Frame(const std::deque<KfmCachedDeint60>& cache, int n60, std::vector<RGYOpenCLEvent> *wait_events) const {
-    for (auto it = cache.rbegin(); it != cache.rend(); ++it) {
-        if (it->n60 == n60) {
-            if (wait_events && it->event() != nullptr) {
-                wait_events->push_back(it->event);
-            }
-            return &(*it);
-        }
-    }
-    return nullptr;
+const RGYFilterKfm::KfmCachedDeint60 *RGYFilterKfm::findCachedDeint60Frame(const KfmRtgmcLane& lane, int n60, std::vector<RGYOpenCLEvent> *wait_events) const {
+    return lane.find(n60, wait_events);
 }
 
 const RGYFilterKfm::KfmUcfNoiseDumpRecord *RGYFilterKfm::findUcfNoiseResult(int sourceIndex) const {
@@ -2727,9 +3152,28 @@ const RGYFrameInfo *RGYFilterKfm::selectUcfDecomb30Frame(int sourceIndex, const 
     if (!deint30 || sourceIndex < 0) {
         return deint30;
     }
+    const auto selection = planUcfDecomb30Frame(sourceIndex);
+    const KfmRtgmcLane *lane = nullptr;
+    if (selection.lane == KFM_UCF_LANE_BEFORE) {
+        lane = &m_before60Lane;
+    } else if (selection.lane == KFM_UCF_LANE_AFTER) {
+        lane = &m_after60Lane;
+    }
+    if (selection.type == KFM_UCF24_SELECT_FRAME && lane && selection.n60 >= 0) {
+        const auto *entry = findCachedDeint60Frame(*lane, selection.n60, wait_events);
+        return (entry && entry->frame && entry->frame->frame.ptr[0]) ? &entry->frame->frame : deint30;
+    }
+    return deint30;
+}
+
+RGYFilterKfm::KfmUcf24Selection RGYFilterKfm::planUcfDecomb30Frame(int sourceIndex) const {
+    KfmUcf24Selection selection;
+    if (sourceIndex < 0) {
+        return selection;
+    }
     const auto *noise = findUcfNoiseResult(sourceIndex);
     if (!noise || !noise->valid) {
-        return deint30;
+        return selection;
     }
 
     RGYKFM::DecombUCFParam param;
@@ -2737,19 +3181,23 @@ const RGYFrameInfo *RGYFilterKfm::selectUcfDecomb30Frame(int sourceIndex, const 
     try {
         result = RGYKFM::CalcDecombUCF(&noise->meta, &param, noise->results, nullptr, false);
     } catch (...) {
-        return deint30;
+        return selection;
     }
 
     const int n60 = sourceIndex * 2;
     if (result == RGYKFM::DECOMB_UCF_USE_0) {
-        const auto *entry = findCachedDeint60Frame(m_before60Cache, n60, wait_events);
-        return (entry && entry->frame && entry->frame->frame.ptr[0]) ? &entry->frame->frame : deint30;
+        selection.type = KFM_UCF24_SELECT_FRAME;
+        selection.lane = KFM_UCF_LANE_BEFORE;
+        selection.n60 = n60;
+        return selection;
     }
     if (result == RGYKFM::DECOMB_UCF_USE_1) {
-        const auto *entry = findCachedDeint60Frame(m_after60Cache, n60 + 1, wait_events);
-        return (entry && entry->frame && entry->frame->frame.ptr[0]) ? &entry->frame->frame : deint30;
+        selection.type = KFM_UCF24_SELECT_FRAME;
+        selection.lane = KFM_UCF_LANE_AFTER;
+        selection.n60 = n60 + 1;
+        return selection;
     }
-    return deint30;
+    return selection;
 }
 
 bool RGYFilterKfm::getUcf60FieldDiff(int nstart, double (&diff)[4]) const {
@@ -2831,6 +3279,25 @@ const RGYFrameInfo *RGYFilterKfm::selectUcfDecomb60Frame(int n60, const RGYFrame
     if (!deint60 || n60 < 0) {
         return deint60;
     }
+    const auto selection = planUcfDecomb60Frame(n60);
+    const KfmRtgmcLane *lane = nullptr;
+    if (selection.lane == KFM_UCF_LANE_BEFORE) {
+        lane = &m_before60Lane;
+    } else if (selection.lane == KFM_UCF_LANE_AFTER) {
+        lane = &m_after60Lane;
+    }
+    if (lane && selection.n60 >= 0) {
+        const auto *entry = findCachedDeint60Frame(*lane, selection.n60, wait_events);
+        return (entry && entry->frame && entry->frame->frame.ptr[0]) ? &entry->frame->frame : deint60;
+    }
+    return deint60;
+}
+
+RGYFilterKfm::KfmUcf60Selection RGYFilterKfm::planUcfDecomb60Frame(int n60) const {
+    KfmUcf60Selection selection;
+    if (n60 < 0) {
+        return selection;
+    }
     const auto centerFlag = calcUcf60Flag(n60);
     KfmUcf60Flag sideFlag = KFM_UCF60_NONE;
     for (int i = -1; i <= 1; i += 2) {
@@ -2844,34 +3311,46 @@ const RGYFrameInfo *RGYFilterKfm::selectUcfDecomb60Frame(int n60, const RGYFrame
         }
     }
 
-    auto findFrame = [&](const std::deque<KfmCachedDeint60>& cache, int frameIndex) -> const RGYFrameInfo * {
-        const auto *entry = findCachedDeint60Frame(cache, frameIndex, wait_events);
-        return (entry && entry->frame && entry->frame->frame.ptr[0]) ? &entry->frame->frame : nullptr;
-    };
     if (centerFlag == KFM_UCF60_PREV) {
-        if (const auto *frame = findFrame(m_before60Cache, n60 - 1)) {
-            return frame;
-        }
+        selection.lane = KFM_UCF_LANE_BEFORE;
+        selection.n60 = n60 - 1;
     } else if (centerFlag == KFM_UCF60_NEXT) {
-        if (const auto *frame = findFrame(m_after60Cache, n60 + 1)) {
-            return frame;
-        }
+        selection.lane = KFM_UCF_LANE_AFTER;
+        selection.n60 = n60 + 1;
     } else if (sideFlag == KFM_UCF60_PREV) {
-        if (const auto *frame = findFrame(m_before60Cache, n60)) {
-            return frame;
-        }
+        selection.lane = KFM_UCF_LANE_BEFORE;
+        selection.n60 = n60;
     } else if (sideFlag == KFM_UCF60_NEXT) {
-        if (const auto *frame = findFrame(m_after60Cache, n60)) {
-            return frame;
-        }
+        selection.lane = KFM_UCF_LANE_AFTER;
+        selection.n60 = n60;
     }
-    return deint60;
+    return selection;
 }
 
 RGYFilterKfm::KfmUcf24Selection RGYFilterKfm::selectUcfDecomb24Frame(const RGYKFM::Frame24Info& frameInfo, const RGYFrameInfo *deint24, std::vector<RGYOpenCLEvent> *wait_events) const {
-    KfmUcf24Selection selection;
+    auto selection = planUcfDecomb24Frame(frameInfo);
     selection.frame = deint24;
-    if (!deint24 || frameInfo.numFields <= 0 || frameInfo.numFields > 6) {
+    if (selection.type != KFM_UCF24_SELECT_FRAME || selection.n60 < 0) {
+        return selection;
+    }
+    const KfmRtgmcLane *lane = nullptr;
+    if (selection.lane == KFM_UCF_LANE_BEFORE) {
+        lane = &m_before60Lane;
+    } else if (selection.lane == KFM_UCF_LANE_AFTER) {
+        lane = &m_after60Lane;
+    }
+    if (lane) {
+        const auto *entry = findCachedDeint60Frame(*lane, selection.n60, wait_events);
+        if (entry && entry->frame && entry->frame->frame.ptr[0]) {
+            selection.frame = &entry->frame->frame;
+        }
+    }
+    return selection;
+}
+
+RGYFilterKfm::KfmUcf24Selection RGYFilterKfm::planUcfDecomb24Frame(const RGYKFM::Frame24Info& frameInfo) const {
+    KfmUcf24Selection selection;
+    if (frameInfo.numFields <= 0 || frameInfo.numFields > 6) {
         return selection;
     }
 
@@ -2917,21 +3396,15 @@ RGYFilterKfm::KfmUcf24Selection RGYFilterKfm::selectUcfDecomb24Frame(const RGYKF
     if (frameInfo.numFields <= 2) {
         const int n60start = frameInfo.cycleIndex * 10 + frameInfo.fieldStartIndex;
         if (cleanField[0]) {
-            const auto *entry = findCachedDeint60Frame(m_before60Cache, n60start, wait_events);
-            if (entry && entry->frame && entry->frame->frame.ptr[0]) {
-                selection.type = KFM_UCF24_SELECT_FRAME;
-                selection.n60 = n60start;
-                selection.frame = &entry->frame->frame;
-            }
+            selection.type = KFM_UCF24_SELECT_FRAME;
+            selection.lane = KFM_UCF_LANE_BEFORE;
+            selection.n60 = n60start;
             return selection;
         }
         if (cleanField[1]) {
-            const auto *entry = findCachedDeint60Frame(m_after60Cache, n60start + 1, wait_events);
-            if (entry && entry->frame && entry->frame->frame.ptr[0]) {
-                selection.type = KFM_UCF24_SELECT_FRAME;
-                selection.n60 = n60start + 1;
-                selection.frame = &entry->frame->frame;
-            }
+            selection.type = KFM_UCF24_SELECT_FRAME;
+            selection.lane = KFM_UCF_LANE_AFTER;
+            selection.n60 = n60start + 1;
             return selection;
         }
     }
@@ -5549,8 +6022,23 @@ RGY_ERR RGYFilterKfm::run_filter(const RGYFrameInfo *pInputFrame, RGYFrameInfo *
                 return sts;
             }
         }
+        int rtgmcOutNum = 0;
+        RGYFrameInfo *rtgmcOutFrames[8] = { 0 };
+        RGYOpenCLEvent rtgmcEvent;
+        sts = m_rtgmc->filter(const_cast<RGYFrameInfo *>(pInputFrame), rtgmcOutFrames, &rtgmcOutNum, queue, wait_events, &rtgmcEvent);
+        if (sts != RGY_ERR_NONE) {
+            return sts;
+        }
         if (prm->kfm.ucf) {
-            sts = runUcfRtgmcBranches(pInputFrame, queue, wait_events);
+            const bool lazyDeint60 = lazyDeint60Enabled(*prm);
+            for (auto &captured : m_rtgmc->getCapturedIntermediates()) {
+                if (m_before60Rtgmc) m_before60Rtgmc->pushIntermediateInput(captured);
+                if (m_after60Rtgmc) m_after60Rtgmc->pushIntermediateInput(captured);
+            }
+            m_rtgmc->clearCapturedIntermediates();
+            sts = lazyDeint60
+                ? runUcfNoiseAnalysisFromSource(pInputFrame, queue, {})
+                : runUcfRtgmcBranches(pInputFrame, queue, {});
             if (sts != RGY_ERR_NONE) {
                 return sts;
             }
@@ -5560,13 +6048,6 @@ RGY_ERR RGYFilterKfm::run_filter(const RGYFrameInfo *pInputFrame, RGYFrameInfo *
                     return sts;
                 }
             }
-        }
-        int rtgmcOutNum = 0;
-        RGYFrameInfo *rtgmcOutFrames[8] = { 0 };
-        RGYOpenCLEvent rtgmcEvent;
-        sts = m_rtgmc->filter(const_cast<RGYFrameInfo *>(pInputFrame), rtgmcOutFrames, &rtgmcOutNum, queue, wait_events, &rtgmcEvent);
-        if (sts != RGY_ERR_NONE) {
-            return sts;
         }
         *pOutputFrameNum = 0;
         std::vector<RGYOpenCLEvent> processWaitEvents;
@@ -5602,11 +6083,19 @@ RGY_ERR RGYFilterKfm::run_filter(const RGYFrameInfo *pInputFrame, RGYFrameInfo *
         if (sts != RGY_ERR_NONE) {
             return sts;
         }
-        sts = (pInputFrame == nullptr || pInputFrame->ptr[0] == nullptr)
-            ? drainDeint60Branch(queue)
-            : runDeint60Branch(pInputFrame, queue, wait_events);
+        const bool lazyDeint60 = lazyDeint60Enabled(*prm);
+        sts = lazyDeint60
+            ? ((pInputFrame && pInputFrame->ptr[0]) ? m_deint60Lane.feedHot(queue) : RGY_ERR_NONE)
+            : ((pInputFrame == nullptr || pInputFrame->ptr[0] == nullptr) ? drainDeint60Branch(queue) : runDeint60Branch(pInputFrame, queue, wait_events));
         if (sts != RGY_ERR_NONE) {
             return sts;
+        }
+        if (!lazyDeint60 && prm->kfm.ucf && m_deint60Rtgmc) {
+            for (auto &captured : m_deint60Rtgmc->getCapturedIntermediates()) {
+                if (m_before60Rtgmc) m_before60Rtgmc->pushIntermediateInput(captured);
+                if (m_after60Rtgmc) m_after60Rtgmc->pushIntermediateInput(captured);
+            }
+            m_deint60Rtgmc->clearCapturedIntermediates();
         }
         if (prm->kfm.ucf) {
             sts = runUcfRtgmcBranches(pInputFrame, queue, wait_events);
@@ -5638,6 +6127,9 @@ RGY_ERR RGYFilterKfm::run_filter(const RGYFrameInfo *pInputFrame, RGYFrameInfo *
         const int vfrOutputDelay = switchSingleFrameDurationEnabled() ? 1 : 0;
         auto emitReadyPending = [&](int keepFrames) -> RGY_ERR {
             return emitPendingVfrOutputs(ppOutputFrames, pOutputFrameNum, queue, event, keepFrames);
+        };
+        auto ensureDeint60Range = [&](int n60begin, int n60end) -> RGY_ERR {
+            return lazyDeint60 ? m_deint60Lane.ensureRange(n60begin, n60end, queue) : RGY_ERR_NONE;
         };
         sts = emitReadyPending(drain ? 0 : vfrOutputDelay);
         if (sts != RGY_ERR_NONE) {
@@ -5835,7 +6327,8 @@ RGY_ERR RGYFilterKfm::run_filter(const RGYFrameInfo *pInputFrame, RGYFrameInfo *
                 RGYOpenCLEvent maskEvent;
                 cl_uint containsCombeCount = 0;
                 KfmContainsCombeReadback containsCombeReadback;
-                const bool needsContainsCombeCount = switchSingleFrameDurationEnabled();
+                const bool patchCombe24Enabled = kfmDeint60BranchEnabled() && outputTiming.frame24Index >= 0 && m_deint60Rtgmc && m_analyzer;
+                const bool needsContainsCombeCount = switchSingleFrameDurationEnabled() || patchCombe24Enabled;
                 sts = renderMaskBranch(switchFlag, containsCombe, combeMask, superPrev24, super24, superNext24, "switch-flag-min", "contains-combe", "combe-mask-min", queue, maskWaitEvents, &maskEvent, needsContainsCombeCount ? &containsCombeReadback : nullptr);
                 if (sts != RGY_ERR_NONE) {
                     return sts;
@@ -5878,7 +6371,7 @@ RGY_ERR RGYFilterKfm::run_filter(const RGYFrameInfo *pInputFrame, RGYFrameInfo *
                         return sts;
                     }
                     int patchN60 = -1;
-                    if (kfmDeint60BranchEnabled() && outputTiming.frame24Index >= 0 && m_deint60Rtgmc && m_analyzer) {
+                    if (patchCombe24Enabled) {
                         try {
                             static const int patchFieldIndex[4] = { 1, 3, 6, 8 };
                             const int frame24Cycle = outputTiming.frame24Index / 4;
@@ -5890,10 +6383,19 @@ RGY_ERR RGYFilterKfm::run_filter(const RGYFrameInfo *pInputFrame, RGYFrameInfo *
                             patchN60 = -1;
                         }
                     }
-                    if (patchN60 >= 0) {
+                    if (patchN60 >= 0 && containsCombeCount > 0) {
                         std::vector<RGYOpenCLEvent> patchWaitEvents = removeWaitEvents;
                         if (outputEvent() != nullptr) {
                             patchWaitEvents.push_back(outputEvent);
+                        }
+                        sts = ensureDeint60Range(patchN60, patchN60 + 1);
+                        if (sts == RGY_ERR_MORE_DATA) {
+                            m_workBufferIndex = savedWorkBufferIndex;
+                            m_telecineSuperBufferIndex = savedTelecineSuperBufferIndex;
+                            break;
+                        }
+                        if (sts != RGY_ERR_NONE) {
+                            return sts;
                         }
                         const auto *deint60 = findDeint60Frame(patchN60, &patchWaitEvents);
                         if (deint60 && deint60->ptr[0]) {
@@ -5931,6 +6433,18 @@ RGY_ERR RGYFilterKfm::run_filter(const RGYFrameInfo *pInputFrame, RGYFrameInfo *
                         sts = resolveUcfNoiseResults((lastUcfN60 >> 1) + 1, queue);
                         if (sts != RGY_ERR_NONE) {
                             return sts;
+                        }
+                        const auto ucf24Plan = planUcfDecomb24Frame(frameInfo);
+                        if (ucf24Plan.type == KFM_UCF24_SELECT_FRAME && ucf24Plan.n60 >= 0) {
+                            sts = ensureUcfRtgmcRange(ucf24Plan.lane, ucf24Plan.n60, ucf24Plan.n60 + 1, queue);
+                            if (sts == RGY_ERR_MORE_DATA) {
+                                m_workBufferIndex = savedWorkBufferIndex;
+                                m_telecineSuperBufferIndex = savedTelecineSuperBufferIndex;
+                                break;
+                            }
+                            if (sts != RGY_ERR_NONE) {
+                                return sts;
+                            }
                         }
                         const auto ucf24 = selectUcfDecomb24Frame(frameInfo, out, &ucfWaitEvents);
                         if (ucf24.type == KFM_UCF24_SELECT_FRAME && ucf24.frame && ucf24.frame != out) {
@@ -6015,15 +6529,18 @@ RGY_ERR RGYFilterKfm::run_filter(const RGYFrameInfo *pInputFrame, RGYFrameInfo *
                 }
             } else if (outputTiming.baseType == KFM_FRAME_60) {
                 std::vector<RGYOpenCLEvent> copyWaitEvents = wait_events;
+                sts = ensureDeint60Range(outputTiming.start60, outputTiming.start60 + outputTiming.duration60);
+                if (sts == RGY_ERR_MORE_DATA) {
+                    break;
+                }
+                if (sts != RGY_ERR_NONE) {
+                    return sts;
+                }
                 const auto *deint60 = findDeint60Frame(outputTiming.start60, &copyWaitEvents);
                 if (!deint60 || !deint60->ptr[0]) {
                     break;
                 }
                 if (prm->kfm.ucf) {
-                    sts = resolveUcfNoiseResults((outputTiming.start60 >> 1) + 3, queue);
-                    if (sts != RGY_ERR_NONE) {
-                        return sts;
-                    }
                     deint60 = selectUcfDecomb60Frame(outputTiming.start60, deint60, &copyWaitEvents);
                 }
                 out = nextWorkFrame();
@@ -6173,6 +6690,13 @@ RGY_ERR RGYFilterKfm::run_filter(const RGYFrameInfo *pInputFrame, RGYFrameInfo *
                     if (patchCombe30Enabled && containsCombeCount > 0) {
                         std::vector<RGYOpenCLEvent> patchWaitEvents = copyWaitEvents;
                         const int patchN60 = outputTiming.sourceIndex * 2;
+                        sts = ensureDeint60Range(patchN60, patchN60 + 1);
+                        if (sts == RGY_ERR_MORE_DATA) {
+                            break;
+                        }
+                        if (sts != RGY_ERR_NONE) {
+                            return sts;
+                        }
                         const auto *deint60 = findDeint60Frame(patchN60, &patchWaitEvents);
                         if (!deint60 || !deint60->ptr[0]) {
                             break;
@@ -6288,6 +6812,13 @@ RGY_ERR RGYFilterKfm::run_filter(const RGYFrameInfo *pInputFrame, RGYFrameInfo *
             : runDeint60Branch(pInputFrame, queue, wait_events);
         if (sts != RGY_ERR_NONE) {
             return sts;
+        }
+        if (prm->kfm.ucf && m_deint60Rtgmc) {
+            for (auto &captured : m_deint60Rtgmc->getCapturedIntermediates()) {
+                if (m_before60Rtgmc) m_before60Rtgmc->pushIntermediateInput(captured);
+                if (m_after60Rtgmc) m_after60Rtgmc->pushIntermediateInput(captured);
+            }
+            m_deint60Rtgmc->clearCapturedIntermediates();
         }
         if (prm->kfm.ucf) {
             sts = runUcfRtgmcBranches(pInputFrame, queue, wait_events);
@@ -6666,6 +7197,11 @@ void RGYFilterKfm::close() {
         }
     }
     flushUcfNoiseResultDump();
+    AddMessage(RGY_LOG_DEBUG, _T("KFM RTGMC feed count: deint60=%lld, before60=%lld, after60=%lld.\n"),
+        (long long)m_deint60Lane.feedCount(), (long long)m_before60Lane.feedCount(), (long long)m_after60Lane.feedCount());
+    const auto& deint60Resets = m_deint60Lane.resetCounts();
+    AddMessage(RGY_LOG_DEBUG, _T("KFM RTGMC deint60 resets: cold=%lld rewind=%lld feedPast=%lld farJump=%lld trimmed=%lld.\n"),
+        (long long)deint60Resets[0], (long long)deint60Resets[1], (long long)deint60Resets[2], (long long)deint60Resets[3], (long long)deint60Resets[4]);
     m_rtgmc.reset();
     m_deint60Rtgmc.reset();
     m_before60Rtgmc.reset();
@@ -6678,9 +7214,9 @@ void RGYFilterKfm::close() {
         }
     }
     m_sourceCache.clear();
-    m_deint60Cache.clear();
-    m_before60Cache.clear();
-    m_after60Cache.clear();
+    m_deint60Lane.init(this, nullptr, "deint60", _T("deint60 cache"), true);
+    m_before60Lane.init(this, nullptr, "before60", _T("before60"), false);
+    m_after60Lane.init(this, nullptr, "after60", _T("after60"), false);
     m_ucfNoiseCache.clear();
     clearKfmSourceSlotPool(true);
     if (m_kfmFramePool) {
@@ -6690,9 +7226,6 @@ void RGYFilterKfm::close() {
     m_ucfNoiseResultBufPool.clear();
     m_ucfNoiseResultCache.clear();
     m_pendingVfrOutputs.clear();
-    m_deint60CacheCopyEvent = RGYOpenCLEvent();
-    m_before60CacheCopyEvent = RGYOpenCLEvent();
-    m_after60CacheCopyEvent = RGYOpenCLEvent();
     m_staticFlag.reset();
     for (auto& frame : m_staticWorkFrames) {
         frame.reset();
@@ -6791,9 +7324,9 @@ void RGYFilterKfm::close() {
     m_nextFMCountSubmitCycle = 0;
     m_nextFMCountDumpFrame = 0;
     m_cachedSourceFrames = 0;
-    m_deint60SubmittedSourceFrames = 0;
-    m_before60SubmittedSourceFrames = 0;
-    m_after60SubmittedSourceFrames = 0;
+    m_deint60Lane.reset();
+    m_before60Lane.reset();
+    m_after60Lane.reset();
     m_nextSwitchN60 = 0;
     m_nextSwitchPts = 0;
     m_hasLastSwitchTiming = false;

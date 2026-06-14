@@ -31,6 +31,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
 #include <cstdlib>
 
 static constexpr int RGY_RTGMC_MAX_OUT_FRAMES = 32;
@@ -148,6 +149,15 @@ static bool rtgmcNoiseDenoiserSupported(VppRtgmcNoiseDenoiser denoiser) {
 static bool rtgmcNoiseDenoiserUsesNLMeans(VppRtgmcNoiseDenoiser denoiser) {
     return denoiser == VppRtgmcNoiseDenoiser::NLMeans;
 }
+
+static void resetRtgmcFrameState(RGYFrameInfo& frame) {
+    frame.timestamp = 0;
+    frame.duration = 0;
+    frame.picstruct = RGY_PICSTRUCT_UNKNOWN;
+    frame.flags = RGY_FRAME_FLAG_NONE;
+    frame.inputFrameId = -1;
+    frame.dataList.clear();
+}
 }
 
 RGYFilterRtgmc::RGYFilterRtgmc(shared_ptr<RGYOpenCLContext> context) :
@@ -173,14 +183,61 @@ RGYFilterRtgmc::RGYFilterRtgmc(shared_ptr<RGYOpenCLContext> context) :
     m_drainFilterIdx(0),
     m_draining(false),
     m_drainComplete(false),
+    m_debugResetAtFrame(0),
+    m_nFrame(0),
     m_attachRetouchCompRefs(false),
-    m_enablePostTR2Limit(false) {
+    m_enablePostTR2Limit(false),
+    m_sharedAnalysisMode(false),
+    m_sharedData(),
+    m_captureIntermediate(false),
+    m_capturedIntermediates(),
+    m_pendingIntermediateInputs() {
     m_name = _T("rtgmc");
     m_pathThrough = FILTER_PATHTHROUGH_NONE;
 }
 
 std::shared_ptr<RGYCLFrame> RGYFilterRtgmc::getSharedFrameBuffer(const RGYFrameInfo *frame) {
-    return m_sharedFramePool ? m_sharedFramePool->acquire(frame) : nullptr;
+    auto sharedFrame = m_sharedFramePool ? m_sharedFramePool->acquire(frame) : nullptr;
+    if (sharedFrame) {
+        resetRtgmcFrameState(sharedFrame->frame);
+    }
+    return sharedFrame;
+}
+
+void RGYFilterRtgmc::setSharedAnalysisData(const RtgmcSharedAnalysisData &data) {
+    m_sharedData = data;
+}
+
+RGYFilterRtgmc::RtgmcSharedAnalysisData RGYFilterRtgmc::getSharedAnalysisData() {
+    RtgmcSharedAnalysisData data;
+    data.analyzeFilter = dynamic_cast<RGYFilterDegrain *>(m_filters[RTGMC_FILTER_ANALYZE].get());
+    data.pendingEdiRefs = &m_pendingEdiRefs;
+    data.sourceCache = &m_sourceCache;
+    data.pendingCompRefs = &m_pendingCompRefs;
+    data.pendingNoiseRefs = &m_pendingNoiseRefs;
+    data.sharedFramePool = m_sharedFramePool;
+    return data;
+}
+
+void RGYFilterRtgmc::enableIntermediateCapture(bool enable) {
+    m_captureIntermediate = enable;
+}
+
+const std::vector<RGYFilterRtgmc::RtgmcCapturedIntermediate>& RGYFilterRtgmc::getCapturedIntermediates() const {
+    return m_capturedIntermediates;
+}
+
+void RGYFilterRtgmc::clearCapturedIntermediates() {
+    m_capturedIntermediates.clear();
+}
+
+void RGYFilterRtgmc::pushIntermediateInput(const RtgmcCapturedIntermediate &input) {
+    auto queued = input;
+    if (queued.frame && !queued.frameInfo.ptr[0]) {
+        queued.frameInfo = queued.frame->frame;
+        queued.frameInfo.dataList.push_back(std::make_shared<RGYFrameDataRtgmcFrameRef>(queued.frame));
+    }
+    m_pendingIntermediateInputs.push_back(queued);
 }
 
 RGYFilterRtgmc::~RGYFilterRtgmc() {
@@ -314,6 +371,7 @@ RGY_ERR RGYFilterRtgmc::initRetouchCompFilters(const std::shared_ptr<RGYFilterPa
         param->degrain.delta = 1;
         param->degrain.mode = modes[i];
         param->degrain.stage = VppDegrainStage::TR1;
+        param->zeroCopyCache = true;
         auto sts = filter->init(param, m_pLog);
         if (sts != RGY_ERR_NONE) {
             AddMessage(RGY_LOG_ERROR, _T("failed to initialize retouch helper %s: %s.\n"),
@@ -461,55 +519,62 @@ RGY_ERR RGYFilterRtgmc::updateCompReferenceStore(const RGYFrameInfo *frame, RGYO
     if (!m_attachRetouchCompRefs || !frame || !frame->ptr[0]) {
         return RGY_ERR_NONE;
     }
-    auto analyze = dynamic_cast<RGYFilterDegrain *>(m_filters[RTGMC_FILTER_ANALYZE].get());
+    RGYFilterDegrain *analyze = nullptr;
+    if (m_sharedAnalysisMode && m_sharedData.analyzeFilter) {
+        analyze = m_sharedData.analyzeFilter;
+    } else {
+        analyze = dynamic_cast<RGYFilterDegrain *>(m_filters[RTGMC_FILTER_ANALYZE].get());
+    }
     if (!analyze) {
         AddMessage(RGY_LOG_ERROR, _T("Invalid analyze filter instance for retouch helper.\n"));
         return RGY_ERR_INVALID_CALL;
     }
 
-    static const std::array<RGYRtgmcCompDirection, 2> directions = {
-        RGYRtgmcCompDirection::Backward,
-        RGYRtgmcCompDirection::Forward
-    };
+    std::array<RGYDegrainCompensateInlineParams, 3> backwardParams = {};
+    std::array<RGYDegrainCompensateInlineParams, 3> forwardParams = {};
+    bool backwardReady = false;
+    bool forwardReady = false;
+    RGYFrameInfo backwardIdentity = {};
+    RGYFrameInfo forwardIdentity = {};
+
     for (size_t i = 0; i < m_retouchCompFilters.size(); i++) {
         auto filter = m_retouchCompFilters[i].get();
         if (!filter) {
             continue;
         }
         filter->setDirectAnalyzeResultSet(analyze->analyzeResultSet());
-        int childOutFrameNum = 0;
-        RGYFrameInfo *childOutFrames[RGY_RTGMC_MAX_OUT_FRAMES] = { 0 };
-        RGYOpenCLEvent childEvent;
-        auto sts = filter->filter(const_cast<RGYFrameInfo *>(frame), childOutFrames, &childOutFrameNum, queue, wait_events, &childEvent);
+
+        auto sts = filter->feedFrameOnly(frame, queue, wait_events, nullptr);
         if (sts != RGY_ERR_NONE) {
             return sts;
         }
-        if (childOutFrameNum <= 0 || !childOutFrames[0] || !childOutFrames[0]->ptr[0]) {
+        if (!filter->outputReady()) {
             continue;
         }
 
-        auto sharedFrame = getSharedFrameBuffer(childOutFrames[0]);
-        if (!sharedFrame) {
-            AddMessage(RGY_LOG_ERROR, _T("failed to allocate retouch helper side-data frame.\n"));
-            return RGY_ERR_MEMORY_ALLOC;
-        }
-        RGYOpenCLEvent copyEvent;
-        std::vector<RGYOpenCLEvent> copyWaitEvents;
-        if (childEvent() != nullptr) {
-            copyWaitEvents.push_back(childEvent);
-        }
-        auto err = m_cl->copyFrame(&sharedFrame->frame, childOutFrames[0], nullptr, queue, copyWaitEvents, &copyEvent, RGYFrameCopyMode::FRAME, "rtgmc.retouch_comp_ref");
-        if (err != RGY_ERR_NONE) {
-            AddMessage(RGY_LOG_ERROR, _T("failed to copy retouch helper side-data frame: %s.\n"), get_err_mes(err));
-            return err;
-        }
-        copyFramePropWithoutRes(&sharedFrame->frame, childOutFrames[0]);
+        auto &params = (i == 0) ? backwardParams : forwardParams;
+        auto &identity = (i == 0) ? backwardIdentity : forwardIdentity;
+        auto &ready = (i == 0) ? backwardReady : forwardReady;
 
-        auto frameData = std::make_shared<RGYFrameDataRtgmcComp>(sharedFrame, directions[i], 1);
-        if (directions[i] == RGYRtgmcCompDirection::Backward) {
-            storeCompReference(childOutFrames[0], frameData, nullptr, copyEvent, RGYOpenCLEvent());
-        } else {
-            storeCompReference(childOutFrames[0], nullptr, frameData, RGYOpenCLEvent(), copyEvent);
+        sts = filter->buildCompensateInlineParams(params, &identity, queue);
+        if (sts == RGY_ERR_NONE) {
+            ready = true;
+        } else if (sts != RGY_ERR_MORE_DATA) {
+            return sts;
+        }
+    }
+
+    if (backwardReady || forwardReady) {
+        const RGYFrameInfo *identityFrame = backwardReady ? &backwardIdentity : &forwardIdentity;
+        auto compRef = findStoredCompReference(identityFrame);
+        if (!compRef) {
+            storeCompReference(identityFrame, nullptr, nullptr, RGYOpenCLEvent(), RGYOpenCLEvent());
+            compRef = findStoredCompReference(identityFrame);
+        }
+        if (compRef) {
+            compRef->hasInlineParams = true;
+            compRef->backwardInlineParams = backwardParams;
+            compRef->forwardInlineParams = forwardParams;
         }
     }
     return RGY_ERR_NONE;
@@ -519,57 +584,62 @@ RGY_ERR RGYFilterRtgmc::drainCompReferenceStore(RGYOpenCLQueue &queue) {
     if (!m_attachRetouchCompRefs) {
         return RGY_ERR_NONE;
     }
-    auto analyze = dynamic_cast<RGYFilterDegrain *>(m_filters[RTGMC_FILTER_ANALYZE].get());
+    RGYFilterDegrain *analyze = nullptr;
+    if (m_sharedAnalysisMode && m_sharedData.analyzeFilter) {
+        analyze = m_sharedData.analyzeFilter;
+    } else {
+        analyze = dynamic_cast<RGYFilterDegrain *>(m_filters[RTGMC_FILTER_ANALYZE].get());
+    }
     if (!analyze) {
         AddMessage(RGY_LOG_ERROR, _T("Invalid analyze filter instance while draining retouch helpers.\n"));
         return RGY_ERR_INVALID_CALL;
     }
-    static const std::array<RGYRtgmcCompDirection, 2> directions = {
-        RGYRtgmcCompDirection::Backward,
-        RGYRtgmcCompDirection::Forward
-    };
     bool progress = true;
     while (progress) {
         progress = false;
-        RGYFrameInfo drainFrame;
+
+        std::array<RGYDegrainCompensateInlineParams, 3> backwardParams = {};
+        std::array<RGYDegrainCompensateInlineParams, 3> forwardParams = {};
+        bool backwardReady = false;
+        bool forwardReady = false;
+        RGYFrameInfo backwardIdentity = {};
+        RGYFrameInfo forwardIdentity = {};
+
         for (size_t i = 0; i < m_retouchCompFilters.size(); i++) {
             auto &filter = m_retouchCompFilters[i];
             if (!filter) {
                 continue;
             }
             filter->setDirectAnalyzeResultSet(analyze->analyzeResultSet());
-            int childOutFrameNum = 0;
-            RGYFrameInfo *childOutFrames[RGY_RTGMC_MAX_OUT_FRAMES] = { 0 };
-            RGYOpenCLEvent childEvent;
-            auto sts = filter->filter(&drainFrame, childOutFrames, &childOutFrameNum, queue, &childEvent);
-            if (sts != RGY_ERR_NONE) {
+
+            if (!filter->drainReady()) {
+                continue;
+            }
+
+            auto &params = (i == 0) ? backwardParams : forwardParams;
+            auto &identity = (i == 0) ? backwardIdentity : forwardIdentity;
+            auto &ready = (i == 0) ? backwardReady : forwardReady;
+
+            auto sts = filter->drainBuildInlineParams(params, &identity, queue);
+            if (sts == RGY_ERR_NONE) {
+                ready = true;
+                progress = true;
+            } else if (sts != RGY_ERR_MORE_DATA) {
                 return sts;
             }
-            if (childOutFrameNum > 0) {
-                progress = true;
-                auto sharedFrame = getSharedFrameBuffer(childOutFrames[0]);
-                if (!sharedFrame) {
-                    AddMessage(RGY_LOG_ERROR, _T("failed to allocate drained retouch helper side-data frame.\n"));
-                    return RGY_ERR_MEMORY_ALLOC;
-                }
-                RGYOpenCLEvent copyEvent;
-                std::vector<RGYOpenCLEvent> copyWaitEvents;
-                if (childEvent() != nullptr) {
-                    copyWaitEvents.push_back(childEvent);
-                }
-                auto err = m_cl->copyFrame(&sharedFrame->frame, childOutFrames[0], nullptr, queue, copyWaitEvents, &copyEvent, RGYFrameCopyMode::FRAME, "rtgmc.retouch_comp_ref_drain");
-                if (err != RGY_ERR_NONE) {
-                    AddMessage(RGY_LOG_ERROR, _T("failed to copy drained retouch helper side-data frame: %s.\n"), get_err_mes(err));
-                    return err;
-                }
-                copyFramePropWithoutRes(&sharedFrame->frame, childOutFrames[0]);
+        }
 
-                auto frameData = std::make_shared<RGYFrameDataRtgmcComp>(sharedFrame, directions[i], 1);
-                if (directions[i] == RGYRtgmcCompDirection::Backward) {
-                    storeCompReference(childOutFrames[0], frameData, nullptr, copyEvent, RGYOpenCLEvent());
-                } else {
-                    storeCompReference(childOutFrames[0], nullptr, frameData, RGYOpenCLEvent(), copyEvent);
-                }
+        if (backwardReady || forwardReady) {
+            const RGYFrameInfo *identityFrame = backwardReady ? &backwardIdentity : &forwardIdentity;
+            auto compRef = findStoredCompReference(identityFrame);
+            if (!compRef) {
+                storeCompReference(identityFrame, nullptr, nullptr, RGYOpenCLEvent(), RGYOpenCLEvent());
+                compRef = findStoredCompReference(identityFrame);
+            }
+            if (compRef) {
+                compRef->hasInlineParams = true;
+                compRef->backwardInlineParams = backwardParams;
+                compRef->forwardInlineParams = forwardParams;
             }
         }
     }
@@ -577,10 +647,18 @@ RGY_ERR RGYFilterRtgmc::drainCompReferenceStore(RGYOpenCLQueue &queue) {
 }
 
 void RGYFilterRtgmc::attachStoredCompReferences(RGYFrameInfo *frame, std::vector<RGYOpenCLEvent> *wait_events) {
-    if (!m_attachRetouchCompRefs || !frame) {
+    if (!frame) {
         return;
     }
-    auto pending = findStoredCompReference(frame);
+    RtgmcPendingCompRef *pending = nullptr;
+    if (m_sharedAnalysisMode && m_sharedData.pendingCompRefs) {
+        auto it = std::find_if(m_sharedData.pendingCompRefs->begin(), m_sharedData.pendingCompRefs->end(), [frame](const RtgmcPendingCompRef &entry) {
+            return entry.key.matches(frame) || entry.key.matchesFrameIdentity(frame);
+        });
+        pending = (it != m_sharedData.pendingCompRefs->end()) ? &(*it) : nullptr;
+    } else if (m_attachRetouchCompRefs) {
+        pending = findStoredCompReference(frame);
+    }
     if (!pending) {
         return;
     }
@@ -600,6 +678,9 @@ void RGYFilterRtgmc::attachStoredCompReferences(RGYFrameInfo *frame, std::vector
 
 RGY_ERR RGYFilterRtgmc::cacheSourceFrame(const RGYFrameInfo *frame, RGYOpenCLQueue &queue, const std::vector<RGYOpenCLEvent> &wait_events) {
     if (!frame || !frame->ptr[0]) {
+        return RGY_ERR_NONE;
+    }
+    if (m_sharedAnalysisMode) {
         return RGY_ERR_NONE;
     }
     auto &entry = m_sourceCache[m_sourceCacheNext];
@@ -627,10 +708,11 @@ const RGYFrameInfo *RGYFilterRtgmc::findCachedSourceFrame(const RGYFrameInfo *fr
     if (!frame) {
         return nullptr;
     }
-    auto cached = std::find_if(m_sourceCache.begin(), m_sourceCache.end(), [frame](const RtgmcSourceCacheFrame &entry) {
+    const auto &cache = m_sharedAnalysisMode && m_sharedData.sourceCache ? *m_sharedData.sourceCache : m_sourceCache;
+    auto cached = std::find_if(cache.begin(), cache.end(), [frame](const RtgmcSourceCacheFrame &entry) {
         return entry.frame && entry.key.inputFrameId == frame->inputFrameId;
     });
-    if (cached == m_sourceCache.end()) {
+    if (cached == cache.end()) {
         return nullptr;
     }
     if (wait_events && cached->event() != nullptr) {
@@ -644,7 +726,8 @@ int RGYFilterRtgmc::sourceFieldForFrame(const RGYFrameInfo *frame) const {
         return 0;
     }
     const auto rtgmcParam = std::dynamic_pointer_cast<RGYFilterParamRtgmc>(m_param);
-    auto cached = std::find_if(m_sourceCache.begin(), m_sourceCache.end(), [frame](const RtgmcSourceCacheFrame &entry) {
+    const auto &cache = (m_sharedAnalysisMode && m_sharedData.sourceCache) ? *m_sharedData.sourceCache : m_sourceCache;
+    auto cached = std::find_if(cache.begin(), cache.end(), [frame](const RtgmcSourceCacheFrame &entry) {
         return entry.frame && entry.key.inputFrameId == frame->inputFrameId;
     });
     bool tff = true;
@@ -653,13 +736,13 @@ int RGYFilterRtgmc::sourceFieldForFrame(const RGYFrameInfo *frame) const {
             tff = false;
         } else if (rtgmcParam->rtgmc.bob.order == VppRtgmcBobOrder::TFF) {
             tff = true;
-        } else if (cached != m_sourceCache.end() && cached->frame) {
+        } else if (cached != cache.end() && cached->frame) {
             tff = (cached->frame->frame.picstruct & RGY_PICSTRUCT_BFF) == 0;
         } else {
             tff = (frame->picstruct & RGY_PICSTRUCT_BFF) == 0;
         }
     }
-    if (cached == m_sourceCache.end() || cached->key.duration <= 0) {
+    if (cached == cache.end() || cached->key.duration <= 0) {
         return tff ? 0 : 1;
     }
     const auto halfDuration = (cached->key.duration + 1) / 2;
@@ -891,7 +974,15 @@ void RGYFilterRtgmc::attachStoredEdiReference(RGYFrameInfo *frame, std::vector<R
     if (!frame || rtgmcGetAttachedEdi(frame) != nullptr) {
         return;
     }
-    const auto pending = findStoredEdiReference(frame);
+    RtgmcPendingEdiRef *pending = nullptr;
+    if (m_sharedAnalysisMode && m_sharedData.pendingEdiRefs) {
+        auto it = std::find_if(m_sharedData.pendingEdiRefs->begin(), m_sharedData.pendingEdiRefs->end(), [frame](const RtgmcPendingEdiRef &entry) {
+            return entry.key.matches(frame) || entry.key.matchesFrameIdentity(frame);
+        });
+        pending = (it != m_sharedData.pendingEdiRefs->end()) ? &(*it) : nullptr;
+    } else {
+        pending = findStoredEdiReference(frame);
+    }
     if (!pending || !pending->edi) {
         return;
     }
@@ -1042,10 +1133,11 @@ RGYFilterRtgmc::RtgmcPendingFrameRef *RGYFilterRtgmc::findNoiseReference(const R
     if (!frame) {
         return nullptr;
     }
-    auto pending = std::find_if(m_pendingNoiseRefs.begin(), m_pendingNoiseRefs.end(), [frame](const RtgmcPendingFrameRef &entry) {
+    auto &noiseRefs = (m_sharedAnalysisMode && m_sharedData.pendingNoiseRefs) ? *m_sharedData.pendingNoiseRefs : m_pendingNoiseRefs;
+    auto pending = std::find_if(noiseRefs.begin(), noiseRefs.end(), [frame](const RtgmcPendingFrameRef &entry) {
         return entry.key.matches(frame) || entry.key.matchesFrameIdentity(frame);
     });
-    return (pending != m_pendingNoiseRefs.end()) ? &(*pending) : nullptr;
+    return (pending != noiseRefs.end()) ? &(*pending) : nullptr;
 }
 
 void RGYFilterRtgmc::clearNoiseReference(const RGYFrameInfo *frame) {
@@ -1105,6 +1197,13 @@ RGY_ERR RGYFilterRtgmc::initFilters(const std::shared_ptr<RGYFilterParamRtgmc> &
         return degrain;
     };
 
+    if (m_sharedAnalysisMode) {
+        // shared stages: BOB/SEARCH_PREFILTER/ANALYZE/NOISE/EDI/INPUTTYPE_BLEND are all bypassed
+        for (int i = RTGMC_FILTER_BOB; i <= RTGMC_FILTER_INPUTTYPE_BLEND; i++) {
+            auto sts = initBypass();
+            if (sts != RGY_ERR_NONE) return sts;
+        }
+    } else {
     {
         auto filter = std::make_unique<RGYFilterRtgmcBob>(m_cl);
         auto param = std::make_shared<RGYFilterParamRtgmcBob>();
@@ -1213,7 +1312,6 @@ RGY_ERR RGYFilterRtgmc::initFilters(const std::shared_ptr<RGYFilterParamRtgmc> &
             return sts;
         }
     }
-    const RGYFrameInfo rtgmcSourceFrameIn = currentFrame;
     {
         auto filter = std::make_unique<RGYFilterRtgmcEdi>(m_cl);
         auto param = std::make_shared<RGYFilterParamRtgmcEdi>();
@@ -1222,7 +1320,7 @@ RGY_ERR RGYFilterRtgmc::initFilters(const std::shared_ptr<RGYFilterParamRtgmc> &
         param->nnsize = prm->rtgmc.edi.nnsize;
         param->nneurons = prm->rtgmc.edi.nneurons;
         param->ediqual = prm->rtgmc.edi.ediqual;
-        param->sourceFrameIn = rtgmcSourceFrameIn;
+        param->sourceFrameIn = currentFrame;
         param->sourceBaseFps = prm->baseFps;
         param->sourceTimebase = prm->timebase;
         auto sts = initOne(std::move(filter), param);
@@ -1249,6 +1347,8 @@ RGY_ERR RGYFilterRtgmc::initFilters(const std::shared_ptr<RGYFilterParamRtgmc> &
         auto sts = initBypass();
         if (sts != RGY_ERR_NONE) return sts;
     }
+    }
+    const RGYFrameInfo rtgmcSourceFrameIn = currentFrame;
     {
         auto filter = std::make_unique<RGYFilterDegrain>(m_cl);
         auto param = std::make_shared<RGYFilterParamDegrain>();
@@ -1397,6 +1497,7 @@ RGY_ERR RGYFilterRtgmc::init(shared_ptr<RGYFilterParam> pParam, shared_ptr<RGYLo
     if (sts != RGY_ERR_NONE) {
         return sts;
     }
+    m_sharedAnalysisMode = prm->sharedAnalysisMode;
     close();
     m_param = prm;
     sts = initFilters(prm);
@@ -1532,7 +1633,12 @@ RGY_ERR RGYFilterRtgmc::runSourceMatchCorrectionPass(int stageIdx, RGYFrameInfo 
             *event = adjustedEvent;
         }
     } else if (pass.correctionTemporalFilter) {
-        auto analyze = dynamic_cast<RGYFilterDegrain *>(m_filters[RTGMC_FILTER_ANALYZE].get());
+        RGYFilterDegrain *analyze = nullptr;
+        if (m_sharedAnalysisMode && m_sharedData.analyzeFilter) {
+            analyze = m_sharedData.analyzeFilter;
+        } else {
+            analyze = dynamic_cast<RGYFilterDegrain *>(m_filters[RTGMC_FILTER_ANALYZE].get());
+        }
         if (analyze) {
             pass.correctionTemporalFilter->setDirectAnalyzeResultSet(analyze->analyzeResultSet());
         }
@@ -1736,9 +1842,13 @@ RGY_ERR RGYFilterRtgmc::runNestedFilter(size_t filterIdx, RGYFrameInfo *pInputFr
             AddMessage(RGY_LOG_ERROR, _T("InputTypeBlend source frame is missing for inputFrameId=%d.\n"), pInputFrame->inputFrameId);
             return RGY_ERR_INVALID_CALL;
         }
+        RGYFilterDegrain *analyzeForBlend = analyze;
+        if (m_sharedAnalysisMode && m_sharedData.analyzeFilter) {
+            analyzeForBlend = m_sharedData.analyzeFilter;
+        }
         auto analyzeResult = rgy_degrain_get_analyze_result(pInputFrame);
         if (!analyzeResult.valid()) {
-            analyzeResult = analyze->analyzeResult();
+            analyzeResult = analyzeForBlend->analyzeResult();
         }
         if (analyzeResult.valid()
             && (analyzeResult.inputFrameId != pInputFrame->inputFrameId || analyzeResult.timestamp != pInputFrame->timestamp)) {
@@ -1760,7 +1870,12 @@ RGY_ERR RGYFilterRtgmc::runNestedFilter(size_t filterIdx, RGYFrameInfo *pInputFr
                 return m_filters[filterIdx]->filter(pInputFrame, ppOutputFrames, pOutputFrameNum, queue, wait_events, event);
             }
         }
-        auto analyze = dynamic_cast<RGYFilterDegrain *>(m_filters[RTGMC_FILTER_ANALYZE].get());
+        RGYFilterDegrain *analyze = nullptr;
+        if (m_sharedAnalysisMode && m_sharedData.analyzeFilter) {
+            analyze = m_sharedData.analyzeFilter;
+        } else {
+            analyze = dynamic_cast<RGYFilterDegrain *>(m_filters[RTGMC_FILTER_ANALYZE].get());
+        }
         auto degrain = dynamic_cast<RGYFilterDegrain *>(m_filters[filterIdx].get());
         if (!analyze || !degrain) {
             AddMessage(RGY_LOG_ERROR, _T("Invaliddegrain filter instance.\n"));
@@ -1850,23 +1965,40 @@ RGY_ERR RGYFilterRtgmc::runNestedFilter(size_t filterIdx, RGYFrameInfo *pInputFr
         }
         if (filterIdx == RTGMC_FILTER_RETOUCH || slmode == 3 || slmode == 4) {
             attachStoredEdiReference(pInputFrame, &repairWaitEvents);
-            attachStoredCompReferences(pInputFrame, &repairWaitEvents);
             const auto edi = rtgmcGetAttachedEdi(pInputFrame);
-            const auto motionBack = rtgmcGetAttachedComp(pInputFrame, RGYRtgmcCompDirection::Backward, 1);
-            const auto motionForw = rtgmcGetAttachedComp(pInputFrame, RGYRtgmcCompDirection::Forward, 1);
-            if (filterIdx == RTGMC_FILTER_POST_TR2_LIMIT && slmode == 3 && edi && edi->frame()) {
-                retouch->setSpatialLimitBaseFrame(edi->frame());
+
+            bool usedInlineComp = false;
+            if (filterIdx == RTGMC_FILTER_RETOUCH) {
+                auto compRef = findStoredCompReference(pInputFrame);
+                if (compRef && compRef->hasInlineParams && edi && edi->frame()) {
+                    std::array<RGYDegrainCompensateInlineParams, 3> combinedParams = compRef->backwardInlineParams;
+                    for (int p = 0; p < 3; p++) {
+                        combinedParams[p].refForw = compRef->forwardInlineParams[p].refBack;
+                        combinedParams[p].refDirForw = compRef->forwardInlineParams[p].refDirBack;
+                    }
+                    retouch->setTemporalLimitInlineComp(edi->frame(), combinedParams);
+                    usedInlineComp = true;
+                }
             }
-            temporalLimit.ref = edi ? edi->frame() : nullptr;
-            temporalLimit.motionBack = motionBack ? motionBack->frame() : temporalLimit.ref;
-            temporalLimit.motionForw = motionForw ? motionForw->frame() : temporalLimit.ref;
-            if (temporalLimit.valid()) {
-                retouch->setTemporalLimitFrames(temporalLimit);
-            } else {
-                retouch->clearTemporalLimitFrames();
-                if (m_attachRetouchCompRefs) {
-                    AddMessage(RGY_LOG_WARN, _T("retouch slmode=%d temporal references are incomplete; using retouch fallback for this frame.\n"),
-                        slmode);
+
+            if (!usedInlineComp) {
+                attachStoredCompReferences(pInputFrame, &repairWaitEvents);
+                const auto motionBack = rtgmcGetAttachedComp(pInputFrame, RGYRtgmcCompDirection::Backward, 1);
+                const auto motionForw = rtgmcGetAttachedComp(pInputFrame, RGYRtgmcCompDirection::Forward, 1);
+                if (filterIdx == RTGMC_FILTER_POST_TR2_LIMIT && slmode == 3 && edi && edi->frame()) {
+                    retouch->setSpatialLimitBaseFrame(edi->frame());
+                }
+                temporalLimit.ref = edi ? edi->frame() : nullptr;
+                temporalLimit.motionBack = motionBack ? motionBack->frame() : temporalLimit.ref;
+                temporalLimit.motionForw = motionForw ? motionForw->frame() : temporalLimit.ref;
+                if (temporalLimit.valid()) {
+                    retouch->setTemporalLimitFrames(temporalLimit);
+                } else {
+                    retouch->clearTemporalLimitFrames();
+                    if (m_attachRetouchCompRefs) {
+                        AddMessage(RGY_LOG_WARN, _T("retouch slmode=%d temporal references are incomplete; using retouch fallback for this frame.\n"),
+                            slmode);
+                    }
                 }
             }
         }
@@ -1969,6 +2101,25 @@ RGY_ERR RGYFilterRtgmc::runThrough(size_t filterIdx, RGYFrameInfo *pInputFrame, 
                 return sts;
             }
         }
+        auto captureIntermediate = [&](RGYFrameInfo *frame, const std::vector<RGYOpenCLEvent> &captureWaitEvents) {
+            if (filterIdx != RTGMC_FILTER_INPUTTYPE_BLEND || !m_captureIntermediate || !frame || !frame->ptr[0]) {
+                return RGY_ERR_NONE;
+            }
+            auto buf = getSharedFrameBuffer(frame);
+            if (buf) {
+                RGYOpenCLEvent captureEvent;
+                auto err = m_cl->copyFrame(&buf->frame, frame, nullptr, queue, captureWaitEvents, &captureEvent, RGYFrameCopyMode::FRAME, "rtgmc.intermediate_capture");
+                if (err != RGY_ERR_NONE) {
+                    AddMessage(RGY_LOG_ERROR, _T("failed to copy RTGMC intermediate capture frame: %s.\n"), get_err_mes(err));
+                    return err;
+                }
+                copyFramePropWithoutRes(&buf->frame, frame);
+                auto frameInfo = buf->frame;
+                frameInfo.dataList.push_back(std::make_shared<RGYFrameDataRtgmcFrameRef>(buf));
+                m_capturedIntermediates.push_back({ buf, frameInfo, captureEvent });
+            }
+            return RGY_ERR_NONE;
+        };
         const auto rtgmcParam = std::dynamic_pointer_cast<RGYFilterParamRtgmc>(m_param);
         if (rtgmcParam && rtgmcParam->rtgmc.sourceMatch >= 1 && filterIdx == RTGMC_FILTER_PRE_RETOUCH_SHIMMER_REPAIR) {
             int smOutNum = 0;
@@ -1981,12 +2132,20 @@ RGY_ERR RGYFilterRtgmc::runThrough(size_t filterIdx, RGYFrameInfo *pInputFrame, 
             auto smWaitEvents = rtgmcPropagateWaitEvents(nextWaitEvents, smEvent);
             for (int j = 0; j < smOutNum; j++) {
                 enqueueSourceMatchFrameProp(smOutFrames[j]);
+                sts = captureIntermediate(smOutFrames[j], smWaitEvents);
+                if (sts != RGY_ERR_NONE) {
+                    return sts;
+                }
                 sts = runThrough(filterIdx + 1, smOutFrames[j], ppOutputFrames, pOutputFrameNum, queue, smWaitEvents, event, storePending);
                 if (sts != RGY_ERR_NONE) {
                     return sts;
                 }
             }
         } else {
+            sts = captureIntermediate(childOutFrames[i], nextWaitEvents);
+            if (sts != RGY_ERR_NONE) {
+                return sts;
+            }
             sts = runThrough(filterIdx + 1, childOutFrames[i], ppOutputFrames, pOutputFrameNum, queue, nextWaitEvents, event, storePending);
             if (sts != RGY_ERR_NONE) {
                 return sts;
@@ -2138,8 +2297,23 @@ RGY_ERR RGYFilterRtgmc::run_filter(const RGYFrameInfo *pInputFrame, RGYFrameInfo
         if (!m_pendingOutputFrames.empty()) {
             return returnPendingFrames(ppOutputFrames, pOutputFrameNum);
         }
+        if (m_sharedAnalysisMode) {
+            while (!m_pendingIntermediateInputs.empty()) {
+                auto intermediate = std::move(m_pendingIntermediateInputs.front());
+                m_pendingIntermediateInputs.pop_front();
+                std::vector<RGYOpenCLEvent> intWaitEvents;
+                if (intermediate.event() != nullptr) {
+                    intWaitEvents.push_back(intermediate.event);
+                }
+                auto sts = runThrough(RTGMC_FILTER_TR1, &intermediate.frameInfo, ppOutputFrames, pOutputFrameNum, queue, intWaitEvents, event, false);
+                if (sts != RGY_ERR_NONE) {
+                    return sts;
+                }
+            }
+        }
+        const size_t drainStartIdx = m_sharedAnalysisMode ? RTGMC_FILTER_TR1 : 0;
         while (m_pendingOutputFrames.empty() && !m_drainComplete) {
-            auto sts = drainFrom(0, ppOutputFrames, pOutputFrameNum, queue, event);
+            auto sts = drainFrom(drainStartIdx, ppOutputFrames, pOutputFrameNum, queue, event);
             if (sts != RGY_ERR_NONE) {
                 return sts;
             }
@@ -2161,6 +2335,24 @@ RGY_ERR RGYFilterRtgmc::run_filter(const RGYFrameInfo *pInputFrame, RGYFrameInfo
             chainWaitEvents.push_back(borderEvent);
         }
     }
+    if (m_debugResetAtFrame == 0) {
+        const char *envVal = std::getenv("NVENC_RTGMC_DEBUG_RESET_AT");
+        if (envVal && envVal[0] != '\0') {
+            m_debugResetAtFrame = std::atoi(envVal);
+            if (m_debugResetAtFrame <= 0) {
+                m_debugResetAtFrame = -1;
+            }
+        } else {
+            m_debugResetAtFrame = -1;
+        }
+    }
+    if (m_debugResetAtFrame > 0 && m_nFrame == m_debugResetAtFrame) {
+        fprintf(stderr, "[RGYFilterRtgmc] resetTemporalState triggered at frame %d\n", m_nFrame);
+        resetTemporalState();
+        m_debugResetAtFrame = -1;
+    }
+    m_nFrame++;
+
     m_drainFilterIdx = 0;
     m_draining = false;
     m_drainComplete = false;
@@ -2169,6 +2361,22 @@ RGY_ERR RGYFilterRtgmc::run_filter(const RGYFrameInfo *pInputFrame, RGYFrameInfo
         return sts;
     }
     m_inputFrame = *chainInputFrame;
+    if (m_sharedAnalysisMode) {
+        *pOutputFrameNum = 0;
+        while (!m_pendingIntermediateInputs.empty()) {
+            auto intermediate = std::move(m_pendingIntermediateInputs.front());
+            m_pendingIntermediateInputs.pop_front();
+            std::vector<RGYOpenCLEvent> intWaitEvents = chainWaitEvents;
+            if (intermediate.event() != nullptr) {
+                intWaitEvents.push_back(intermediate.event);
+            }
+            sts = runThrough(RTGMC_FILTER_TR1, &intermediate.frameInfo, ppOutputFrames, pOutputFrameNum, queue, intWaitEvents, event, false);
+            if (sts != RGY_ERR_NONE) {
+                return sts;
+            }
+        }
+        return RGY_ERR_NONE;
+    }
     return runThrough(0, &m_inputFrame, ppOutputFrames, pOutputFrameNum, queue, chainWaitEvents, event, false);
 }
 
@@ -2178,6 +2386,64 @@ bool RGYFilterRtgmc::draining() const {
 
 bool RGYFilterRtgmc::drainComplete() const {
     return m_draining && m_drainComplete && m_pendingOutputFrames.empty();
+}
+
+int RGYFilterRtgmc::requiredPrimingSourceFrames() const {
+    const auto prm = std::dynamic_pointer_cast<RGYFilterParamRtgmc>(m_param);
+    if (!prm) {
+        return 8;
+    }
+    const auto& rtgmc = prm->rtgmc;
+    const int temporalRadius = std::max({
+        std::max(0, rtgmc.searchPrefilter.tr0),
+        std::max(0, rtgmc.analyze.delta),
+        std::max(0, rtgmc.tr1.delta),
+        std::max(0, rtgmc.tr2.delta),
+        std::max(0, rtgmc.matchTR1),
+        std::max(0, rtgmc.matchTR2)
+    });
+    const int sourceMatchMargin = std::max(0, rtgmc.sourceMatch) * std::max({ 1, std::max(0, rtgmc.matchTR1), std::max(0, rtgmc.matchTR2) });
+    return std::max(8, temporalRadius + sourceMatchMargin + 4);
+}
+
+void RGYFilterRtgmc::resetTemporalState() {
+    for (auto &filter : m_filters) {
+        if (filter) filter->resetTemporalState();
+    }
+    for (auto &filter : m_retouchCompFilters) {
+        if (filter) filter->resetTemporalState();
+    }
+    for (auto &stage : m_matchCorrectionPasses) {
+        if (stage.interpolator) stage.interpolator->resetTemporalState();
+        if (stage.correctionBuild) stage.correctionBuild->resetTemporalState();
+        if (stage.correctionSpatialPrepass) stage.correctionSpatialPrepass->resetTemporalState();
+        if (stage.correctionTemporalFilter) stage.correctionTemporalFilter->resetTemporalState();
+        if (stage.correctionApply) stage.correctionApply->resetTemporalState();
+        if (stage.correctionEnhance) stage.correctionEnhance->resetTemporalState();
+        stage.composeBaseRefs.clear();
+    }
+    if (m_noiseDiffFilter) {
+        m_noiseDiffFilter->resetTemporalState();
+    }
+    m_pendingEdiRefs.clear();
+    m_pendingCompRefs.clear();
+    m_pendingPostLimitBaseRefs.clear();
+    m_pendingNoiseRefs.clear();
+    m_pendingOutputFrames.clear();
+    m_pendingSourceMatchFrameProps.clear();
+    for (auto &frame : m_sourceCache) {
+        frame.key = RtgmcFrameKey();
+        frame.event.reset();
+    }
+    m_sourceCacheNext = 0;
+    m_outputBufferIndex = 0;
+    m_drainFilterIdx = 0;
+    m_draining = false;
+    m_drainComplete = false;
+    m_capturedIntermediates.clear();
+    m_pendingIntermediateInputs.clear();
+    m_inputFrame = RGYFrameInfo();
+    m_nFrame = 0;
 }
 
 void RGYFilterRtgmc::close() {
@@ -2214,4 +2480,9 @@ void RGYFilterRtgmc::close() {
     m_drainComplete = false;
     m_attachRetouchCompRefs = false;
     m_enablePostTR2Limit = false;
+    m_capturedIntermediates.clear();
+    m_pendingIntermediateInputs.clear();
+    m_captureIntermediate = false;
+    m_nFrame = 0;
+    m_debugResetAtFrame = 0;
 }

@@ -96,10 +96,12 @@ static const int RGY_AUDIO_QUALITY_DEFAULT = 0;
 #define ENABLE_VPP_FILTER_FINEDEHALO   (ENCODER_QSV   || ENCODER_NVENC || ENCODER_VCEENC || ENCODER_MPP || CLFILTERS_AUF)
 #define ENABLE_VPP_FILTER_HQDERING     (ENCODER_QSV                    || ENCODER_VCEENC || ENCODER_MPP)
 #define ENABLE_VPP_FILTER_WARPSHARP    (ENCODER_QSV   || ENCODER_NVENC || ENCODER_VCEENC || ENCODER_MPP || CLFILTERS_AUF)
+#define ENABLE_VPP_FILTER_DETAILSHARPEN (ENCODER_QSV   || ENCODER_NVENC || ENCODER_VCEENC || ENCODER_MPP || CLFILTERS_AUF)
 #define ENABLE_VPP_FILTER_EDGELEVEL    (ENCODER_QSV   || ENCODER_NVENC || ENCODER_VCEENC || ENCODER_MPP || CLFILTERS_AUF)
 #define ENABLE_VPP_FILTER_MSHARPEN     (ENCODER_QSV   || ENCODER_NVENC || ENCODER_VCEENC || ENCODER_MPP || CLFILTERS_AUF)
 #define ENABLE_VPP_FILTER_CAS          (ENCODER_QSV                    || ENCODER_VCEENC || ENCODER_MPP)
 #define ENABLE_VPP_FILTER_CURVES       (ENCODER_QSV   || ENCODER_NVENC || ENCODER_VCEENC || ENCODER_MPP)
+#define ENABLE_VPP_FILTER_SOFTLIGHT    (ENCODER_QSV   || ENCODER_NVENC || ENCODER_VCEENC || ENCODER_MPP || CLFILTERS_AUF)
 #define ENABLE_VPP_FILTER_TWEAK        (ENCODER_QSV   || ENCODER_NVENC || ENCODER_VCEENC || ENCODER_MPP || CLFILTERS_AUF)
 #define ENABLE_VPP_FILTER_OVERLAY      (ENCODER_QSV   || ENCODER_NVENC || ENCODER_VCEENC || ENCODER_MPP)
 #define ENABLE_VPP_FILTER_DEBAND       (ENCODER_QSV   || ENCODER_NVENC || ENCODER_VCEENC || ENCODER_MPP || CLFILTERS_AUF)
@@ -226,10 +228,12 @@ enum class VppType : int {
     CL_EDGELEVEL,
     CL_MSHARPEN,
     CL_WARPSHARP,
+    CL_DETAILSHARPEN,
     CL_CAS,
     CL_MAA,
 
     CL_CURVES,
+    CL_SOFTLIGHT,
     CL_TWEAK,
 
     CL_OVERLAY,
@@ -646,6 +650,13 @@ static const float FILTER_DEFAULT_WARPSHARP_DEPTH_MAX = 1.0e9f;
 static const float FILTER_DEFAULT_WARPSHARP_EDGE_THR = 192.0f;
 static const float FILTER_DEFAULT_WARPSHARP_GAMMA = 1.0f;
 
+static const float FILTER_DEFAULT_DETAILSHARPEN_Z = 4.0f;
+static const float FILTER_DEFAULT_DETAILSHARPEN_SSTR = 1.5f;
+static const float FILTER_DEFAULT_DETAILSHARPEN_POWER = 4.0f;
+static const float FILTER_DEFAULT_DETAILSHARPEN_LDMP = 1.0f;
+static const int   FILTER_DEFAULT_DETAILSHARPEN_MODE = 1;
+static const bool  FILTER_DEFAULT_DETAILSHARPEN_MED = false;
+
 static const int   FILTER_DEFAULT_DEBAND_RANGE = 15;
 static const int   FILTER_DEFAULT_DEBAND_THRE_Y = 15;
 static const int   FILTER_DEFAULT_DEBAND_THRE_CB = 15;
@@ -696,8 +707,10 @@ const CX_DESC list_vpp_denoise[] = {
     { _T("smooth"),  3 },
     { _T("fft3d"), 10 },
     { _T("convolution3d"),  5 },
-#if ENCODER_QSV
+#if ENABLE_VPP_FILTER_MSMOOTH
     { _T("msmooth"), 11 },
+#endif
+#if ENCODER_QSV
     { _T("degrain"), 12 },
 #endif
 #if ENCODER_VCEENC
@@ -718,8 +731,10 @@ const CX_DESC list_vpp_detail_enahance[] = {
     { _T("unsharp"),    1 },
     { _T("edgelevel"),  2 },
     { _T("warpsharp"),  3 },
-#if ENCODER_QSV
+#if ENABLE_VPP_FILTER_MSHARPEN
     { _T("msharpen"),   5 },
+#endif
+#if ENCODER_QSV
     { _T("cas"),        6 },
 #endif
     { NULL, 0 }
@@ -3108,6 +3123,21 @@ struct VppWarpsharp {
     tstring print() const;
 };
 
+struct VppDetailSharpen {
+    bool  enable;
+    float z;
+    float sstr;
+    float power;
+    float ldmp;
+    int   mode;
+    bool  med;
+
+    VppDetailSharpen();
+    bool operator==(const VppDetailSharpen &x) const;
+    bool operator!=(const VppDetailSharpen &x) const;
+    tstring print() const;
+};
+
 struct VppCas {
     bool enable;
     float sharpness;
@@ -3194,6 +3224,52 @@ struct VppDescale {
     VppDescale();
     bool operator==(const VppDescale &x) const;
     bool operator!=(const VppDescale &x) const;
+    tstring print() const;
+};
+
+enum class VppSoftLightMode {
+    NEUTRALIZE,
+    LIGHTNESS,
+    NEUTRALIZE_BOOST_SAT,
+    NEUTRALIZE_FULL,
+    NEUTRALIZE_BOOST,
+    BOOST,
+    SATURATION,
+};
+
+const CX_DESC list_vpp_softlight_mode[] = {
+    { _T("neutralize"),           (int)VppSoftLightMode::NEUTRALIZE },
+    { _T("lightness"),            (int)VppSoftLightMode::LIGHTNESS },
+    { _T("neutralize_boost_sat"), (int)VppSoftLightMode::NEUTRALIZE_BOOST_SAT },
+    { _T("neutralize_full"),      (int)VppSoftLightMode::NEUTRALIZE_FULL },
+    { _T("neutralize_boost"),     (int)VppSoftLightMode::NEUTRALIZE_BOOST },
+    { _T("boost"),                (int)VppSoftLightMode::BOOST },
+    { _T("saturation"),           (int)VppSoftLightMode::SATURATION },
+    { NULL, 0 }
+};
+
+enum class VppSoftLightFormula {
+    PEGTOP,
+    ILLUSIONSHU,
+    W3C,
+};
+
+const CX_DESC list_vpp_softlight_formula[] = {
+    { _T("pegtop"),      (int)VppSoftLightFormula::PEGTOP },
+    { _T("illusionshu"), (int)VppSoftLightFormula::ILLUSIONSHU },
+    { _T("w3c"),         (int)VppSoftLightFormula::W3C },
+    { NULL, 0 }
+};
+
+struct VppSoftLight {
+    bool enable;
+    VppSoftLightMode mode;
+    VppSoftLightFormula formula;
+    bool skipblack;
+
+    VppSoftLight();
+    bool operator==(const VppSoftLight& x) const;
+    bool operator!=(const VppSoftLight& x) const;
     tstring print() const;
 };
 
@@ -3439,9 +3515,11 @@ struct RGYParamVpp {
     VppEdgelevel edgelevel;
     VppMsharpen msharpen;
     VppWarpsharp warpsharp;
+    VppDetailSharpen detailsharpen;
     VppCas cas;
     VppMaa maa;
     VppCurves curves;
+    VppSoftLight softlight;
     VppTweak tweak;
     VppTransform transform;
     VppDeband deband;
