@@ -38,12 +38,24 @@ setx OPENCL_HEADERS <path-to-clone>
 ```
 
 
+For MSVC builds with `--vpp-onnx` enabled, OpenVINO Runtime C API headers are required.
+Download and extract the [OpenVINO Runtime Windows archive](https://docs.openvino.ai/2026/get-started/install-openvino/install-openvino-archive-windows.html), and set the "OPENVINO_PATH" environment variable to the extracted directory.
+
+For example, if you follow the official default path and extract it to `C:\Program Files (x86)\Intel\openvino_2026`:
+
+```Batchfile
+setx OPENVINO_PATH "C:\Program Files (x86)\Intel\openvino_2026"
+```
+
+The Windows archive can also be downloaded from the [OpenVINO Toolkit download page](https://www.intel.com/content/www/us/en/download/753640/intel-distribution-of-openvino-toolkit.html) or [OpenVINO GitHub Releases](https://github.com/openvinotoolkit/openvino/releases).
+Restart Visual Studio after running `setx` so the new environment variable is picked up. To run `--vpp-onnx`, run OpenVINO's `setupvars.bat` or make sure the OpenVINO Runtime DLL directory is available through PATH.
+
 ### 1. Download source code
 
 ```Batchfile
 git clone https://github.com/rigaya/QSVEnc --recursive
 cd QSVEnc
-curl -s -o ffmpeg_lgpl.7z -L https://github.com/rigaya/ffmpeg_dlls_for_hwenc/releases/download/20250830/ffmpeg_dlls_for_hwenc_20250830.7z
+curl -s -o ffmpeg_lgpl.7z -L https://github.com/rigaya/ffmpeg_dlls_for_hwenc/releases/download/20260812/ffmpeg_lgpl_20260812.7z
 7z x -offmpeg_lgpl -y ffmpeg_lgpl.7z
 ```
 

@@ -177,8 +177,10 @@ protected:
     RGYBitstream m_DecInputBitstream;
 
     std::shared_ptr<RGYOpenCLContext> m_cl;
+    int m_openclTaskThreads;
     std::vector<VppType> m_vppFilterList;
     std::vector<VppVilterBlock> m_vpFilters;
+    bool m_vppMfxBypassForResChange; //解像度変更対応のためだけに常設したMFX VPPブロックかどうか。trueならPipelineTaskMFXVppは解像度変更が起こるまでVPPを通さず素通しする
     unique_ptr<RGYFilterSsim> m_videoQualityMetric;
 
     std::vector<std::unique_ptr<PipelineTask>> m_pipelineTasks;
@@ -197,7 +199,8 @@ protected:
         RGYFrameInfo& inputFrame, const VppType vppType, const sInputParams *params, const sInputCrop *crop, const std::pair<int, int> resize, VideoVUIInfo& vuiInfo);
     virtual RGY_ERR createOpenCLCopyFilterForPreVideoMetric();
     virtual RGY_ERR InitOutput(sInputParams *pParams);
-    virtual RGY_ERR InitMfxDecParams();
+    // adaptResolutionは現在のCropではなく、MFXデコーダの符号化・確保寸法の上限として使う。
+    virtual RGY_ERR InitMfxDecParams(const std::pair<int, int>& adaptResolution);
     std::pair<RGY_ERR, QSVEncFeatures> CheckMFXRCMode(QSVRCParam& rcParam, sInputParams *pParams, const int codecMaxQP);
     virtual RGY_ERR InitMfxEncodeParams(sInputParams *pParams, std::vector<std::unique_ptr<QSVDevice>>& devList);
     virtual RGY_ERR InitPowerThrottoling(sInputParams *pParams);
@@ -220,7 +223,8 @@ protected:
     virtual bool CPUGenOpenCLSupported(const QSV_CPU_GEN cpu_gen);
     virtual RGY_ERR InitOpenCL(const bool enableOpenCL, const int openCLBuildThreads, const bool checkVppPerformance, const tstring& clPerfDumpDir = tstring(), const double clPerfTimelineSec = 0.0);
 
-    virtual RGY_ERR AllocFrames();
+    // adaptResolutionは入力直後のプールだけに反映し、後段の論理解像度には伝播させない。
+    virtual RGY_ERR AllocFrames(const std::pair<int, int>& adaptResolution);
 
     virtual RGY_ERR AllocateSufficientBuffer(mfxBitstream* pBS);
 

@@ -307,8 +307,9 @@ RGY_ERR RGYFilterDegrain::checkParam(const std::shared_ptr<RGYFilterParamDegrain
         AddMessage(RGY_LOG_ERROR, _T("degrain overlap must satisfy 0 <= overlap < blksize.\n"));
         return RGY_ERR_UNSUPPORTED;
     }
-    if (prm->degrain.overlap != 0 && prm->degrain.overlap != prm->degrain.blksize / 2) {
-        AddMessage(RGY_LOG_ERROR, _T("degrain Step2a currently supports only overlap=0 or overlap=blksize/2.\n"));
+    if (prm->degrain.overlap != 0 && prm->degrain.overlap != prm->degrain.blksize / 2
+        && prm->degrain.overlap != prm->degrain.blksize / 4) {
+        AddMessage(RGY_LOG_ERROR, _T("degrain Step2a currently supports only overlap=0, blksize/4 or blksize/2.\n"));
         return RGY_ERR_UNSUPPORTED;
     }
     if (prm->degrain.delta < 1 || prm->degrain.delta > 5) {
@@ -333,6 +334,16 @@ RGY_ERR RGYFilterDegrain::checkParam(const std::shared_ptr<RGYFilterParamDegrain
     }
     if (prm->degrain.searchRefine < 0 || prm->degrain.searchRefine > 3) {
         AddMessage(RGY_LOG_ERROR, _T("degrain search_refine must be 0 - 3.\n"));
+        return RGY_ERR_INVALID_PARAM;
+    }
+    if (prm->degrain.searchEarlySad < FILTER_MIN_DEGRAIN_SEARCH_EARLY_SAD
+        || prm->degrain.searchEarlySad > FILTER_MAX_DEGRAIN_SEARCH_EARLY_SAD) {
+        AddMessage(RGY_LOG_ERROR, _T("degrain search_early_sad must be off or -1 - 65535.\n"));
+        return RGY_ERR_INVALID_PARAM;
+    }
+    if (prm->degrain.spatialEarlySad < FILTER_MIN_DEGRAIN_SEARCH_EARLY_SAD
+        || prm->degrain.spatialEarlySad > FILTER_MAX_DEGRAIN_SEARCH_EARLY_SAD) {
+        AddMessage(RGY_LOG_ERROR, _T("degrain spatial_early_sad must be off or -1 - 65535.\n"));
         return RGY_ERR_INVALID_PARAM;
     }
     if (prm->degrain.mvSpatialRefine < -1) {
@@ -620,6 +631,9 @@ void RGYFilterDegrain::logAnalysisSamples(const TCHAR *sourceName, const RGYFram
         const bool forward = rgy_degrain_ref_index_is_forward(dir);
         for (int sample = 0; sample < (int)sampleBlocks.size(); sample++) {
             const size_t block = sampleBlocks[sample];
+            if (block >= layout.blockCount()) {
+                continue;
+            }
             if ((sample > 0 && block == sampleBlocks[sample - 1])
                 || (sample > 1 && block == sampleBlocks[sample - 2])) {
                 continue;
@@ -716,10 +730,48 @@ RGY_ERR RGYFilterDegrain::pushCacheFrame(const RGYFrameInfo *pInputFrame, RGYOpe
     const auto prm = std::dynamic_pointer_cast<RGYFilterParamDegrain>(m_param);
     const int index = cacheIndex(m_inputCount);
     if (prm && prm->zeroCopyCache) {
+        // アンカー判定はいずれもptr[0]の一致検証を必須とする。dataListは
+        // FILTER_PATHTHROUGH_DATAで別バッファのフレームへ継承され得るため、
+        // 添付情報の存在だけを根拠にすると誤ったバッファに寿命保証が付く。
+        RGYFrameInfo zeroCopyRef;
+        std::shared_ptr<RGYCLFrame> zeroCopyOwner;
         auto owner = rtgmcGetAttachedFrameRef(pInputFrame);
         if (owner && owner->frame.ptr[0]
+            && owner->frame.ptr[0] == pInputFrame->ptr[0]
             && !cmpFrameInfoCspResolution(&owner->frame, pInputFrame)
             && owner->frame.bitdepth == pInputFrame->bitdepth) {
+            // 入力フレーム自体がプール所有 → そのまま参照
+            zeroCopyRef = *pInputFrame;
+            zeroCopyOwner = owner;
+        } else if (auto sourceTwin = rtgmcGetAttachedSourceTwin(pInputFrame); sourceTwin
+            && sourceTwin->frameRef() && sourceTwin->frame() && sourceTwin->frame()->ptr[0]
+            && sourceTwin->sourcePtr0() == pInputFrame->ptr[0]
+            && !cmpFrameInfoCspResolution(sourceTwin->frame(), pInputFrame)
+            && sourceTwin->frame()->bitdepth == pInputFrame->bitdepth) {
+            // search-prefilter出力は添付された入力キャッシュと内容同一。
+            // プロパティは入力側、バッファは共有キャッシュ側で構成する。
+            zeroCopyRef = *pInputFrame;
+            for (int i = 0; i < RGY_CSP_PLANES[pInputFrame->csp]; i++) {
+                zeroCopyRef.ptr[i] = sourceTwin->frame()->ptr[i];
+                zeroCopyRef.pitch[i] = sourceTwin->frame()->pitch[i];
+            }
+            zeroCopyOwner = sourceTwin->frameRef();
+        } else if (auto edi = rtgmcGetAttachedEdi(pInputFrame); edi
+            && edi->frameRef() && edi->frame() && edi->frame()->ptr[0]
+            && edi->sourcePtr0() == pInputFrame->ptr[0]
+            && !cmpFrameInfoCspResolution(edi->frame(), pInputFrame)
+            && edi->frame()->bitdepth == pInputFrame->bitdepth) {
+            // EDI側データのプールコピーは入力と内容同一 (sourcePtr0一致で検証) なので
+            // アンカーに使える。プロパティは入力側、バッファはプールコピー側で構成する。
+            // コピー(rtgmc.edi_ref)は同一in-orderキューへ先行enqueue済みのため順序保証あり。
+            zeroCopyRef = *pInputFrame;
+            for (int i = 0; i < RGY_CSP_PLANES[pInputFrame->csp]; i++) {
+                zeroCopyRef.ptr[i] = edi->frame()->ptr[i];
+                zeroCopyRef.pitch[i] = edi->frame()->pitch[i];
+            }
+            zeroCopyOwner = edi->frameRef();
+        }
+        if (zeroCopyOwner) {
             for (const auto &waitEvent : wait_events) {
                 if (waitEvent() != nullptr) {
                     const auto err = queue.wait(waitEvent);
@@ -736,8 +788,8 @@ RGY_ERR RGYFilterDegrain::pushCacheFrame(const RGYFrameInfo *pInputFrame, RGYOpe
                     return err;
                 }
             }
-            m_cacheFrameRefs[index] = *pInputFrame;
-            m_cacheFrameOwners[index] = owner;
+            m_cacheFrameRefs[index] = zeroCopyRef;
+            m_cacheFrameOwners[index] = zeroCopyOwner;
             return RGY_ERR_NONE;
         }
     }
@@ -794,7 +846,11 @@ bool RGYFilterDegrain::outputReady() const {
     return m_inputCount >= outputDelay() + 1;
 }
 
-RGY_ERR RGYFilterDegrain::buildCompensateInlineParams(std::array<RGYDegrainCompensateInlineParams, 3> &paramsOut, RGYFrameInfo *outputFrameIdentity, RGYOpenCLQueue &queue) {
+RGY_ERR RGYFilterDegrain::buildCompensateInlineParams(std::array<RGYDegrainCompensateInlineParams, 3> &paramsOut, RGYFrameInfo *outputFrameIdentity,
+    RGYOpenCLQueue &queue, bool *processChromaOut) {
+    if (processChromaOut) {
+        *processChromaOut = false;
+    }
     auto prm = std::dynamic_pointer_cast<RGYFilterParamDegrain>(m_param);
     if (!prm) {
         return RGY_ERR_INVALID_PARAM;
@@ -840,7 +896,10 @@ RGY_ERR RGYFilterDegrain::buildCompensateInlineParams(std::array<RGYDegrainCompe
     const auto disableRefsArray = analysisAvailabilityDisableRefs(frames);
     const uint32_t disableMask = degrainInlineDisableMask(disableRefsArray, layout.temporalDirections);
     const uint32_t compensateThSad = std::numeric_limits<uint32_t>::max();
-    const bool processChroma = degrainInlineCanProcessChroma(frames.cur);
+    const bool processChroma = prm->degrain.chroma && analysisSADIncludesChroma(prm) && degrainInlineCanProcessChroma(frames.cur);
+    if (processChromaOut) {
+        *processChromaOut = processChroma;
+    }
 
     auto ensureRamp = [&](RGYDegrainWindowRampState &state, const int planeScaleX, const int planeScaleY) -> RGY_ERR {
         const int planeOverlapX = std::max(layout.overlap / std::max(planeScaleX, 1), 0);
@@ -920,7 +979,11 @@ bool RGYFilterDegrain::drainReady() const {
     return m_drainCount < drainFrameCount();
 }
 
-RGY_ERR RGYFilterDegrain::drainBuildInlineParams(std::array<RGYDegrainCompensateInlineParams, 3> &paramsOut, RGYFrameInfo *outputFrameIdentity, RGYOpenCLQueue &queue) {
+RGY_ERR RGYFilterDegrain::drainBuildInlineParams(std::array<RGYDegrainCompensateInlineParams, 3> &paramsOut, RGYFrameInfo *outputFrameIdentity,
+    RGYOpenCLQueue &queue, bool *processChromaOut) {
+    if (processChromaOut) {
+        *processChromaOut = false;
+    }
     if (!drainReady()) {
         return RGY_ERR_MORE_DATA;
     }
@@ -973,7 +1036,10 @@ RGY_ERR RGYFilterDegrain::drainBuildInlineParams(std::array<RGYDegrainCompensate
     const auto disableRefsArray = analysisAvailabilityDisableRefs(frames);
     const uint32_t disableMask = degrainInlineDisableMask(disableRefsArray, layout.temporalDirections);
     const uint32_t compensateThSad = std::numeric_limits<uint32_t>::max();
-    const bool processChroma = degrainInlineCanProcessChroma(frames.cur);
+    const bool processChroma = prm->degrain.chroma && analysisSADIncludesChroma(prm) && degrainInlineCanProcessChroma(frames.cur);
+    if (processChromaOut) {
+        *processChromaOut = processChroma;
+    }
 
     auto ensureRamp = [&](RGYDegrainWindowRampState &state, const int planeScaleX, const int planeScaleY) -> RGY_ERR {
         const int planeOverlapX = std::max(layout.overlap / std::max(planeScaleX, 1), 0);

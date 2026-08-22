@@ -148,10 +148,10 @@ bool RGYFilterMpdecimateFrameData::checkIfFrameCanbeDropped(const int hi, const 
     int loCount = 0;
     for (int iplane = 0; iplane < RGY_CSP_PLANES[tmpMappedHost.csp]; iplane++) {
         const auto plane = getPlane(&tmpMappedHost, (RGY_PLANE)iplane);
-        const int blockw = divCeil(plane.width, 8);
-        const int blockh = divCeil(plane.height, 8);
+        const int blockw = plane.width;    // FIX QSV-MPDEC-1: tmp already holds 1 int per 8x8 block (was divCeil(plane.width,8) -> only W/64)
+        const int blockh = plane.height;   // FIX QSV-MPDEC-1: (was divCeil(plane.height,8))
         for (int j = 0; j < blockh; j++) {
-            const int *ptrResult = (const int *)(tmpMappedHost.ptr[0] + j * tmpMappedHost.pitch[0]);
+            const int *ptrResult = (const int *)(plane.ptr[0] + j * plane.pitch[0]);   // FIX QSV-MPDEC-1: per-plane pointer (was tmpMappedHost.ptr[0] -> luma only)
             for (int i = 0; i < blockw; i++) {
                 const int result = ptrResult[i];
                 if (result > hi) {
@@ -190,7 +190,7 @@ RGY_ERR RGYFilterMpdecimateCache::add(const RGYFrameInfo *pInputFrame, RGYOpenCL
     return getEmpty()->set(pInputFrame, id, queue, wait_events, event);
 }
 
-RGYFilterMpdecimate::RGYFilterMpdecimate(shared_ptr<RGYOpenCLContext> context) : RGYFilter(context), m_dropCount(0), m_ref(-1), m_target(-1), m_mpdecimate(), m_cache(context), m_eventDiff(), m_streamDiff(), m_streamTransfer() {
+RGYFilterMpdecimate::RGYFilterMpdecimate(shared_ptr<RGYOpenCLContext> context) : RGYFilter(context), m_dropCount(0), m_similarRun(0), m_ref(-1), m_target(-1), m_mpdecimate(), m_cache(context), m_eventDiff(), m_streamDiff(), m_streamTransfer() {
     m_name = _T("mpdecimate");
 }
 
@@ -272,6 +272,7 @@ RGY_ERR RGYFilterMpdecimate::init(shared_ptr<RGYFilterParam> pParam, shared_ptr<
 
         m_pathThrough &= (~(FILTER_PATHTHROUGH_TIMESTAMP));
         m_dropCount = 0;
+        m_similarRun = 0;
         m_ref = -1;
         m_target = -1;
 
@@ -342,7 +343,15 @@ RGY_ERR RGYFilterMpdecimate::run_filter(const RGYFrameInfo *pInputFrame, RGYFram
     }
     if (m_target >= 0) {
         auto targetFrame = m_cache.frame(m_target);
-        const bool drop = dropFrame(targetFrame) && pInputFrame->ptr[0] != nullptr; //最終フレームは必ず出力する
+        const bool similar = dropFrame(targetFrame);
+        //keep: 連続similarフレームをkeep枚まで保持してからドロップを開始する (ffmpeg mpdecimateのkeepと同様)
+        const bool keepGate = (prm->mpdecimate.keep <= 0) || (m_similarRun >= prm->mpdecimate.keep);
+        if (similar) {
+            m_similarRun++;
+        } else {
+            m_similarRun = 0;
+        }
+        const bool drop = similar && keepGate && pInputFrame->ptr[0] != nullptr; //最終フレームは必ず出力する
         if (m_fpLog) {
             fprintf(m_fpLog.get(), "%s %8d: %10lld\n", (drop) ? "d" : " ", m_target, (long long)targetFrame->get()->frame.timestamp);
         }

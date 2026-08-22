@@ -308,23 +308,96 @@ int RGYFilterRtgmcEdi::FrameSource::findIndexByInputFrameId(int inputFrameId) co
     return -1;
 }
 
-RGY_ERR RGYFilterRtgmcEdi::FrameSource::add(std::shared_ptr<RGYOpenCLContext> cl, const RGYFrameInfo *pInputFrame, RGYOpenCLQueue &queue) {
+int RGYFilterRtgmcEdi::FrameSource::findIndexByFrameIdentity(const RGYFrameInfo *frame) const {
+    if (!frame) {
+        return -1;
+    }
+    const int start = std::max(0, m_nFramesInput - (int)m_buf.size());
+    for (int iframe = start; iframe < m_nFramesInput; iframe++) {
+        const auto& buf = m_buf[iframe % m_buf.size()];
+        if (buf && buf->frame.ptr[0] && buf->frame.inputFrameId == frame->inputFrameId
+            && buf->frame.timestamp == frame->timestamp) {
+            return iframe;
+        }
+    }
+    return -1;
+}
+
+int RGYFilterRtgmcEdi::FrameSource::findIndexForOutputFrame(const RGYFrameInfo *frame) const {
+    if (!frame) {
+        return -1;
+    }
+    const int start = std::max(0, m_nFramesInput - (int)m_buf.size());
+    for (int iframe = start; iframe < m_nFramesInput; iframe++) {
+        const auto& buf = m_buf[iframe % m_buf.size()];
+        if (buf && buf->frame.ptr[0] && buf->frame.inputFrameId == frame->inputFrameId
+            && buf->frame.timestamp == frame->timestamp
+            && buf->frame.duration == frame->duration) {
+            return iframe;
+        }
+    }
+    for (int iframe = start; iframe < m_nFramesInput; iframe++) {
+        const auto& buf = m_buf[iframe % m_buf.size()];
+        if (buf && buf->frame.ptr[0] && buf->frame.inputFrameId == frame->inputFrameId
+            && buf->frame.timestamp == frame->timestamp) {
+            return iframe;
+        }
+    }
+    int bestIndex = -1;
+    for (int iframe = start; iframe < m_nFramesInput; iframe++) {
+        const auto& buf = m_buf[iframe % m_buf.size()];
+        if (!buf || !buf->frame.ptr[0] || buf->frame.inputFrameId != frame->inputFrameId || buf->frame.duration <= 0) {
+            continue;
+        }
+        const auto startTimestamp = buf->frame.timestamp;
+        const auto endTimestamp = startTimestamp + buf->frame.duration;
+        if (startTimestamp <= frame->timestamp && frame->timestamp < endTimestamp
+            && (bestIndex < 0 || m_buf[bestIndex % m_buf.size()]->frame.timestamp < buf->frame.timestamp)) {
+            bestIndex = iframe;
+        }
+    }
+    if (bestIndex >= 0) {
+        return bestIndex;
+    }
+    for (int iframe = start; iframe < m_nFramesInput; iframe++) {
+        const auto& buf = m_buf[iframe % m_buf.size()];
+        if (!buf || !buf->frame.ptr[0] || buf->frame.inputFrameId != frame->inputFrameId || buf->frame.timestamp > frame->timestamp) {
+            continue;
+        }
+        if (bestIndex < 0 || m_buf[bestIndex % m_buf.size()]->frame.timestamp < buf->frame.timestamp) {
+            bestIndex = iframe;
+        }
+    }
+    if (bestIndex >= 0) {
+        return bestIndex;
+    }
+    return findIndexByInputFrameId(frame->inputFrameId);
+}
+
+RGY_ERR RGYFilterRtgmcEdi::FrameSource::add(std::shared_ptr<RGYOpenCLContext> cl, const RGYFrameInfo *pInputFrame, RGYOpenCLQueue &queue, bool copyChroma) {
     const int iframe = m_nFramesInput++;
     auto pDstFrame = get(iframe);
-    auto err = cl->copyFrame(&pDstFrame->frame, pInputFrame, nullptr, queue, {}, nullptr, RGYFrameCopyMode::FRAME, "rtgmc_edi_adapter.source_copy");
-    if (err != RGY_ERR_NONE) {
-        return err;
+    auto err = RGY_ERR_NONE;
+    const int planes = copyChroma ? RGY_CSP_PLANES[pDstFrame->frame.csp] : 1;
+    for (int iplane = 0; iplane < planes; iplane++) {
+        auto dstPlane = getPlane(&pDstFrame->frame, (RGY_PLANE)iplane);
+        const auto srcPlane = getPlane(pInputFrame, (RGY_PLANE)iplane);
+        err = cl->copyPlane(&dstPlane, &srcPlane, nullptr, queue, {}, nullptr);
+        if (err != RGY_ERR_NONE) {
+            return err;
+        }
     }
     copyFramePropWithoutRes(&pDstFrame->frame, pInputFrame);
     return RGY_ERR_NONE;
 }
 
 tstring RGYFilterParamRtgmcEdi::print() const {
-    return strsprintf(_T("rtgmc-edi: mode=%s%s, nnsize=%d, nneurons=%d, ediqual=%d, chroma_edi=%s"),
+    return strsprintf(_T("rtgmc-edi: mode=%s%s, nnsize=%d, nneurons=%d, ediqual=%d, chroma_edi=%s, order=%s"),
         get_cx_desc(list_vpp_rtgmc_edi_mode, (int)mode),
         rtgmcEdiModeIsLightweight(mode) ? rtgmcEdiModeDetail(mode) : _T(""),
         nnsize, nneurons, ediqual,
-        get_cx_desc(list_vpp_rtgmc_chroma_edi_mode, (int)chromaEdi));
+        get_cx_desc(list_vpp_rtgmc_chroma_edi_mode, (int)chromaEdi),
+        get_cx_desc(list_vpp_rtgmc_bob_order, (int)order));
 }
 
 RGYFilterRtgmcEdi::NnediAdapterState::NnediAdapterState() :
@@ -537,15 +610,15 @@ RGY_ERR RGYFilterRtgmcEdi::initNnediAdapterState(NnediAdapterState &state, const
     auto filter = std::make_unique<RGYFilterNnedi>(m_cl);
     auto nnedi = std::make_shared<RGYFilterParamNnedi>();
     nnedi->nnedi.enable = true;
-    nnedi->nnedi.field = VPP_NNEDI_FIELD_BOB;
+    nnedi->nnedi.field = (prm->order == VppRtgmcBobOrder::TFF) ? VPP_NNEDI_FIELD_BOB_TOP
+        : (prm->order == VppRtgmcBobOrder::BFF) ? VPP_NNEDI_FIELD_BOB_BOTTOM
+        : VPP_NNEDI_FIELD_BOB;
     nnedi->nnedi.nsize = (VppNnediNSize)(chroma ? VPP_NNEDI_NSIZE_8x4 : prm->nnsize);
     nnedi->nnedi.nns = rgy_nnedi_nns_value(chroma ? 0 : prm->nneurons);
     nnedi->nnedi.quality = (VppNnediQuality)(chroma ? VPP_NNEDI_QUALITY_FAST : prm->ediqual);
     nnedi->nnedi.processPlane = chroma
         ? std::array<bool, 4>{ false, true, true, false }
-        : (prm->chromaEdi == VppRtgmcChromaEdiMode::NNEDI3
-            ? std::array<bool, 4>{ true, false, false, false }
-            : std::array<bool, 4>{ true, true, true, false });
+        : std::array<bool, 4>{ true, false, false, false };
     nnedi->nnedi.prescreen = 2;
     nnedi->nnedi.errortype = VPP_NNEDI_ETYPE_ABS;
     nnedi->nnedi.clamp = 1;
@@ -620,7 +693,7 @@ RGY_ERR RGYFilterRtgmcEdi::runNnediAdapterState(NnediAdapterState &state, const 
         return RGY_ERR_INVALID_CALL;
     }
     if (pSourceInputFrame && pSourceInputFrame->ptr[0]
-        && m_inputSource.findIndexByInputFrameId(pSourceInputFrame->inputFrameId) < 0) {
+        && m_inputSource.findIndexByFrameIdentity(pSourceInputFrame) < 0) {
         auto err = m_inputSource.add(m_cl, pSourceInputFrame, queue);
         if (err != RGY_ERR_NONE) {
             AddMessage(RGY_LOG_ERROR, _T("failed to add rtgmc-edi %s NNEDI source frame: %s.\n"),
@@ -628,7 +701,7 @@ RGY_ERR RGYFilterRtgmcEdi::runNnediAdapterState(NnediAdapterState &state, const 
             return err;
         }
     }
-    const int sourceIndex = m_inputSource.findIndexByInputFrameId(pBobInputFrame->inputFrameId);
+    const int sourceIndex = m_inputSource.findIndexForOutputFrame(pBobInputFrame);
     if (sourceIndex < 0) {
         AddMessage(RGY_LOG_ERROR, _T("rtgmc-edi %s NNEDI adapter source frame is missing for Bob inputFrameId=%d.\n"),
             chroma ? _T("chroma") : _T("main"), pBobInputFrame->inputFrameId);
@@ -805,7 +878,7 @@ RGY_ERR RGYFilterRtgmcEdi::runTemporalYadif(const RGYFrameInfo *pBobInputFrame, 
             return err;
         }
         if (pSourceInputFrame && pSourceInputFrame->ptr[0]
-            && m_inputSource.findIndexByInputFrameId(pSourceInputFrame->inputFrameId) < 0) {
+            && m_inputSource.findIndexByFrameIdentity(pSourceInputFrame) < 0) {
             err = m_inputSource.add(m_cl, pSourceInputFrame, queue);
             if (err != RGY_ERR_NONE) {
                 AddMessage(RGY_LOG_ERROR, _T("failed to add rtgmc-edi input source frame: %s.\n"), get_err_mes(err));
@@ -816,7 +889,7 @@ RGY_ERR RGYFilterRtgmcEdi::runTemporalYadif(const RGYFrameInfo *pBobInputFrame, 
 
     while (*pOutputFrameNum < (int)m_frameBuf.size() && m_nFrame < m_ediSource.inframe()) {
         const auto *pBobCur = &m_bobSource.get(m_nFrame)->frame;
-        const int srcIndex = m_inputSource.findIndexByInputFrameId(pBobCur->inputFrameId);
+        const int srcIndex = m_inputSource.findIndexForOutputFrame(pBobCur);
         if (srcIndex < 0 || (!draining && srcIndex + 1 >= m_inputSource.inframe())) {
             break;
         }
@@ -862,14 +935,14 @@ RGY_ERR RGYFilterRtgmcEdi::runNnediAdapter(const RGYFrameInfo *pBobInputFrame, c
         return RGY_ERR_INVALID_CALL;
     }
     if (pSourceInputFrame && pSourceInputFrame->ptr[0]
-        && m_inputSource.findIndexByInputFrameId(pSourceInputFrame->inputFrameId) < 0) {
-        auto err = m_inputSource.add(m_cl, pSourceInputFrame, queue);
+        && m_inputSource.findIndexByFrameIdentity(pSourceInputFrame) < 0) {
+        auto err = m_inputSource.add(m_cl, pSourceInputFrame, queue, prm.chromaEdi == VppRtgmcChromaEdiMode::NNEDI3);
         if (err != RGY_ERR_NONE) {
             AddMessage(RGY_LOG_ERROR, _T("failed to add rtgmc-edi NNEDI source frame: %s.\n"), get_err_mes(err));
             return err;
         }
     }
-    const int sourceIndex = m_inputSource.findIndexByInputFrameId(pBobInputFrame->inputFrameId);
+    const int sourceIndex = m_inputSource.findIndexForOutputFrame(pBobInputFrame);
     if (sourceIndex < 0) {
         AddMessage(RGY_LOG_ERROR, _T("rtgmc-edi NNEDI adapter source frame is missing for Bob inputFrameId=%d.\n"),
             pBobInputFrame->inputFrameId);
@@ -895,10 +968,12 @@ RGY_ERR RGYFilterRtgmcEdi::runNnediAdapter(const RGYFrameInfo *pBobInputFrame, c
     }
 
     RGYOpenCLEvent copyEvent;
-    auto err = m_cl->copyFrame(&pOutFrame->frame, mainFrame, nullptr, queue,
-        (mainEvent() != nullptr) ? std::vector<RGYOpenCLEvent>{ mainEvent } : std::vector<RGYOpenCLEvent>(), &copyEvent, RGYFrameCopyMode::FRAME, "rtgmc_edi.output_copy");
+    auto dstY = getPlane(&pOutFrame->frame, RGY_PLANE_Y);
+    const auto srcY = getPlane(mainFrame, RGY_PLANE_Y);
+    auto err = m_cl->copyPlane(&dstY, &srcY, nullptr, queue,
+        (mainEvent() != nullptr) ? std::vector<RGYOpenCLEvent>{ mainEvent } : std::vector<RGYOpenCLEvent>(), &copyEvent);
     if (err != RGY_ERR_NONE) {
-        AddMessage(RGY_LOG_ERROR, _T("failed to copy rtgmc-edi NNEDI adapter output: %s.\n"), get_err_mes(err));
+        AddMessage(RGY_LOG_ERROR, _T("failed to copy rtgmc-edi NNEDI adapter luma output: %s.\n"), get_err_mes(err));
         return err;
     }
 
@@ -922,6 +997,23 @@ RGY_ERR RGYFilterRtgmcEdi::runNnediAdapter(const RGYFrameInfo *pBobInputFrame, c
             err = m_cl->copyPlane(&dstPlane, &srcPlane, nullptr, queue, chromaWaitEvents, &planeEvent);
             if (err != RGY_ERR_NONE) {
                 AddMessage(RGY_LOG_ERROR, _T("failed to copy rtgmc-edi NNEDI chroma plane %d: %s.\n"), iplane, get_err_mes(err));
+                return err;
+            }
+            finalCopyEvent = planeEvent;
+        }
+    } else {
+        const int chromaPlanes = std::min(3, (int)RGY_CSP_PLANES[pOutFrame->frame.csp]);
+        for (int iplane = 1; iplane < chromaPlanes; iplane++) {
+            auto dstPlane = getPlane(&pOutFrame->frame, (RGY_PLANE)iplane);
+            const auto srcPlane = getPlane(pBobInputFrame, (RGY_PLANE)iplane);
+            if (dstPlane.ptr[0] == nullptr || srcPlane.ptr[0] == nullptr) {
+                continue;
+            }
+            RGYOpenCLEvent planeEvent;
+            err = m_cl->copyPlane(&dstPlane, &srcPlane, nullptr, queue,
+                (finalCopyEvent() != nullptr) ? std::vector<RGYOpenCLEvent>{ finalCopyEvent } : std::vector<RGYOpenCLEvent>(), &planeEvent);
+            if (err != RGY_ERR_NONE) {
+                AddMessage(RGY_LOG_ERROR, _T("failed to copy rtgmc-edi bob chroma plane %d: %s.\n"), iplane, get_err_mes(err));
                 return err;
             }
             finalCopyEvent = planeEvent;

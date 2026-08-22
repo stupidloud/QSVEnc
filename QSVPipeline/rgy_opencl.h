@@ -52,7 +52,10 @@
 #endif
 
 #include "rgy_osdep.h"
+#include <mutex>
+#ifndef CL_TARGET_OPENCL_VERSION
 #define CL_TARGET_OPENCL_VERSION 210
+#endif
 #include <CL/opencl.h>
 #if ENABLE_RGY_OPENCL_D3D9
 #include <CL/cl_dx9_media_sharing.h>
@@ -198,6 +201,8 @@ CL_EXTERN cl_int (CL_API_CALL* f_clGetPlatformIDs)(cl_uint num_entries, cl_platf
 CL_EXTERN cl_int (CL_API_CALL* f_clGetPlatformInfo) (cl_platform_id platform, cl_platform_info param_name, size_t param_value_size, void *param_value, size_t *param_value_size_ret);
 CL_EXTERN cl_int (CL_API_CALL* f_clGetDeviceIDs) (cl_platform_id platform, cl_device_type device_type, cl_uint num_entries, cl_device_id *devices, cl_uint *num_devices);
 CL_EXTERN cl_int (CL_API_CALL* f_clGetDeviceInfo) (cl_device_id device, cl_device_info param_name, size_t param_value_size, void *param_value, size_t *param_value_size_ret);
+CL_EXTERN cl_int (CL_API_CALL* f_clRetainDevice) (cl_device_id device);
+CL_EXTERN cl_int (CL_API_CALL* f_clReleaseDevice) (cl_device_id device);
 
 CL_EXTERN cl_context (CL_API_CALL* f_clCreateContext) (const cl_context_properties * properties, cl_uint num_devices, const cl_device_id * devices, void (CL_CALLBACK * pfn_notify)(const char *, const void *, size_t, void *), void * user_data, cl_int * errcode_ret);
 CL_EXTERN cl_int (CL_API_CALL* f_clReleaseContext) (cl_context context);
@@ -302,6 +307,8 @@ CL_EXTERN cl_int(CL_API_CALL* f_clEnqueueReleaseVA_APIMediaSurfacesINTEL)(cl_com
 #define clGetPlatformInfo f_clGetPlatformInfo
 #define clGetDeviceIDs f_clGetDeviceIDs
 #define clGetDeviceInfo f_clGetDeviceInfo
+#define clRetainDevice f_clRetainDevice
+#define clReleaseDevice f_clReleaseDevice
 
 #define clCreateContext f_clCreateContext
 #define clReleaseContext f_clReleaseContext
@@ -732,19 +739,22 @@ struct RGYCLFrameInterop : public RGYCLFrame {
 protected:
     RGYCLFrameInteropType m_interop;
     RGYOpenCLQueue& m_interop_queue;
+    std::recursive_mutex& m_interop_mutex;
     std::shared_ptr<RGYLog> m_log;
     bool m_acquired;
 public:
-    RGYCLFrameInterop(const RGYFrameInfo &info, cl_mem_flags flags, RGYCLFrameInteropType interop, RGYOpenCLQueue& interop_queue, shared_ptr<RGYLog> log)
-        : RGYCLFrame(info, flags), m_interop(interop), m_interop_queue(interop_queue), m_log(log), m_acquired(false) {
+    RGYCLFrameInterop(const RGYFrameInfo &info, cl_mem_flags flags, RGYCLFrameInteropType interop, RGYOpenCLQueue& interop_queue, std::recursive_mutex& interop_mutex, shared_ptr<RGYLog> log)
+        : RGYCLFrame(info, flags), m_interop(interop), m_interop_queue(interop_queue), m_interop_mutex(interop_mutex), m_log(log), m_acquired(false) {
     };
     RGY_ERR acquire(RGYOpenCLQueue &queue, RGYOpenCLEvent *event = nullptr);
+    static RGY_ERR acquire(const std::vector<RGYCLFrameInterop *>& frames, RGYOpenCLQueue& queue, RGYOpenCLEvent *event = nullptr);
 protected:
     RGYCLFrameInterop(const RGYCLFrameInterop &) = delete;
     void operator =(const RGYCLFrameInterop &) = delete;
 public:
     const RGYCLFrameInteropType interop() const { return m_interop; }
     RGY_ERR release(RGYOpenCLEvent *event = nullptr);
+    static RGY_ERR release(const std::vector<RGYCLFrameInterop *>& frames, RGYOpenCLEvent *event = nullptr);
     virtual ~RGYCLFrameInterop() {
         release();
     }
@@ -1187,6 +1197,7 @@ public:
     const RGYOpenCLQueue& queue(int idx=0) const { return m_queue[idx]; };
     RGYOpenCLQueue& queue(int idx=0) { return m_queue[idx]; };
     RGYOpenCLPlatform *platform() const { return m_platform.get(); };
+    std::recursive_mutex& interopMutex() { return m_interopMutex; };
 
     RGYThreadPool *threadPool() {
         if (!m_threadPool) { m_threadPool = std::make_unique<RGYThreadPool>(m_buildThreads); }
@@ -1220,11 +1231,15 @@ public:
     RGY_ERR copyFrame(RGYFrameInfo *dst, const RGYFrameInfo *src, const sInputCrop *srcCrop, RGYOpenCLQueue &queue);
     RGY_ERR copyFrame(RGYFrameInfo *dst, const RGYFrameInfo *src, const sInputCrop *srcCrop, RGYOpenCLQueue &queue, RGYOpenCLEvent *event);
     RGY_ERR copyFrame(RGYFrameInfo *dst, const RGYFrameInfo *src, const sInputCrop *srcCrop, RGYOpenCLQueue &queue, const std::vector<RGYOpenCLEvent> &wait_events, RGYOpenCLEvent *event = nullptr, RGYFrameCopyMode copyMode = RGYFrameCopyMode::FRAME, const char *perfLabel = nullptr);
+    //src/dstで別々のフィールドモードを指定できるコピー。フィールド分離(src=FIELD_xxx, dst=FRAME)/合成(その逆)に使う
+    RGY_ERR copyFrameField(RGYFrameInfo *dst, const RGYFrameInfo *src, RGYFrameCopyMode srcMode, RGYFrameCopyMode dstMode, const sInputCrop *srcCrop, RGYOpenCLQueue &queue, const std::vector<RGYOpenCLEvent> &wait_events = {}, RGYOpenCLEvent *event = nullptr, const char *perfLabel = nullptr);
     RGY_ERR copyPlane(RGYFrameInfo *dst, const RGYFrameInfo *src);
     RGY_ERR copyPlane(RGYFrameInfo *dst, const RGYFrameInfo *src, const sInputCrop *srcCrop);
     RGY_ERR copyPlane(RGYFrameInfo *dst, const RGYFrameInfo *src, const sInputCrop *srcCrop, RGYOpenCLQueue &queue);
     RGY_ERR copyPlane(RGYFrameInfo *dst, const RGYFrameInfo *src, const sInputCrop *srcCrop, RGYOpenCLQueue &queue, RGYOpenCLEvent *event);
     RGY_ERR copyPlane(RGYFrameInfo *dst, const RGYFrameInfo *src, const sInputCrop *srcCrop, RGYOpenCLQueue &queue, const std::vector<RGYOpenCLEvent> &wait_events, RGYOpenCLEvent *event = nullptr, RGYFrameCopyMode copyMode = RGYFrameCopyMode::FRAME, const char *perfLabel = nullptr);
+    //copyFrameFieldのplane単位版
+    RGY_ERR copyPlaneField(RGYFrameInfo *dst, const RGYFrameInfo *src, RGYFrameCopyMode srcMode, RGYFrameCopyMode dstMode, const sInputCrop *srcCrop, RGYOpenCLQueue &queue, const std::vector<RGYOpenCLEvent> &wait_events = {}, RGYOpenCLEvent *event = nullptr, const char *perfLabel = nullptr);
     RGY_ERR setPlane(int value, RGYFrameInfo *dst);
     RGY_ERR setPlane(int value, RGYFrameInfo *dst, const sInputCrop *srcCrop);
     RGY_ERR setPlane(int value, RGYFrameInfo *dst, const sInputCrop *srcCrop, RGYOpenCLQueue &queue);
@@ -1252,6 +1267,7 @@ protected:
     shared_ptr<RGYOpenCLPlatform> m_platform;
     unique_context m_context;
     std::vector<RGYOpenCLQueue> m_queue;
+    std::recursive_mutex m_interopMutex;
     std::shared_ptr<RGYLog> m_log;
     std::unordered_map<std::string, RGYOpenCLProgramAsync> m_copy;
     std::unique_ptr<RGYThreadPool> m_threadPool;

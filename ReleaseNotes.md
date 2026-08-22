@@ -1,5 +1,181 @@
 # QSVEnc Release Notes
 
+## 8.27
+
+- Update ffmpeg libraries. -> [binaries and src](https://github.com/rigaya/ffmpeg_dlls_for_hwenc/releases/tag/20260812), [build_scripts](https://github.com/rigaya/build_scripts)
+  - ffmpeg 8.0 -> 9.0.1
+  - libvmaf 3.0.0 -> 3.2.0
+  - libpng 1.6.50 -> 1.6.58
+  - xz 5.8.2 -> 5.8.3
+  - expat 2.7.1 -> 2.8.2
+  - harfbuzz 11.4.4 -> 14.3.0
+  - libunibreak 6.1 -> 7.0
+  - libass 0.17.4 -> 0.17.5
+  - lame 3.100 -> 4.0
+  - libxml2 2.14.5 -> 2.15.3
+  - libbluray 1.3.4 -> 1.5.0
+  - libaribcaption 1.1.1 -> 1.1.2
+  - libav1d 1.5.3 -> 1.5.4
+  - libvpl 2.16.0 -> 2.17.0
+  - nv-codec-headers 12.2.72.0 -> 13.1.15.0
+  - glslang 15.4.0 -> 16.5.0
+  - shaderc 2024.1 -> 2026.3
+  - dovi_tool 2.3.1 -> 2.3.3
+  - libjpeg-turbo 3.1.1 -> 3.2.0
+  - lcms2 2.17 -> 2.19.1
+  - vulkan-loader 1.3.295 -> 1.4.359
+  - libplacebo 7.351.0 -> 7.360.1
+  - vvenc 1.13.1 -> 1.14.0
+  - svt-av1 3.1.0 -> 4.2.0
+  - dovi_tool 2.3.1 -> 2.3.3
+- Add fix for some vpp filters.
+  - Fix double application of saturation coefficient in [--vpp-tweak](./QSVEncC_Options.en.md#--vpp-tweak-param1value1param2value2).
+  - Fix LUT3D input domain handling in [--vpp-colorspace](./QSVEncC_Options.en.md#--vpp-colorspace-param1value1param2value2).
+  - Fix interpolation of bilinear upscale in [--vpp-resize](./QSVEncC_Options.en.md#--vpp-resize-string).
+  - Fix deblur strength parameter order in [--vpp-anime4k-shader](./QSVEncC_Options.en.md#--vpp-anime4k-shader-param1value1param2value2).
+  - Fix sigma correction of Anime4K fast hierarchy in [--vpp-anime4k-shader](./QSVEncC_Options.en.md#--vpp-anime4k-shader-param1value1param2value2).
+  - Change default resize of Anime4K out_res to spline16 in [--vpp-anime4k-shader](./QSVEncC_Options.en.md#--vpp-anime4k-shader-param1value1param2value2).
+  - Speed up [--vpp-anime4k-shader](./QSVEncC_Options.en.md#--vpp-anime4k-shader-param1value1param2value2).
+
+## 8.26
+
+- Follow mid-stream input resolution changes.
+- Add [--adapt-resolution](./QSVEncC_Options.en.md#--adapt-resolution-intxint) to set maximum mid-stream input resolution changes.
+- Add support to track PMT change.
+- Support language exclusion for audio/subtitle selection. ([--audio-copy](./QSVEncC_Options.en.md#--audio-copy-intstringintstring) / [--audio-codec](./QSVEncC_Options.en.md#--audio-codec-intstringstringstringstringstringstring) / [--sub-copy](./QSVEncC_Options.en.md#--sub-copy-intstringintstring)) ( #305 )
+- Add the new [--vpp-onnx-deint](./QSVEncC_Options.en.md#--vpp-onnx-deint-param1value1param2value2) CLI through the `onnx_deint_models.json` registered-model manifest.
+- Improve memory retention of [--vpp-kfm](./QSVEncC_Options.en.md#--vpp-kfm-param1value1param2value2) and fix GPU memory growth of mode=24 on long encodes.
+- Output mp4 trailer even if error has occurred.
+
+## 8.25
+
+- Update for QSVEnc.auo2 only.
+
+## 8.24
+
+- Change default AVSync to vfr to reduce audio desync on ts drop. ([--avsync](./QSVEncC_Options.en.md#--avsync-string))
+- Fix cases where [--vpp-deinterlace](./QSVEncC_Options.en.md#--vpp-deinterlace-string) bob caused abnormal timestamps and aborted with an error.
+- Improve mixed RFF handling in [--vpp-kfm](./QSVEncC_Options.en.md#--vpp-kfm-param1value1param2value2).
+- Fix output stall and timestamp of [--vpp-kfm](./QSVEncC_Options.en.md#--vpp-kfm-param1value1param2value2) mode=24.
+- Speed up [--vpp-kfm](./QSVEncC_Options.en.md#--vpp-kfm-param1value1param2value2)/[--vpp-degrain](./QSVEncC_Options.en.md#--vpp-degrain-param1value1).
+- Fix chroma Degrain analysis in [--vpp-rtgmc](./QSVEncC_Options.en.md#--vpp-rtgmc-param1value1).
+- Speed up [--vpp-onnx](./QSVEncC_Options.en.md#--vpp-onnx-param1value1param2value2)/[--vpp-rife-ov](./QSVEncC_Options.en.md#--vpp-rife-ov-param1value1param2value2) with zero-copy path.
+- Support frames setting of registered models in [--vpp-onnx](./QSVEncC_Options.en.md#--vpp-onnx-param1value1param2value2).
+- Fix crash when OpenCL output worker is disabled.
+- Fix OpenCL frame pool issues.
+- Support saving/restoring per-project output settings in AviUtl2.
+
+## 8.23
+
+- Add [--vpp-lenscorrection](./QSVEncC_Options.en.md#--vpp-lenscorrection-param1value1param2value2).
+- Add [--vpp-v360](./QSVEncC_Options.en.md#--vpp-v360-param1value1param2value2).
+- Add mask and frames options to [--vpp-onnx](./QSVEncC_Options.en.md#--vpp-onnx-param1value1param2value2).
+- Add custom parameter to [--vpp-libplacebo-shader](./QSVEncC_Options.en.md#--vpp-libplacebo-shader-param1value1param2value2).
+- Speed up [--vpp-kfm](./QSVEncC_Options.en.md#--vpp-kfm-param1value1param2value2)/[--vpp-degrain](./QSVEncC_Options.en.md#--vpp-degrain-param1value1).
+- Fix accuracy/behavior and speed up [--vpp-rtgmc](./QSVEncC_Options.en.md#--vpp-rtgmc-param1value1).
+- Fix 10bit overflow in [--vpp-rtgmc](./QSVEncC_Options.en.md#--vpp-rtgmc-param1value1).
+- Fix OpenCL output worker drain race.
+
+## 8.22
+
+- Support Windows named pipes.
+- Improve precision of [--vpp-kfm](./QSVEncC_Options.en.md#--vpp-kfm-param1value1param2value2).
+- Speed up by OpenCL interop batch acquire/release and zero-copy cache of [--vpp-degrain](./QSVEncC_Options.en.md#--vpp-degrain-param1value1).
+- Fix bob deinterlace stopping with mixed RFF.
+- Normalize temporal difference width in [--vpp-yadif](./QSVEncC_Options.en.md#--vpp-yadif-param1value1).
+- Fix temporal field reference in [--vpp-bwdif](./QSVEncC_Options.en.md#--vpp-bwdif-param1value1).
+- Fix threshold scale in [--vpp-msharpen](./QSVEncC_Options.en.md#--vpp-msharpen-param1value1param2value2) and [--vpp-msmooth](./QSVEncC_Options.en.md#--vpp-msmooth-param1value1param2value2).
+- Compare all blocks and planes in [--vpp-mpdecimate](./QSVEncC_Options.en.md#--vpp-mpdecimate-param1value1param2value2).
+- Fix [--dynamic-rc](./QSVEncC_Options.en.md#--dynamic-rc-intintintintparam1value1param2value2) cqp=... parsing.
+- Fix potential issues.
+
+## 8.21
+
+- Add multi thread OpenCL pipeline optimization. (--opencl-task-threads)
+- Optimize [--vpp-kfm](./QSVEncC_Options.en.md#--vpp-kfm-param1value1param2value2) on long inputs.
+- Add new features and fixes to vpp filters.
+  - Add device=NPU to [--vpp-onnx](./QSVEncC_Options.en.md#--vpp-onnx-param1value1param2value2).
+  - Add SDR to HDR model support to [--vpp-onnx](./QSVEncC_Options.en.md#--vpp-onnx-param1value1param2value2).
+    - New model files can be downloaded from the link ( https://github.com/rigaya/HWEnc-onnx-models/releases ).
+  - Add [--vpp-rife-ov](./QSVEncC_Options.en.md#--vpp-rife-ov-param1value1param2value2) OpenVINO RIFE v4.x frame interpolation filter.
+  - Extend temporal parameters of [--vpp-fft3d](./QSVEncC_Options.en.md#--vpp-fft3d-param1value1param2value2).
+  - Add temporal radius to [--vpp-knn](./QSVEncC_Options.en.md#--vpp-knn-param1value1param2value2).
+  - Add planes option to [--vpp-nnedi](./QSVEncC_Options.en.md#--vpp-nnedi-param1value1param2value2).
+  - Add keep option to [--vpp-mpdecimate](./QSVEncC_Options.en.md#--vpp-mpdecimate-param1value1param2value2).
+  - Add effective source size option to [--vpp-descale](./QSVEncC_Options.en.md#--vpp-descale-param1value1param2value2).
+  - Add chroma option to [--vpp-cas](./QSVEncC_Options.en.md#--vpp-cas-param1value1param2value2).
+  - Add detailed parameters to [--vpp-hqdering](./QSVEncC_Options.en.md#--vpp-hqdering-param1value1param2value2).
+  - Add coring and hue range options to [--vpp-tweak](./QSVEncC_Options.en.md#--vpp-tweak-param1value1param2value2).
+  - Add nt/cthresh/combpel/scthresh parameters to [--vpp-ivtc](./QSVEncC_Options.en.md#--vpp-ivtc-param1value1param2value2).
+  - Add interpolation method to [--vpp-curves](./QSVEncC_Options.en.md#--vpp-curves-param1value1param2value2) and fix all specification.
+  - Fix seed and range clamp in [--vpp-deband](./QSVEncC_Options.en.md#--vpp-deband-param1value1param2value2).
+  - Fix keep state management in [--vpp-mpdecimate](./QSVEncC_Options.en.md#--vpp-mpdecimate-param1value1param2value2).
+  - Fix chroma processing in [--vpp-vinverse](./QSVEncC_Options.en.md#--vpp-vinverse-param1value1param2value2).
+  - Fix Anime4K spline36 linear term in [--vpp-anime4k-shader](./QSVEncC_Options.en.md#--vpp-anime4k-shader-param1value1param2value2).
+  - Fix libplacebo radius warning missing argument in [--vpp-libplacebo-shader](./QSVEncC_Options.en.md#--vpp-libplacebo-shader-param1value1param2value2).
+  - Fix libplacebo deband grain application target in [--vpp-libplacebo-deband](./QSVEncC_Options.en.md#--vpp-libplacebo-deband-param1value1param2value2).
+  - Fix colorspace LUT3D green axis scale output in [--vpp-colorspace](./QSVEncC_Options.en.md#--vpp-colorspace-param1value1param2value2).
+  - Fix diff calculation grid height in [--vpp-decimate](./QSVEncC_Options.en.md#--vpp-decimate-param1value1param2value2).
+  - Fix Y stride in comb detection grid of [--vpp-decomb](./QSVEncC_Options.en.md#--vpp-decomb-param1value1param2value2).
+  - Fix chroma averaging in RGB to YUV420 conversion.
+  - Fix multiple issues in denoise filters.
+
+## 8.20
+
+- Improve precision of [--vpp-finedehalo](./QSVEncC_Options.en.md#--vpp-finedehalo-param1value1param2value2).
+- Clarify that [--vpp-finedehalo](./QSVEncC_Options.en.md#--vpp-finedehalo-param1value1param2value2) does not support interlaced input.
+- Fix ghost artifacts in [--vpp-degrain](./QSVEncC_Options.en.md#--vpp-degrain-param1value1) with scene-change delayed output.
+- Fix frame corruption in [--vpp-ivtc](./QSVEncC_Options.en.md#--vpp-ivtc-param1value1param2value2) expand/mixed path.
+- Fix out-of-bounds luma read in [--vpp-anime4k-shader](./QSVEncC_Options.en.md#--vpp-anime4k-shader-param1value1param2value2) with YUV444 input.
+- Fix duplicate frame detection in [--vpp-decimate](./QSVEncC_Options.en.md#--vpp-decimate-param1value1param2value2).
+- Fix skipped output lines in [--vpp-nnedi](./QSVEncC_Options.en.md#--vpp-nnedi-param1value1param2value2) on Intel iGPUs.
+- Fix boundary read in [--vpp-afs](./QSVEncC_Options.en.md#--vpp-afs-param1value1param2value2) map filter.
+- Fix out-of-bounds write in [--vpp-subburn](./QSVEncC_Options.en.md#--vpp-subburn-param1value1param2value2) when subtitle position becomes negative.
+- Fix [--vpp-deflicker](./QSVEncC_Options.en.md#--vpp-deflicker-param1value1param2value2) being permanently disabled after scene change.
+- Fix infinite loop in AviSynth input audio track selection fallback.
+- Fix LUT boundary clamp and spline coefficient reference in [--vpp-curves](./QSVEncC_Options.en.md#--vpp-curves-param1value1param2value2).
+- Fix constant-luminance YUV to RGB conversion in [--vpp-colorspace](./QSVEncC_Options.en.md#--vpp-colorspace-param1value1param2value2).
+- Fix multiple color conversion bugs in YUV444/NV24/RGB paths.
+
+## 8.19
+
+- Improve post-tr2 shimmer repair in [--vpp-rtgmc](./QSVEncC_Options.en.md#--vpp-rtgmc-param1value1).
+
+## 8.18
+
+- Add inference precision option `prec=auto/fp16/fp32` to [--vpp-onnx](./QSVEncC_Options.en.md#--vpp-onnx-param1value1param2value2).
+- Add RAVU/NNEDI model family to [--vpp-onnx](./QSVEncC_Options.en.md#--vpp-onnx-param1value1param2value2) registry.
+- Fix chroma degrain processing in [--vpp-rtgmc](./QSVEncC_Options.en.md#--vpp-rtgmc-param1value1).
+- Fix source frame lookup after RFF expansion in [--vpp-rtgmc](./QSVEncC_Options.en.md#--vpp-rtgmc-param1value1).
+- Fix AV1 not being able to decode in smoe cases from QSVEnc 8.16. ( #302 )
+- Fix SIMD conversion from YUV444 to Y410.
+
+## 8.17
+
+- Add [--vpp-onnx](./QSVEncC_Options.en.md#--vpp-onnx-param1value1param2value2) OpenVINO-backed CNN filter with [--vpp-onnx-model-dir](./QSVEncC_Options.en.md#--vpp-onnx-model-dir-string) and models.json registry.
+  - Model files can be downloaded from the link below.
+    https://github.com/rigaya/HWEnc-onnx-models/releases
+
+- Add [--vpp-anime4k-shader](./QSVEncC_Options.en.md#--vpp-anime4k-shader-param1value1param2value2) Anime4K v3.2 GLSL shader chain.
+- Add nis, jinc36/jinc64/jinc144/jinc256 to [--vpp-resize](./QSVEncC_Options.en.md#--vpp-resize-string).
+- Extend [--vpp-resize](./QSVEncC_Options.en.md#--vpp-resize-string) with lanczos5-8 and bicubic parameter options (b, c, mitchell / catmull-rom / hermite aliases).
+- Apply field order specified by [--vpp-rtgmc](./QSVEncC_Options.en.md#--vpp-rtgmc-param1value1) order parameter to actual deinterlace.
+- Support odd [--crop](./QSVEncC_Options.en.md#--crop-intintintint) when output resolution must be even.
+- Fix [--vpp-nnedi](./QSVEncC_Options.en.md#--vpp-nnedi-param1value1param2value2) frame buffer not allocated properly.
+- Fix [--vpp-kfm](./QSVEncC_Options.en.md#--vpp-kfm-param1value1param2value2) not properly using frame pool.
+
+## 8.16
+
+- Add [--vpp-softlight](./QSVEncC_Options.en.md#--vpp-softlight-param1value1param2value2) soft light filter.
+- Add [--vpp-detailsharpen](./QSVEncC_Options.en.md#--vpp-detailsharpen-param1value1param2value2) detail sharpen filter.
+- Auto disable enctools related option to workaround image corruption with 10bit HEVC FF + EncTools on iGPUs up to AlderLake.
+- Auto disable [--fade-detect](./QSVEncC_Options.en.md#--fade-detect) in unstable environments. ( #301 )
+- Optimize [--vpp-kfm](./QSVEncC_Options.en.md#--vpp-kfm-param1value1param2value2), [--vpp-rtgmc](./QSVEncC_Options.en.md#--vpp-rtgmc-param1value1) and [--vpp-degrain](./QSVEncC_Options.en.md#--vpp-degrain-param1value1).
+- Reduce GPU memory allocation of [--vpp-kfm](./QSVEncC_Options.en.md#--vpp-kfm-param1value1param2value2) and [--vpp-rtgmc](./QSVEncC_Options.en.md#--vpp-rtgmc-param1value1).
+- Optimize [--vpp-edgelevel](./QSVEncC_Options.en.md#--vpp-edgelevel-param1value1param2value2), [--vpp-dehalo](./QSVEncC_Options.en.md#--vpp-dehalo-param1value1param2value2), and [--vpp-knn](./QSVEncC_Options.en.md#--vpp-knn-param1value1param2value2).
+- Fix audio sync issue when input has negative pts from libavformat.
+- Fix [--chromaloc](./QSVEncC_Options.en.md#--chromaloc-int-or-auto) not working as expected. ( #298 )
+
 ## 8.15
 
 - Add [--vpp-nlmeans](./QSVEncC_Options.en.md#--vpp-nlmeans-param1value1param2value2) noise reduction filter.

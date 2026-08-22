@@ -61,6 +61,8 @@ QSVVppMfx::QSVVppMfx(CQSVHWDevice *hwdev, QSVAllocator *allocator,
     m_sessionParams(sessionParams),
     m_deviceNum(deviceNum),
     m_asyncDepth(asyncDepth),
+    m_initialInputWidth(0),
+    m_initialInputHeight(0),
     m_crop(),
     m_mfxVPP(),
     m_mfxVppParams(),
@@ -146,6 +148,8 @@ RGY_ERR QSVVppMfx::SetParam(
     VppExtMes.clear();
 
     auto mfxIn = SetMFXFrameIn(frameIn, crop, infps, sar, deinterlaceMode, blockSize);
+    m_initialInputWidth = mfxIn.Width;
+    m_initialInputHeight = mfxIn.Height;
 
     mfxFrameInfo mfxOutQuery;
     if ((err = SetMFXFrameOut(mfxOutQuery, params, frameOut, mfxIn, blockSize)) != RGY_ERR_NONE) {
@@ -166,6 +170,12 @@ RGY_ERR QSVVppMfx::SetParam(
     if (err != RGY_ERR_NONE) {
         return err;
     }
+
+    // 機能照会用の SetMFXFrameOut で記録したログと拡張バッファを破棄する。
+    // このまま本設定を行うと、インタレ解除などが二重に表示され、同じ拡張バッファも重複登録される。
+    VppExtMes.clear();
+    m_VppDoUseList.clear();
+    m_VppExtParams.clear();
 
     mfxFrameInfo mfxOut;
     if ((err = SetMFXFrameOut(mfxOut, params, frameOut, mfxIn, blockSize)) != RGY_ERR_NONE) {
@@ -204,6 +214,57 @@ RGY_ERR QSVVppMfx::Reset(
         return err;
     }
     return Init();
+}
+
+void QSVVppMfx::SetInputAllocationResolution(const int width, const int height) {
+    // m_initialInputWidth/Heightという名前は既存実装の名残で、現在は「入力プールの実確保上限」を表す。
+    // SetParamは初回入力のアライン済み寸法を格納するが、--adapt-resolution指定時は実際のプールの
+    // 確保寸法に合わせてここで拡張する。16アラインはAllocFramesと同じ規則にする必要がある。
+    // m_mfxVppParams.vpp.In自体は書き換えない。そこは「現在VPPが期待する論理入力」であり、上限値にすると
+    // 最初の解像度変更検出とResetが正しく発火しなくなる。
+    m_initialInputWidth = (mfxU16)std::max<int>(m_initialInputWidth, ALIGN(width, 16));
+    m_initialInputHeight = (mfxU16)std::max<int>(m_initialInputHeight, ALIGN(height, 16));
+}
+
+// 入力途中の解像度変更時に、vpp.Inのみを新解像度に差し替えてResetする。
+// vpp.Outはそのまま維持するため、MFX VPP自体がリサイズを兼ねて出力を初期の論理解像度へ正規化することになる
+// (= 解像度変更を下流に伝播させない)。--avhw かつ MFX VPPが構成に含まれる場合の経路。
+RGY_ERR QSVVppMfx::ResetInputResolution(const mfxFrameInfo& newInputInfo) {
+    const int currentInputWidth = inputWidthBeforeCrop();
+    const int currentInputHeight = inputHeightBeforeCrop();
+    // newInputInfo.Width/Heightはアライン済みの物理寸法、CropW/CropHは現在の映像寸法。
+    // Resetは既存サーフェスを再利用し、ここで再確保は行わないため、比較すべきなのはCropではなく物理寸法。
+    // 上限は通常は初期入力、--adapt-resolution時は入力直後に先行確保した最大寸法となる。
+    if (newInputInfo.Width > m_initialInputWidth || newInputInfo.Height > m_initialInputHeight) {
+        PrintMes(RGY_LOG_ERROR,
+            _T("input resolution changed from %dx%d to %dx%d, which exceeds the configured VPP allocation %dx%d and is not supported yet.\n"),
+            currentInputWidth, currentInputHeight, (int)newInputInfo.CropW, (int)newInputInfo.CropH,
+            (int)m_initialInputWidth, (int)m_initialInputHeight);
+        PrintMes(RGY_LOG_ERROR, _T("  Please split the input file at the resolution change point.\n"));
+        return RGY_ERR_UNSUPPORTED;
+    }
+
+    // --cropは新解像度に対しても同じ画素数で適用されるため、cropしきれない小さな解像度になった場合は対応できない
+    const int cropWidth = m_crop.e.left + m_crop.e.right;
+    const int cropHeight = m_crop.e.up + m_crop.e.bottom;
+    if (newInputInfo.CropW <= cropWidth || newInputInfo.CropH <= cropHeight) {
+        PrintMes(RGY_LOG_ERROR,
+            _T("input resolution changed from %dx%d to %dx%d, which is too small for the configured crop (%d,%d,%d,%d) and is not supported yet.\n"),
+            currentInputWidth, currentInputHeight, (int)newInputInfo.CropW, (int)newInputInfo.CropH,
+            m_crop.e.left, m_crop.e.up, m_crop.e.right, m_crop.e.bottom);
+        PrintMes(RGY_LOG_ERROR, _T("  Please split the input file at the resolution change point.\n"));
+        return RGY_ERR_UNSUPPORTED;
+    }
+
+    // Width/Heightはアライメント済みの確保サイズ、CropW/CropHが実際の絵の大きさ。渡された新解像度からcrop分を差し引いてvpp.Inを作る
+    auto newInput = m_mfxVppParams.vpp.In;
+    newInput.Width = newInputInfo.Width;
+    newInput.Height = newInputInfo.Height;
+    newInput.CropX = (mfxU16)m_crop.e.left;
+    newInput.CropY = (mfxU16)m_crop.e.up;
+    newInput.CropW = (mfxU16)(newInputInfo.CropW - cropWidth);
+    newInput.CropH = (mfxU16)(newInputInfo.CropH - cropHeight);
+    return Reset(m_mfxVppParams.vpp.Out, newInput);
 }
 
 RGY_ERR QSVVppMfx::Init() {
@@ -613,7 +674,7 @@ RGY_ERR QSVVppMfx::SetVppExtBuffers(sVppParams& params) {
                 || (check_lib_version(m_mfxVer, MFX_LIB_VERSION_1_33) && params.resizeInterp != MFX_INTERPOLATION_DEFAULT)) {
             INIT_MFX_EXT_BUFFER(m_ExtScaling, MFX_EXTBUFF_VPP_SCALING);
             if (check_lib_version(m_mfxVer, MFX_LIB_VERSION_1_33)) {
-                m_ExtScaling.ScalingMode = (mfxU16)params.resizeInterp; // API 1.33
+                m_ExtScaling.InterpolationMethod = (mfxU16)params.resizeInterp; // API 1.33
                 str += strsprintf(_T(", %s"), get_chr_from_value(list_vpp_resize, resize_algo_enc_to_rgy(params.resizeInterp)));
             }
             m_ExtScaling.ScalingMode = (mfxU16)params.resizeMode; // API 1.19

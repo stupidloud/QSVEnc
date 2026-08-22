@@ -314,6 +314,181 @@ API v1.1  … Intel Media SDK v2.0
 
 
 【どうでもいいメモ】
+2026.08.15 (8.27)
+[QSVEncC]
+- 使用するffmpegのライブラリを更新。
+  - ffmpeg 8.0 -> 9.0.1
+  - libvmaf 3.0.0 -> 3.2.0
+  - libpng 1.6.50 -> 1.6.58
+  - xz 5.8.2 -> 5.8.3
+  - expat 2.7.1 -> 2.8.2
+  - harfbuzz 11.4.4 -> 14.3.0
+  - libunibreak 6.1 -> 7.0
+  - libass 0.17.4 -> 0.17.5
+  - lame 3.100 -> 4.0
+  - libxml2 2.14.5 -> 2.15.3
+  - libbluray 1.3.4 -> 1.5.0
+  - libaribcaption 1.1.1 -> 1.1.2
+  - libav1d 1.5.3 -> 1.5.4
+  - libvpl 2.16.0 -> 2.17.0
+  - nv-codec-headers 12.2.72.0 -> 13.1.15.0
+  - glslang 15.4.0 -> 16.5.0
+  - shaderc 2024.1 -> 2026.3
+  - dovi_tool 2.3.1 -> 2.3.3
+  - libjpeg-turbo 3.1.1 -> 3.2.0
+  - lcms2 2.17 -> 2.19.1
+  - vulkan-loader 1.3.295 -> 1.4.359
+  - libplacebo 7.351.0 -> 7.360.1
+  - vvenc 1.13.1 -> 1.14.0
+  - svt-av1 3.1.0 -> 4.2.0
+  - dovi_tool 2.3.1 -> 2.3.3
+  - hdr10plus_tool 1.7.1 -> 1.7.2
+- --vpp-tweakの彩度係数の二重適用を修正。
+- --vpp-colorspaceのLUT3D入力ドメイン処理を修正。
+- --vpp-resizeのbilinear拡大時の補間を修正。
+- --vpp-anime4k-shaderのdeblurのstrength指定順を修正。
+- --vpp-anime4k-shaderの高速階層のsigma補正を修正。
+- --vpp-anime4k-shaderのout_resの既定リサイズをspline16に変更。
+- --vpp-anime4k-shaderを高速化。
+- QSVEnc 8.26からAviUtlから10bit出力しようとするとエラー終了していた問題を修正。
+
+2026.08.08 (8.26)
+[QSVEncC]
+- 入力途中の解像度変更に追従するようにした。
+- --adapt-resolutionを追加。
+- PMT変更追従機能を追加。
+- 音声・字幕の言語除外指定に対応。
+- Linuxで--interlace autoを有効化。
+- --vpp-onnx-deintを追加。
+- ONNXホスト出力のクロマ丸めを修正。
+- --vpp-kfmのメモリ保持を改善し、mode=24の長尺処理でGPUメモリが増加する問題を修正。
+- エラー発生時もmp4のtrailerを書き込むように。
+
+2026.08.04 (8.25)
+- AviUtl2 2.1.3で音声が出力されないことがある問題を修正。
+
+2026.08.01 (8.24)
+[QSVEncC]
+- デフォルトをAVSync vfrに変更し、ts droop時の音ズレを抑制。
+- --vpp-deinterlace bobでタイムスタンプ異常が発生してエラー終了するケースがあったのを修正。
+- --vpp-kfmで混合RFF素材の処理を改善。
+- --vpp-kfm mode=24の出力停止とタイムスタンプを修正。
+- --vpp-kfm/--vpp-degrainを高速化。
+- --vpp-rtgmcの色差Degrain解析を修正。
+- --vpp-onnx/--vpp-rife-ovをゼロコピー化により高速化。
+- --vpp-onnxの登録モデルのフレーム数指定に対応。
+- OpenCL出力ワーカー無効時のクラッシュを修正。
+- OpenCLフレームプールの不具合を修正。
+
+[QSVEnc.auo]
+- AviUtl2でプロジェクト単位の出力設定の保存・復元に対応。
+
+2026.07.25 (8.23)
+[QSVEncC]
+- --vpp-lenscorrectionを追加。
+- --vpp-v360を追加。
+- --vpp-onnxにmaskオプション、framesオプションを追加。
+- --vpp-libplacebo-shaderにcustom指定を追加。
+- --vpp-kfm/--vpp-degrainを高速化。
+- --vpp-rtgmcの精度・動作を修正し、高速化。
+- --vpp-rtgmcの10bitでのオーバーフローを修正。
+- OpenCL出力ワーカーのdrain競合を修正。
+
+2026.07.18 (8.22)
+[QSVEncC]
+- Windowsの名前付きパイプに対応。
+- --vpp-kfmの精度を改善。
+- OpenCL interopのバッチacquire/releaseと--vpp-degrainのゼロコピー化により高速化。
+- RFF混合時のbobインタレ解除が停止する問題を修正。
+- --vpp-yadifの時間差分の幅を正規化。
+- --vpp-bwdifの時間方向フィールド参照を修正。
+- --vpp-msharpenと--vpp-msmoothの閾値スケールを修正。
+- --vpp-mpdecimateで全ブロックと全プレーンを比較するよう修正。
+- 潜在的な不具合を修正。
+
+2026.07.11 (8.21)
+[QSVEncC]
+- OpenCL pipeline最適化により高速化。
+- --vpp-kfmの長尺低速化を修正して高速化。
+- --vpp-fft3dの時間方向パラメータ拡張。
+- --vpp-knnに時間方向半径を追加。
+- --vpp-nnediにplanes指定を追加。
+- --vpp-mpdecimateにkeep指定を追加。
+- --vpp-descaleに有効ソースサイズ指定を追加。
+- --vpp-casにchroma指定を追加。
+- --vpp-hqderingに詳細パラメータを追加。
+- --vpp-tweakにcoringとhue範囲指定を追加。
+- --vpp-ivtcにnt/cthresh/combpel/scthreshパラメータを追加。
+- --vpp-onnxにdevice=NPUを追加。
+- --vpp-onnxにSDR to HDRモデル対応を追加。
+- --vpp-rife-ov OpenVINO RIFE v4.xフレーム補間フィルタを追加。
+- --vpp-curvesに補間方式を追加しall指定を修正。
+- --vpp-debandのseed反映と範囲clampを修正。
+- --vpp-mpdecimateのkeep状態管理を修正。
+- --vpp-vinverseのchroma処理を修正。
+- --vpp-anime4k-shader spline36の一次項を修正。
+- --vpp-libplacebo-shaderのradius警告の引数不足を修正。
+- --vpp-libplacebo-debandのgrain適用先を修正。
+- --vpp-colorspace LUT3Dのgreen軸scale出力を修正。
+- --vpp-decimateの差分計算グリッド高さを修正。
+- --vpp-decombの縞判定グリッドY方向strideを修正。
+- RGBからYUV420変換のクロマ平均を修正。
+- denoiseフィルタの複数の問題を修正。
+
+2026.07.04 (8.20)
+[QSVEncC]
+- --vpp-finedehaloの高精度化。
+- --vpp-finedehaloをインタレ非対応と明示。
+- --vpp-degrainでscene-change遅延出力時にghostが発生する問題を修正。motion searchの改善も実施。
+- --vpp-ivtc expand/mixedパスでフレーム破損する問題を修正。
+- --vpp-anime4k-shader YUV444入力でOOB読み取りが発生する問題を修正。
+- --vpp-decimate 重複フレーム検出が不正になる問題を修正。
+- --vpp-afs 境界でのmapバッファOOB読み取りを修正。
+- --vpp-subburn 字幕位置が負の場合のOOB writeを防止。
+- --vpp-deflicker シーンチェンジ後にフィルタが恒久的に無効化される問題を修正。
+- AviSynth入力で音声トラック選択フォールバック時に無限ループになる問題を修正。
+- --vpp-curves LUT境界のclamp漏れとスプライン係数の参照ミスを修正。
+- --vpp-colorspace constant-luminance YUV→RGB変換の係数ミスを修正。
+- YUV444/NV24/RGB等の色変換の複数のバグを修正。
+
+2026.06.28 (8.19)
+[QSVEncC]
+- --vpp-rtgmc の post-tr2 shimmer repair 補正を改善。
+  インタレ解除時に文字列などの固定形状が上下に揺れてしまう問題を修正。
+
+2026.06.27 (8.18)
+[QSVEncC]
+- --vpp-onnx に推論精度指定 prec=auto/fp16/fp32 を追加。
+- --vpp-onnx の ONNXモデル一覧に RAVU/NNEDI を追加。
+- --vpp-rtgmc の chroma degrain 処理を修正。
+- RTGMC で RFF 展開後の source frame 参照を修正。
+- 8.16から、AV1がデコードできなくなっていることがあったのを修正。
+- YUV444 から Y410 への SIMD 変換を修正。
+
+2026.06.22 (8.17)
+[QSVEncC]
+- onnxモデルをフィルタとして実行する機能を追加。(--vpp-onnx)
+  OpenVINOでonnxモデルをGPU上で実行。使用するモデルはこちらからダウンロード可能なので、展開して --vpp-onnx-model-dirで指定してください。
+- Anime4K GLSLシェーダフィルタ --vpp-anime4k-shader を追加。
+- --vpp-resize に nis, jinc36/jinc64/jinc144/jinc256 を追加。
+- --vpp-resize の lanczos5-8 と bicubic パラメータ指定 (b, c) を拡張。mitchell / catmull-rom / hermite エイリアスに対応。
+- --vpp-rtgmc order を指定したとき、それを実際の解除に反映するように。
+- 出力解像度が偶数になる条件で、奇数cropに対応。
+- --vpp-nnediの参照バッファ確保不足を修正。
+- --vpp-kfmでフレームプールが枯渇する問題を修正。
+
+2026.06.17 (8.16)
+[QSVEncC]
+- SoftLightフィルタ --vpp-softlight を追加。
+- DetailSharpenフィルタ --vpp-detailsharpen を追加。
+- AlderLake以前のiGPUで10bit HEVC FFの場合にEncToolsを自動で無効化して画像破綻回避するように。
+- fade-detectの不安定環境での自動無効化を拡大。( #301 )
+- --vpp-kfm, --vpp-rtgmc, --vpp-degrain の処理を高速化。
+- --vpp-kfm, --vpp-rtgmc のGPUメモリ確保を削減。
+- --vpp-edgelevel, --vpp-dehalo, --vpp-knn の高速化。
+- libavformatが負のptsを返す場合に音ズレしてしまう場合があったのを修正。
+- --chromaloc が期待通り動作しない場合があったのを修正。( #298 )
+
 2026.06.06 (8.15)
 [QSVEncC]
 - nlmeansノイズ除去フィルタ --vpp-nlmeans を追加。

@@ -625,7 +625,7 @@ BOOL check_output(CONF_GUIEX *conf, OUTPUT_INFO *oip, const PRM_ENC *pe, guiEx_s
                 && str_has_char(exstg->s_aud_int[DEFAULT_AUDIO_ENCODER_IN].filename));
             if (cnf_aud->encoder < 0 || exstg->s_aud_int_count <= cnf_aud->encoder) {
                 if (default_audenc_cnf_avail) {
-                    cnf_aud->encoder = exstg->s_local.default_audio_encoder_ext;
+                    cnf_aud->encoder = exstg->s_local.default_audio_encoder_in;
                     warning_use_default_audio_encoder(exstg->s_aud_int[cnf_aud->encoder].dispname);
                 } else if (default_audenc_auo_avail) {
                     cnf_aud->encoder = DEFAULT_AUDIO_ENCODER_IN;
@@ -936,7 +936,11 @@ static void set_aud_delay_cut(CONF_GUIEX *conf, PRM_ENC *pe, const OUTPUT_INFO *
             conf->aud.in.delay_cut = AUDIO_DELAY_CUT_NONE;
         } else {
             CONF_AUDIO_BASE *cnf_aud = &conf->aud.ext;
+            if (cnf_aud->encoder < 0 || cnf_aud->encoder >= sys_dat->exstg->s_aud_ext_count)
+                return;
             const AUDIO_SETTINGS *aud_stg = &sys_dat->exstg->s_aud_ext[cnf_aud->encoder];
+            if (cnf_aud->enc_mode < 0 || cnf_aud->enc_mode >= aud_stg->mode_count)
+                return;
             int audio_delay = aud_stg->mode[cnf_aud->enc_mode].delay;
             if (audio_delay) {
                 const double fps = oip->rate / (double)oip->scale;

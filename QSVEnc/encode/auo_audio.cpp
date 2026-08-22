@@ -267,7 +267,7 @@ static uint32_t build_wave_header(BYTE *head, const int audio_ch, const int audi
         *(DWORD*)(head + offset) = (DWORD)sample_n; offset += 4; // dwSampleLength (per channel sample frames)
     }
     memcpy(head + offset, DATA_CHUNK, strlen(DATA_CHUNK)); offset += 4;
-    *(DWORD*)(head + offset) = rf64 ? 0xffffffff : sample_n * (size * audio_ch); offset += 4;
+    *(DWORD*)(head + offset) = rf64 ? 0xffffffff : (DWORD)((uint64_t)sample_n * (size * audio_ch)); offset += 4;
     return offset;
     //計44byte(WAVE_HEADER_SIZE)
 }
@@ -297,7 +297,7 @@ static void correct_header(FILE *f_out, int samples_read, uint64_t data_size64, 
         uint32_t riff_size32 = data_size32 + (data_size_pos - RIFF_SIZE_POS);
         _fseeki64(f_out, RIFF_SIZE_POS, SEEK_SET);
         fwrite(&riff_size32, sizeof(uint32_t), 1, f_out);
-        _fseeki64(f_out, data_size_pos - RIFF_SIZE_POS, SEEK_CUR);
+        _fseeki64(f_out, data_size_pos, SEEK_SET);
         fwrite(&data_size32, sizeof(uint32_t), 1, f_out);
     }
 }
@@ -454,14 +454,14 @@ static void recalculate_audio_delay_cut_for_afs(const CONF_GUIEX *conf, const OU
     }
 }
 
-static AUO_RESULT silent_wav_output(aud_data_t *aud_dat, const PRM_ENC *pe, int samples, int wav_8bit, int audio_ch) {
+static AUO_RESULT silent_wav_output(aud_data_t *aud_dat, const PRM_ENC *pe, int samples, int wav_8bit, int audio_ch, int audio_format) {
     if (NULL == aud_dat)
         return AUO_RESULT_ERROR;
 
     if (0 >= samples)
         return AUO_RESULT_SUCCESS;
 
-    int silent_bytes = samples * (2 - !!wav_8bit) * audio_ch;
+    int silent_bytes = samples * (wav_8bit ? 1 : ((audio_format == 3) ? 4 : 2)) * audio_ch;
     BYTE *buffer = (BYTE *)calloc(silent_bytes, 1);
     if (NULL == buffer)
         return AUO_RESULT_ERROR;
@@ -605,7 +605,7 @@ static AUO_RESULT wav_output(aud_data_t *aud_dat, const OUTPUT_INFO *oip, PRM_EN
 
         //wav出力
         for (int i_aud = 0; i_aud < pe->aud_count; i_aud++)
-            silent_wav_output(&aud_dat[i_aud], pe, pe->delay_cut_additional_aframe, wav_8bit, oip->audio_ch);
+            silent_wav_output(&aud_dat[i_aud], pe, pe->delay_cut_additional_aframe, wav_8bit, oip->audio_ch, audio_format);
 
         const int wav_sample_size = oip->audio_ch * ((wav_8bit) ? sizeof(BYTE) : ((audio_format == 3) ? sizeof(float) : sizeof(short)));
         void *audio_dat = NULL;

@@ -42,12 +42,13 @@ public:
     int nnsize;
     int nneurons;
     int ediqual;
+    VppRtgmcBobOrder order;
     RGYFrameInfo sourceFrameIn;
     rgy_rational<int> sourceBaseFps;
     rgy_rational<int> sourceTimebase;
     HMODULE hModule;
 
-    RGYFilterParamRtgmcEdi() : mode(VppRtgmcEdiMode::BobChromaMerge), chromaEdi(VppRtgmcChromaEdiMode::None), nnsize(1), nneurons(1), ediqual(1), sourceFrameIn(), sourceBaseFps(), sourceTimebase(), hModule(NULL) {}
+    RGYFilterParamRtgmcEdi() : mode(VppRtgmcEdiMode::BobChromaMerge), chromaEdi(VppRtgmcChromaEdiMode::None), nnsize(1), nneurons(1), ediqual(1), order(VppRtgmcBobOrder::Auto), sourceFrameIn(), sourceBaseFps(), sourceTimebase(), hModule(NULL) {}
     virtual ~RGYFilterParamRtgmcEdi() {}
     virtual tstring print() const override;
 };
@@ -77,9 +78,11 @@ protected:
     public:
         FrameSource();
         RGY_ERR alloc(std::shared_ptr<RGYOpenCLContext> cl, const RGYFrameInfo& frameInfo);
-        RGY_ERR add(std::shared_ptr<RGYOpenCLContext> cl, const RGYFrameInfo *pInputFrame, RGYOpenCLQueue &queue);
+        RGY_ERR add(std::shared_ptr<RGYOpenCLContext> cl, const RGYFrameInfo *pInputFrame, RGYOpenCLQueue &queue, bool copyChroma = true);
         RGYCLFrame *get(int iframe);
         int findIndexByInputFrameId(int inputFrameId) const;
+        int findIndexByFrameIdentity(const RGYFrameInfo *frame) const;
+        int findIndexForOutputFrame(const RGYFrameInfo *frame) const;
         int inframe() const { return m_nFramesInput; }
         void clear();
         void resetFrames();
@@ -103,6 +106,11 @@ protected:
                 && inputFrameId == frame->inputFrameId
                 && timestamp == frame->timestamp
                 && duration == frame->duration;
+        }
+        bool matchesFrameIdentity(const RGYFrameInfo *frame) const {
+            return frame
+                && inputFrameId == frame->inputFrameId
+                && timestamp == frame->timestamp;
         }
     };
 

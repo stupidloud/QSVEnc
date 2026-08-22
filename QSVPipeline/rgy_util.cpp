@@ -416,7 +416,7 @@ std::string lstrip(const std::string& string, const char* trim) {
     auto result = string;
     auto left = string.find_first_not_of(trim);
     if (left != std::string::npos) {
-        result = string.substr(left, 0);
+        result = string.substr(left);
     }
     return result;
 }
@@ -425,7 +425,7 @@ std::string rstrip(const std::string& string, const char* trim) {
     auto result = string;
     auto right = string.find_last_not_of(trim);
     if (right != std::string::npos) {
-        result = string.substr(0, right);
+        result = string.substr(0, right + 1);
     }
     return result;
 }
@@ -444,7 +444,7 @@ std::wstring lstrip(const std::wstring& string, const WCHAR* trim) {
     auto result = string;
     auto left = string.find_first_not_of(trim);
     if (left != std::string::npos) {
-        result = string.substr(left, 0);
+        result = string.substr(left);
     }
     return result;
 }
@@ -484,6 +484,10 @@ std::string add_indent(const std::string& str, const int indentLength) {
         ret.append("\n");
         current = found + 1;
     }
+    if (current < str.length()) {
+        ret.append(indent);
+        ret.append(std::string(str, current));
+    }
     return ret;
 }
 
@@ -502,6 +506,10 @@ std::wstring add_indent(const std::wstring& str, const int indentLength) {
         ret.append(segment);
         ret.append(L"\n");
         current = found + 1;
+    }
+    if (current < str.length()) {
+        ret.append(indent);
+        ret.append(std::wstring(str, current));
     }
     return ret;
 }

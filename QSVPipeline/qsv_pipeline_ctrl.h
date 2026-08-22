@@ -36,6 +36,9 @@
 #include <deque>
 #include <set>
 #include <optional>
+#include <atomic>
+#include <thread>
+#include <mutex>
 #include "qsv_hw_device.h"
 #include "rgy_opencl.h"
 #include "qsv_opencl.h"
@@ -47,6 +50,7 @@
 #include "rgy_input.h"
 #include "rgy_input_sm.h"
 #include "rgy_filter.h"
+#include "rgy_filter_resize.h"
 #include "rgy_filter_ssim.h"
 #include "rgy_output.h"
 #include "rgy_output_avcodec.h"
@@ -511,10 +515,14 @@ protected:
     mfxVersion m_mfxVer;
     std::shared_ptr<RGYLog> m_log;
     std::unique_ptr<PipelineTaskStopWatch> m_stopwatch;
+    // ワークサーフェスの物理確保寸法。--adapt-resolution指定時は初期映像より大きい場合がある。
+    // 入力途中の解像度変更でframeの論理寸法を書き換えるため、確保寸法を別に保持する必要がある。
+    int m_workSurfAllocWidth;
+    int m_workSurfAllocHeight;
 public:
-    PipelineTask() : m_type(PipelineTaskType::UNKNOWN), m_outQeueue(), m_workSurfs(), m_mfxSession(nullptr), m_allocator(nullptr), m_allocResponse({ 0 }), m_inFrames(0), m_outFrames(0), m_outMaxQueueSize(0), m_mfxVer({ 0 }), m_log(), m_stopwatch() {};
+    PipelineTask() : m_type(PipelineTaskType::UNKNOWN), m_outQeueue(), m_workSurfs(), m_mfxSession(nullptr), m_allocator(nullptr), m_allocResponse({ 0 }), m_inFrames(0), m_outFrames(0), m_outMaxQueueSize(0), m_mfxVer({ 0 }), m_log(), m_stopwatch(), m_workSurfAllocWidth(0), m_workSurfAllocHeight(0) {};
     PipelineTask(PipelineTaskType type, int outMaxQueueSize, MFXVideoSession *mfxSession, mfxVersion mfxVer, std::shared_ptr<RGYLog> log) :
-        m_type(type), m_outQeueue(), m_workSurfs(), m_mfxSession(mfxSession), m_allocator(nullptr), m_allocResponse({ 0 }), m_inFrames(0), m_outFrames(0), m_outMaxQueueSize(outMaxQueueSize), m_mfxVer(mfxVer), m_log(log), m_stopwatch() {
+        m_type(type), m_outQeueue(), m_workSurfs(), m_mfxSession(mfxSession), m_allocator(nullptr), m_allocResponse({ 0 }), m_inFrames(0), m_outFrames(0), m_outMaxQueueSize(outMaxQueueSize), m_mfxVer(mfxVer), m_log(log), m_stopwatch(), m_workSurfAllocWidth(0), m_workSurfAllocHeight(0) {
     };
     virtual ~PipelineTask() {
         if (m_allocator) {
@@ -541,6 +549,8 @@ public:
         return (m_stopwatch) ? m_stopwatch->maxWorkStrLen() : 0u;
     }
     virtual bool isPassThrough() const { return false; }
+    //実行時に自身を素通しする可能性があるtaskか。trueの場合、AllocFrames()は「このtaskを飛び越えて次のtaskまでサーフェスが届く」前提で確保量を計算する
+    virtual bool mayBypass() const { return false; }
     virtual tstring print() const { return getPipelineTaskTypeName(m_type); }
     virtual std::optional<mfxFrameAllocRequest> requiredSurfIn() = 0;
     virtual std::optional<mfxFrameAllocRequest> requiredSurfOut() = 0;
@@ -654,6 +664,8 @@ public:
             }
         }
         m_workSurfs.setSurfaces(workSurfs);
+        m_workSurfAllocWidth = allocRequest.Info.Width;
+        m_workSurfAllocHeight = allocRequest.Info.Height;
         return RGY_ERR_NONE;
     }
     RGY_ERR workSurfacesAllocCL(const int numFrames, const RGYFrameInfo &frame, RGYOpenCLContext *cl) {
@@ -672,6 +684,8 @@ public:
             frames[i] = cl->createFrameBuffer(frame, CL_MEM_READ_WRITE | CL_MEM_ALLOC_HOST_PTR);
         }
         m_workSurfs.setSurfaces(frames);
+        m_workSurfAllocWidth = frame.width;
+        m_workSurfAllocHeight = frame.height;
         return RGY_ERR_NONE;
     }
 
@@ -704,6 +718,7 @@ public:
     int inputFrames() const { return m_inFrames; }
     int outputFrames() const { return m_outFrames; }
     int outputMaxQueueSize() const { return m_outMaxQueueSize; }
+    virtual int additionalInputSurfaces() const { return 0; }
     virtual int additionalOutputSurfaces() const { return 0; }
 };
 
@@ -713,11 +728,36 @@ class PipelineTaskInput : public PipelineTask {
     int64_t m_endPts; // 並列処理時用の終了時刻 (この時刻は含まないようにする) -1の場合は制限なし(最後まで)
     bool m_allocatorD3D11;
     std::shared_ptr<RGYOpenCLContext> m_cl;
+    // 前回リーダーから受け取ったフレームの解像度(crop適用後)。解像度変更のログを変化時のみ出すために保持する
+    int m_lastInputWidth;
+    int m_lastInputHeight;
 public:
     PipelineTaskInput(MFXVideoSession *mfxSession, QSVAllocator *allocator, int64_t endPts, int outMaxQueueSize, RGYInput *input, mfxVersion mfxVer, std::shared_ptr<RGYOpenCLContext> cl, std::shared_ptr<RGYLog> log)
-        : PipelineTask(PipelineTaskType::INPUT, outMaxQueueSize, mfxSession, mfxVer, log), m_input(input), m_allocator(allocator), m_endPts(endPts), m_allocatorD3D11(IS_ALLOCATOR_D3D11(allocator)), m_cl(cl) {
+        : PipelineTask(PipelineTaskType::INPUT, outMaxQueueSize, mfxSession, mfxVer, log), m_input(input), m_allocator(allocator), m_endPts(endPts), m_allocatorD3D11(IS_ALLOCATOR_D3D11(allocator)), m_cl(cl),
+        m_lastInputWidth(0), m_lastInputHeight(0) {
 
     };
+    // リーダーが出力するフレームの解像度を得る
+    // GetInputFrameInfo()のsrcWidth/srcHeightはcrop適用前の値だが、
+    // このタスクは getInputCodec() == RGY_CODEC_UNKNOWN のときのみ生成される = リーダー側でcrop適用済みなので、
+    // cropを差し引いた値がサーフェスに載る解像度となる (CQSVPipeline::InitFilters の cropRequired と同じ判定)
+    std::pair<int, int> getReaderOutputResolution() {
+        const auto inputFrameInfo = m_input->GetInputFrameInfo();
+        return std::make_pair(
+            inputFrameInfo.srcWidth  - inputFrameInfo.crop.e.left - inputFrameInfo.crop.e.right,
+            inputFrameInfo.srcHeight - inputFrameInfo.crop.e.up   - inputFrameInfo.crop.e.bottom);
+    }
+    // 解像度変更を検出した場合にログを出す(変化した最初のフレームのみ)
+    void printInputResolutionChange(const int newWidth, const int newHeight) {
+        if (m_lastInputWidth != newWidth || m_lastInputHeight != newHeight) {
+            if (m_lastInputWidth > 0) {
+                PrintMes(RGY_LOG_DEBUG, _T("input frame surface resolution updated from %dx%d to %dx%d.\n"),
+                    m_lastInputWidth, m_lastInputHeight, newWidth, newHeight);
+            }
+            m_lastInputWidth = newWidth;
+            m_lastInputHeight = newHeight;
+        }
+    }
     virtual ~PipelineTaskInput() {};
     virtual void setStopWatch() override {
         m_stopwatch = std::make_unique<PipelineTaskStopWatch>(
@@ -727,6 +767,7 @@ public:
     }
     virtual std::optional<mfxFrameAllocRequest> requiredSurfIn() override { return std::nullopt; };
     virtual std::optional<mfxFrameAllocRequest> requiredSurfOut() override { return std::nullopt; };
+    // 後続がMFXサーフェスを要求する構成(input -> MFX VPP/encode)向けの読み込み経路
     RGY_ERR loadNextFrameMFX(PipelineTaskSurface& surfWork) {
         if (m_stopwatch) m_stopwatch->set(0);
         auto mfxSurf = surfWork.mfx()->surf();
@@ -748,6 +789,13 @@ public:
                 PrintMes(RGY_LOG_ERROR, _T("Error in reader: %s.\n"), get_err_mes(err));
             }
         }
+        if (err == RGY_ERR_NONE) {
+            const auto [readerWidth, readerHeight] = getReaderOutputResolution();
+            printInputResolutionChange(readerWidth, readerHeight);
+            // Info.Width/Heightは確保サイズなので触らない (下流の解像度検知はCropW/CropHを見ている)
+            mfxSurf->Info.CropW = (mfxU16)readerWidth;
+            mfxSurf->Info.CropH = (mfxU16)readerHeight;
+        }
         if (m_stopwatch) m_stopwatch->add(0, 3);
         if (mfxSurf->Data.MemId) {
             // MFXReadWriteMid の使用はd3d11使用時のみにする必要がある
@@ -757,11 +805,28 @@ public:
         if (m_stopwatch) m_stopwatch->add(0, 4);
         return err;
     }
+    // 後続がOpenCLフィルタの構成(input -> OpenCL filter)向けの読み込み経路。プールされたCLフレームをmapしてreaderに書かせる
     RGY_ERR loadNextFrameCL(PipelineTaskSurface& surfWork) {
         if (m_stopwatch) m_stopwatch->set(0);
         auto clframe = surfWork.cl();
+        const int surfaceWidth = clframe->frame.width;
+        const int surfaceHeight = clframe->frame.height;
+        // RGYCLFrameMap::mapがmapするバイト数はframe.width/heightから計算される。一方、このframeは
+        // 後続へ現在の映像寸法を伝えるメタデータとしても使うため、解像度変更後は論理寸法に書き換えられている。
+        // そのままmapすると、小さい解像度から再び大きくなったフレームに対し、readerがmap範囲外へ書き込む。
+        // そこでmap中だけ物理確保寸法へ戻し、unmapが完了してからreaderの返した論理寸法を再設定する。
+        //
+        // ハマった点: CL_MEM_ALLOC_HOST_PTRではこの範囲外書き込みがすぐクラッシュせず、静かな画像破壊になることがある。
+        // getWorkSurf()はプールから取り出すだけで論理寸法を確保寸法に戻さないため、この読み込み直前での復元を省いてはいけない。
+        if (m_workSurfAllocHeight > 0
+            && (clframe->frame.width != m_workSurfAllocWidth || clframe->frame.height != m_workSurfAllocHeight)) {
+            clframe->frame.width = m_workSurfAllocWidth;
+            clframe->frame.height = m_workSurfAllocHeight;
+        }
         auto err = clframe->queueMapBuffer(m_cl->queue(), CL_MAP_WRITE); // CPUが書き込むためにMapする
         if (err != RGY_ERR_NONE) {
+            clframe->frame.width = surfaceWidth;
+            clframe->frame.height = surfaceHeight;
             PrintMes(RGY_LOG_ERROR, _T("Failed to map buffer: %s.\n"), get_err_mes(err));
             return err;
         }
@@ -785,6 +850,17 @@ public:
             if (err == RGY_ERR_NONE) {
                 err = clerr;
             }
+        }
+        // 解像度の反映はunmap後に行う。map/unmapの両方を同じ物理確保寸法で揃えるため。
+        // エラー時は下流に中途半端な解像度を残さないよう、入ってきたときの解像度に戻す。
+        if (err == RGY_ERR_NONE) {
+            const auto [readerWidth, readerHeight] = getReaderOutputResolution();
+            printInputResolutionChange(readerWidth, readerHeight);
+            clframe->frame.width = readerWidth;
+            clframe->frame.height = readerHeight;
+        } else {
+            clframe->frame.width = surfaceWidth;
+            clframe->frame.height = surfaceHeight;
         }
         if (m_stopwatch) m_stopwatch->add(0, 5);
         return err;
@@ -832,14 +908,18 @@ protected:
     bool m_getNextBitstream;
     int m_decFrameOutCount;
     int m_decRemoveRemainingBytesWarnCount; // removing %d bytes from input bitstream not read by decoder の表示回数
+    //前回のデコード出力解像度。--avhwでの解像度変更検知ログ用で、追従処理そのものは後段(MFX VPP / OpenCLフィルタ)で行う
+    mfxU16 m_prevOutputCropWidth;
+    mfxU16 m_prevOutputCropHeight;
     int64_t m_firstPts;
+    bool m_gotFirstPts;
     int64_t m_endPts; // 並列処理時用の終了時刻 (この時刻は含まないようにする) -1の場合は制限なし(最後まで)
     RGYBitstream m_decInputBitstream;
     RGYQueueMPMP<RGYFrameDataMetadata*> m_queueHDR10plusMetadata;
     RGYQueueMPMP<FrameFlags> m_dataFlag;
 public:
     PipelineTaskMFXDecode(MFXVideoSession *mfxSession, int outMaxQueueSize, MFXVideoDECODE *mfxdec, mfxVideoParam& decParams, bool skipAV1C, int64_t endPts, RGYInput *input, mfxVersion mfxVer, std::shared_ptr<RGYLog> log)
-        : PipelineTask(PipelineTaskType::MFXDEC, outMaxQueueSize, mfxSession, mfxVer, log), m_dec(mfxdec), m_mfxDecParams(decParams), m_input(input), m_skipAV1C(skipAV1C), m_getNextBitstream(true), m_decFrameOutCount(0), m_decRemoveRemainingBytesWarnCount(0), m_firstPts(AV_NOPTS_VALUE), m_endPts(endPts), m_decInputBitstream(), m_queueHDR10plusMetadata(), m_dataFlag() {
+        : PipelineTask(PipelineTaskType::MFXDEC, outMaxQueueSize, mfxSession, mfxVer, log), m_dec(mfxdec), m_mfxDecParams(decParams), m_input(input), m_skipAV1C(skipAV1C), m_getNextBitstream(true), m_decFrameOutCount(0), m_decRemoveRemainingBytesWarnCount(0), m_prevOutputCropWidth(0), m_prevOutputCropHeight(0), m_firstPts(0), m_gotFirstPts(false), m_endPts(endPts), m_decInputBitstream(), m_queueHDR10plusMetadata(), m_dataFlag() {
         m_decInputBitstream.init(AVCODEC_READER_INPUT_BUF_SIZE);
         m_dataFlag.init();
         //TimeStampはQSVに自動的に計算させる
@@ -983,8 +1063,9 @@ protected:
             if (inputBitstream->TimeStamp == (mfxU64)AV_NOPTS_VALUE
                 || inputBitstream->TimeStamp == (mfxU64)MFX_TIMESTAMP_UNKNOWN) {
                 inputBitstream->TimeStamp = (mfxU64)MFX_TIMESTAMP_UNKNOWN;
-            } else if (m_firstPts == AV_NOPTS_VALUE) {
+            } else if (!m_gotFirstPts) {
                 m_firstPts = (int64_t)inputBitstream->TimeStamp;
+                m_gotFirstPts = true;
             }
             inputBitstream->DecodeTimeStamp = MFX_TIMESTAMP_UNKNOWN;
         }
@@ -1035,6 +1116,16 @@ protected:
             if (m_stopwatch) m_stopwatch->add(0, 3);
         }
         if (m_stopwatch) m_stopwatch->add(0, 3);
+        //MFXデコーダは解像度変更をエラーとせず、Info.CropW/CropHを更新したサーフェスをそのまま出してくる。
+        //ここではログを出すだけで下流へそのまま流し、追従は後段のMFX VPP / OpenCLフィルタで行う。
+        if (surfDecOut != nullptr
+            && (surfDecOut->Info.CropW != m_prevOutputCropWidth || surfDecOut->Info.CropH != m_prevOutputCropHeight)) {
+            PrintMes(RGY_LOG_DEBUG, _T("decoder output resolution changed: %dx%d -> %dx%d.\n"),
+                (int)m_prevOutputCropWidth, (int)m_prevOutputCropHeight,
+                (int)surfDecOut->Info.CropW, (int)surfDecOut->Info.CropH);
+            m_prevOutputCropWidth = surfDecOut->Info.CropW;
+            m_prevOutputCropHeight = surfDecOut->Info.CropH;
+        }
         const int64_t surfDecOutTimestamp = (surfDecOut != nullptr) ? (int64_t)surfDecOut->Data.TimeStamp : AV_NOPTS_VALUE;
         if (m_endPts >= 0
             && surfDecOut != nullptr
@@ -1044,7 +1135,7 @@ protected:
         }
         if (surfDecOut != nullptr && lastSyncP != nullptr
             // 最初のフレームはOpenGOPのBフレームのために投入フレーム以前のデータの場合があるので、その場合はフレームを無視する
-            && (m_firstPts <= surfDecOutTimestamp || m_decFrameOutCount > 0)) {
+            && (!m_gotFirstPts || m_firstPts <= surfDecOutTimestamp || m_decFrameOutCount > 0)) {
             auto taskSurf = useTaskSurf(surfDecOut);
             const auto picstruct = taskSurf.mfx()->surf()->Info.PicStruct;
             auto flags = RGY_FRAME_FLAG_NONE;
@@ -1194,8 +1285,13 @@ public:
         if ((m_srcTimebase.n() > 0 && m_srcTimebase.is_valid())
             && ((m_avsync & (RGY_AVSYNC_VFR | RGY_AVSYNC_FORCE_CFR)) || m_vpp_rff || m_vpp_afs_rff_aware || m_timestampPassThrough)) {
             //CFR仮定ではなく、オリジナルの時間を見る
-            const auto srcTimestamp = taskSurf->surf().frame()->timestamp();
-            outPtsSource = rational_rescale(srcTimestamp, m_srcTimebase, m_outputTimebase);
+            const auto srcTimestamp = (int64_t)taskSurf->surf().frame()->timestamp();
+            // FFmpegのAV_NOPTS_VALUEとMFX_TIMESTAMP_UNKNOWNは値が異なるため、両方を明示的に除外する。
+            // 未設定値をrescaleすると巨大な負値になり、gap補正の基準と後続MFXのtimestampを破壊する。
+            // 一時的にPTSが得られないフレームは、従来のCFR推定値をそのまま使う。
+            if (srcTimestamp != AV_NOPTS_VALUE && (mfxU64)srcTimestamp != (mfxU64)MFX_TIMESTAMP_UNKNOWN) {
+                outPtsSource = rational_rescale(srcTimestamp, m_srcTimebase, m_outputTimebase);
+            }
             if (taskSurf->surf().frame()->duration() > 0 && (m_avsync | RGY_AVSYNC_FORCE_CFR) != RGY_AVSYNC_FORCE_CFR) {
                 outDuration = rational_rescale(taskSurf->surf().frame()->duration(), m_srcTimebase, m_outputTimebase);
                 taskSurf->surf().frame()->setDuration(outDuration);
@@ -1282,8 +1378,15 @@ public:
         if (m_tsPrev >= outPtsSource) {
             if (m_tsPrev - outPtsSource >= MAX_FORCECFR_INSERT_FRAMES * m_outFrameDuration) {
                 PrintMes(RGY_LOG_DEBUG, _T("check_pts: previous pts %lld, current pts %lld, estimated pts %lld, m_tsOutFirst %lld, changing offset.\n"), m_tsPrev, outPtsSource, m_tsOutEstimated, m_tsOutFirst);
-                m_tsOutFirst += (outPtsSource - m_tsOutEstimated); //今後の位置合わせのための補正
-                outPtsSource = m_tsOutEstimated;
+                //m_tsOutEstimatedはCFR仮定でoutDurationを積み上げた値のため、vfrや長尺では
+                //実際の出力pts(m_tsPrev)から徐々にずれていく(長尺TSで数十フレーム分遅れる例あり)。
+                //そのままm_tsOutEstimatedを採用すると出力ptsが直前のフレームより前に戻ってしまい、
+                //muxerに "non monotonically increasing dts" で拒否されて出力が破綻するため、
+                //必ず直前のフレームより後になる位置を選ぶ
+                const auto tsOutNext = std::max(m_tsOutEstimated, m_tsPrev + m_outFrameDuration);
+                m_tsOutFirst += (outPtsSource - tsOutNext); //今後の位置合わせのための補正
+                outPtsSource = tsOutNext;
+                m_tsOutEstimated = tsOutNext; //ずれをここで解消しておかないと、以降のフレームでも同じ逆行が起こる
                 PrintMes(RGY_LOG_DEBUG, _T("check_pts:   changed to m_tsOutFirst %lld, outPtsSource %lld.\n"), m_tsOutFirst, outPtsSource);
             } else {
                 if (m_avsync & RGY_AVSYNC_FORCE_CFR) {
@@ -1508,7 +1611,7 @@ public:
         m_input(input), m_currentChunk(-1), m_encTimestamp(encTimestamp), m_timecode(timecode),
         m_parallelEnc(parallelEnc), m_encStatus(encStatus), m_encFps(encFps), m_outputTimebase(outputTimebase),
         m_taskAudio(std::move(taskAudio)), m_fReader(std::unique_ptr<FILE, fp_deleter>(nullptr, fp_deleter())),
-        m_firstPts(AV_NOPTS_VALUE), m_maxPts(AV_NOPTS_VALUE), m_ptsOffset(0), m_encFrameOffset(0), m_inputFrameOffset(0), m_maxEncFrameIdx(-1), m_maxInputFrameIdx(-1),
+        m_firstPts(-1), m_maxPts(-1), m_ptsOffset(0), m_encFrameOffset(0), m_inputFrameOffset(0), m_maxEncFrameIdx(-1), m_maxInputFrameIdx(-1),
         m_decInputBitstream(), m_inputBitstreamEOF(false), m_bitStreamOut(), m_durationCheck(), m_tsDebug(false) {
         m_decInputBitstream.init(AVCODEC_READER_INPUT_BUF_SIZE);
         auto reader = dynamic_cast<RGYInputAvcodec*>(input);
@@ -1586,12 +1689,9 @@ protected:
         const auto inputFpsTimebase = rgy_rational<int>((int)inputFrameInfo.fpsD, (int)inputFrameInfo.fpsN);
         const auto srcTimebase = (m_input->getInputTimebase().n() > 0 && m_input->getInputTimebase().is_valid()) ? m_input->getInputTimebase() : inputFpsTimebase;
         // seek結果による入力ptsを用いて計算した本来のpts offset
-        // 33bit wrap後の負timestampは正当値なので、未初期化判定はAV_NOPTS_VALUEで行う。
-        const bool gotFirstPts = m_firstPts != AV_NOPTS_VALUE;
-        const bool gotMaxPts = m_maxPts != AV_NOPTS_VALUE;
-        const auto ptsOffsetOrig = (!gotFirstPts) ? 0 : rational_rescale(m_parallelEnc->getVideofirstKeyPts(m_currentChunk), srcTimebase, m_outputTimebase) - m_firstPts;
+        const auto ptsOffsetOrig = (m_firstPts < 0) ? 0 : rational_rescale(m_parallelEnc->getVideofirstKeyPts(m_currentChunk), srcTimebase, m_outputTimebase) - m_firstPts;
         // 直前のフレームから計算したpts offset(-1フレーム分) 最低でもこれ以上のoffsetがないといけない
-        const auto ptsOffsetMax = (!gotFirstPts || !gotMaxPts) ? 0 : m_maxPts - m_firstPts;
+        const auto ptsOffsetMax = (m_firstPts < 0) ? 0 : m_maxPts - m_firstPts;
         // フレームの長さを決める
         int64_t lastDuration = 0;
         const auto frameDuration = m_durationCheck.getDuration(lastDuration);
@@ -1625,7 +1725,7 @@ protected:
         } else {
             // ptsOffsetOrigが必要offsetの最小値(ptsOffsetMax)より大きく、そのずれが2フレーム以内ならそれを採用する
             // そうでなければ、ptsOffsetMaxに1フレーム分の時間を足した時刻にする
-            m_ptsOffset = (!gotFirstPts) ? 0 :
+            m_ptsOffset = (m_firstPts < 0) ? 0 :
                 ((ptsOffsetOrig - ptsOffsetMax > 0 && ptsOffsetOrig - ptsOffsetMax <= rational_rescale(2, m_encFps.inv(), m_outputTimebase))
                     ? ptsOffsetOrig : (ptsOffsetMax + rational_rescale(1, m_encFps.inv(), m_outputTimebase)));
         }
@@ -1769,12 +1869,8 @@ public:
             std::vector<std::shared_ptr<RGYFrameData>> metadatalist;
             const auto duration = (ENCODER_QSV) ? header.duration : bsOut->duration(); // QSVの場合、Bitstreamにdurationの値がないため、durationはheaderから取得する
             m_encTimestamp->add(bsOut->pts(), header.inputFrameIdx, header.encodeFrameIdx, duration, metadatalist);
-            if (bsOut->pts() != AV_NOPTS_VALUE) {
-                if (m_firstPts == AV_NOPTS_VALUE) {
-                    m_firstPts = bsOut->pts();
-                }
-                m_maxPts = (m_maxPts == AV_NOPTS_VALUE) ? bsOut->pts() : std::max(m_maxPts, bsOut->pts());
-            }
+            if (m_firstPts < 0) m_firstPts = bsOut->pts();
+            m_maxPts = std::max(m_maxPts, bsOut->pts());
             m_maxEncFrameIdx = std::max(m_maxEncFrameIdx, header.encodeFrameIdx);
             m_maxInputFrameIdx = std::max(m_maxInputFrameIdx, header.inputFrameIdx);
             PrintMes(m_tsDebug ? RGY_LOG_WARN : RGY_LOG_TRACE, _T("Packet: pts %lld, dts: %lld, duration: %d, input idx: %lld, encode idx: %lld, size %lld.\n"), bsOut->pts(), bsOut->dts(), duration, header.inputFrameIdx, header.encodeFrameIdx, bsOut->size());
@@ -1848,12 +1944,19 @@ protected:
     RGYTimestamp m_timestamp;
     mfxVideoParam& m_mfxVppParams;
     std::vector<std::shared_ptr<RGYFrameData>> m_lastFrameDataList;
+    bool m_bypass; // 解像度変更対応のためだけに常設されたブロックで、まだ解像度変更が起きていないため素通ししている状態
+    int m_outMaxQueueSizeOrig; // バイパス解除時に戻すためのキューサイズ
 public:
-    PipelineTaskMFXVpp(MFXVideoSession *mfxSession, int outMaxQueueSize, QSVVppMfx *mfxvpp, mfxVideoParam& vppParams, mfxVersion mfxVer, rgy_rational<int> outputTimebase, bool timestampPassThrough, std::shared_ptr<RGYLog> log)
-        : PipelineTask(PipelineTaskType::MFXVPP, outMaxQueueSize, mfxSession, mfxVer, log), m_vpp(mfxvpp), m_outputTimebase(outputTimebase), m_timestamp(RGYTimestamp(timestampPassThrough, false)), m_mfxVppParams(vppParams), m_lastFrameDataList() {
+    // バイパス中はキューサイズを0にして、受け取ったフレームを即座に後続タスクへ渡す。
+    // PipelineTaskCheckPTSは--avsync forcecfrでのフレーム水増し時に同一のmfxFrameSurface1を共有し、
+    // timestampはgetOutput直後のみ有効という前提で動いているため、ここで1フレームでも抱えると
+    // 次のcheckptsのgetOutputでtimestamp/durationが上書きされて壊れる。
+    PipelineTaskMFXVpp(MFXVideoSession *mfxSession, int outMaxQueueSize, QSVVppMfx *mfxvpp, mfxVideoParam& vppParams, mfxVersion mfxVer, rgy_rational<int> outputTimebase, bool timestampPassThrough, bool bypass, std::shared_ptr<RGYLog> log)
+        : PipelineTask(PipelineTaskType::MFXVPP, bypass ? 0 : outMaxQueueSize, mfxSession, mfxVer, log), m_vpp(mfxvpp), m_outputTimebase(outputTimebase), m_timestamp(RGYTimestamp(timestampPassThrough, false)), m_mfxVppParams(vppParams), m_lastFrameDataList(), m_bypass(bypass), m_outMaxQueueSizeOrig(outMaxQueueSize) {
     };
     virtual ~PipelineTaskMFXVpp() {};
     void setVpp(QSVVppMfx *mfxvpp) { m_vpp = mfxvpp; };
+    virtual bool mayBypass() const override { return m_bypass; }
     virtual void setStopWatch() override {
         m_stopwatch = std::make_unique<PipelineTaskStopWatch>(
             std::vector<tstring>{ _T("Reset"), _T("getWorkSurf"), _T("RunFrameVppAsync"), _T("DeviceBusy"), _T("PushQueue") },
@@ -1902,13 +2005,121 @@ public:
 
         mfxStatus vpp_sts = MFX_ERR_NONE;
 
-        if (frame) {
-            m_lastFrameDataList = dynamic_cast<PipelineTaskOutputSurf *>(frame.get())->surf().frame()->dataList();
-        }
-
         const auto estDuration = av_rescale_q(1, av_make_q(m_outputTimebase.inv()), av_make_q(m_mfxVppParams.vpp.In.FrameRateExtN, m_mfxVppParams.vpp.In.FrameRateExtD));
 
         mfxFrameSurface1 *surfVppIn = (frame) ? dynamic_cast<PipelineTaskOutputSurf *>(frame.get())->surf().mfx()->surf() : nullptr;
+        const int expectedInputWidth = m_vpp->inputWidthBeforeCrop();
+        const int expectedInputHeight = m_vpp->inputHeightBeforeCrop();
+        // バイパスの解除は一方向で、一度解除したらバイパスへは戻らない。
+        // 元の解像度に戻ったとしても、VPPは常に初期解像度へ正規化して出力するので通し続けて問題ない。
+        if (m_bypass) {
+            if (surfVppIn == nullptr) {
+                return RGY_ERR_MORE_DATA; // バイパス中はVPP内部にフレームを溜めていないのでflushは不要
+            }
+            if (surfVppIn->Info.CropW != expectedInputWidth || surfVppIn->Info.CropH != expectedInputHeight) {
+                PrintMes(RGY_LOG_DEBUG, _T("resolution change: MFX VPP bypass disabled: %dx%d -> %dx%d.\n"),
+                    expectedInputWidth, expectedInputHeight, (int)surfVppIn->Info.CropW, (int)surfVppIn->Info.CropH);
+                m_bypass = false;
+                setOutputMaxQueueSize(m_outMaxQueueSizeOrig);
+            } else {
+                // バイパス中はフレームに一切手を加えず素通しする(MFX VPPを通さないので画質・timestampともに無変換)。
+                // ただしm_timestampの内部状態(offsetの基準・last_check_pts)は通常経路と同じ順序で進めておかないと、
+                // バイパス解除後の最初のcheck()がその時点のptsをoffsetの基準にしてしまい、対応関係が壊れる。
+                // check()の戻り値はフレームへ書き戻さない(書き戻すとRFF等でtimestampが通常経路の補間に置き換わってしまう)。
+                auto taskSurf = dynamic_cast<PipelineTaskOutputSurf *>(frame.get());
+                m_lastFrameDataList = taskSurf->surf().frame()->dataList();
+                m_timestamp.add(surfVppIn->Data.TimeStamp, taskSurf->surf().frame()->inputFrameId(), 0 /*dummy*/, estDuration, {});
+                m_timestamp.check(taskSurf->surf().frame()->timestamp());
+                m_inFrames++;
+                m_outQeueue.push_back(std::move(frame));
+                if (m_stopwatch) m_stopwatch->add(0, 0);
+                return RGY_ERR_NONE;
+            }
+        }
+        if (surfVppIn != nullptr) {
+            const auto picStructPrev = m_mfxVppParams.vpp.In.PicStruct;
+            bool picStructChanged = false;
+            // インタレ解除を使用中、入力フレームのインタレが変更になると、そのまま処理を継続すると device busyで処理がフリーズしてしまうことがある
+            // そのため、インタレ解除設定が変更になった場合は、フィルタをリセットする
+            if (m_vpp->isDeinterlace()) {
+                const bool doubleRateDeinterlace =
+                    (uint64_t)m_mfxVppParams.vpp.Out.FrameRateExtN * m_mfxVppParams.vpp.In.FrameRateExtD
+                    > (uint64_t)m_mfxVppParams.vpp.In.FrameRateExtN * m_mfxVppParams.vpp.Out.FrameRateExtD;
+                if (doubleRateDeinterlace && surfVppIn->Info.PicStruct == MFX_PICSTRUCT_PROGRESSIVE) {
+                    // bobなどの倍速インタレ解除設定を残したまま入力だけprogressiveへResetすると、
+                    // joined session全体がdevice busyのまま停止することがある。
+                    surfVppIn->Info.PicStruct = m_mfxVppParams.vpp.In.PicStruct;
+                }
+                if ((m_vpp->deinterlaceMode() & (RGYMFX_DEINTERLACE_MODE::TFF | RGYMFX_DEINTERLACE_MODE::BFF)) != RGYMFX_DEINTERLACE_MODE::AUTO) {
+                    surfVppIn->Info.PicStruct = m_mfxVppParams.vpp.In.PicStruct;
+                } else if (surfVppIn->Info.PicStruct != m_mfxVppParams.vpp.In.PicStruct) {
+                    picStructChanged = true;
+                    PrintMes(RGY_LOG_DEBUG, _T("Change deinterlace settings input: %s -> %s.\n"), MFXPicStructToStr(picStructPrev).c_str(), MFXPicStructToStr(surfVppIn->Info.PicStruct).c_str());
+                }
+            }
+
+            const auto newInputInfo = surfVppIn->Info;
+            const auto picStructNext = (picStructChanged) ? newInputInfo.PicStruct : picStructPrev;
+            const bool resChanged = newInputInfo.CropW != expectedInputWidth || newInputInfo.CropH != expectedInputHeight;
+            if (resChanged) {
+                PrintMes(RGY_LOG_DEBUG, _T("input resolution change detected in MFX VPP: %dx%d -> %dx%d, flushing filter.\n"),
+                    expectedInputWidth, expectedInputHeight, (int)newInputInfo.CropW, (int)newInputInfo.CropH);
+            }
+            if (resChanged || picStructChanged) {
+                // 入力情報変更前のフレームをすべて出力してからVPPをリセットする。
+                auto sts = RGY_ERR_NONE;
+                while (sts == RGY_ERR_NONE) {
+                    auto flushFrame = std::unique_ptr<PipelineTaskOutput>();
+                    sts = sendFrame(flushFrame);
+                    if (sts == RGY_ERR_MORE_DATA) {
+                        break;
+                    } else if (sts != RGY_ERR_NONE) {
+                        PrintMes(RGY_LOG_ERROR, _T("  Failed to flush filter on input change (resolution %dx%d -> %dx%d, PicStruct %s -> %s): %s.\n"),
+                            expectedInputWidth, expectedInputHeight, (int)newInputInfo.CropW, (int)newInputInfo.CropH,
+                            MFXPicStructToStr(picStructPrev).c_str(), MFXPicStructToStr(picStructNext).c_str(), get_err_mes(sts));
+                        return sts;
+                    }
+                }
+
+                // VPPをCloseする前に、キューに残った非同期出力を完了させる。
+                // 未完了のままCloseすると、入力に使ったデコード面が解放されず後続のデコードが停止することがある。
+                for (auto& output : m_outQeueue) {
+                    sts = output->waitsync();
+                    if (sts != RGY_ERR_NONE) {
+                        PrintMes(RGY_LOG_ERROR, _T("  Failed to wait for filter output on input change (resolution %dx%d -> %dx%d, PicStruct %s -> %s): %s.\n"),
+                            expectedInputWidth, expectedInputHeight, (int)newInputInfo.CropW, (int)newInputInfo.CropH,
+                            MFXPicStructToStr(picStructPrev).c_str(), MFXPicStructToStr(picStructNext).c_str(), get_err_mes(sts));
+                        return sts;
+                    }
+                }
+
+                // PicStructを先に反映しておくことで、解像度変更と同時の場合も1回のResetに統合する。
+                if (picStructChanged) {
+                    m_mfxVppParams.vpp.In.PicStruct = picStructNext;
+                }
+                sts = (resChanged)
+                    ? m_vpp->ResetInputResolution(newInputInfo)
+                    : m_vpp->Reset(m_mfxVppParams.vpp.Out, m_mfxVppParams.vpp.In);
+                if (sts != RGY_ERR_NONE) {
+                    PrintMes(RGY_LOG_ERROR, _T("  Failed to reset filter on input change (resolution %dx%d -> %dx%d, PicStruct %s -> %s): %s.\n"),
+                        expectedInputWidth, expectedInputHeight, (int)newInputInfo.CropW, (int)newInputInfo.CropH,
+                        MFXPicStructToStr(picStructPrev).c_str(), MFXPicStructToStr(picStructNext).c_str(), get_err_mes(sts));
+                    return sts;
+                }
+                if (resChanged) {
+                    PrintMes(RGY_LOG_DEBUG, _T("input resolution changed in MFX VPP: %dx%d -> %dx%d, filter reset completed.\n"),
+                        expectedInputWidth, expectedInputHeight, (int)newInputInfo.CropW, (int)newInputInfo.CropH);
+                }
+                if (picStructChanged) {
+                    PrintMes(RGY_LOG_DEBUG, _T("deinterlace settings input changed: %s -> %s, filter reset completed.\n"),
+                        MFXPicStructToStr(picStructPrev).c_str(), MFXPicStructToStr(picStructNext).c_str());
+                }
+            }
+        }
+        if (frame) {
+            // flush中の旧出力には旧フレームの付加情報を維持し、リセット後に新フレームの情報へ切り替える。
+            m_lastFrameDataList = dynamic_cast<PipelineTaskOutputSurf *>(frame.get())->surf().frame()->dataList();
+        }
         //vpp前に、vpp用のパラメータでFrameInfoを更新
         copy_crop_info(surfVppIn, &m_mfxVppParams.vpp.In);
         if (surfVppIn) {
@@ -1916,38 +2127,6 @@ public:
             m_timestamp.add(surfVppIn->Data.TimeStamp, dynamic_cast<PipelineTaskOutputSurf *>(frame.get())->surf().frame()->inputFrameId(), 0 /*dummy*/, estDuration, {});
             surfVppIn->Data.DataFlag |= MFX_FRAMEDATA_ORIGINAL_TIMESTAMP;
             m_inFrames++;
-
-            // インタレ解除を使用中、入力フレームのインタレが変更になると、そのまま処理を継続すると device busyで処理がフリーズしてしまうことがある
-            // そのため、インタレ解除設定が変更になった場合は、フィルタをリセットする
-            if (m_vpp->isDeinterlace()) {
-                if ((m_vpp->deinterlaceMode() & (RGYMFX_DEINTERLACE_MODE::TFF | RGYMFX_DEINTERLACE_MODE::BFF)) != RGYMFX_DEINTERLACE_MODE::AUTO) {
-                    surfVppIn->Info.PicStruct = m_mfxVppParams.vpp.In.PicStruct;
-                } else if (surfVppIn->Info.PicStruct != m_mfxVppParams.vpp.In.PicStruct) {
-                    const auto picStructPrev = m_mfxVppParams.vpp.In.PicStruct;
-                    PrintMes(RGY_LOG_DEBUG, _T("Change deinterlace settings input: %s -> %s.\n"), MFXPicStructToStr(picStructPrev).c_str(), MFXPicStructToStr(surfVppIn->Info.PicStruct).c_str());
-
-                    // まずflushする
-                    auto sts = RGY_ERR_NONE;
-                    while (sts == RGY_ERR_NONE) {
-                        auto flushFrame = std::unique_ptr<PipelineTaskOutput>();
-                        sts = sendFrame(flushFrame); // flush
-                        if (sts == RGY_ERR_MORE_DATA) {
-                            break; // flush 成功
-                        } else if (sts != RGY_ERR_NONE) {
-                            PrintMes(RGY_LOG_ERROR, _T("  Failed to flush filter to change interlace settings %s -> %s: %s.\n"), MFXPicStructToStr(picStructPrev).c_str(), MFXPicStructToStr(surfVppIn->Info.PicStruct).c_str(), get_err_mes(sts));
-                            return sts;
-                        }
-                    }
-
-                    // インタレ設定変更を反映してリセットする
-                    m_mfxVppParams.vpp.In.PicStruct = surfVppIn->Info.PicStruct;
-                    sts = m_vpp->Reset(m_mfxVppParams.vpp.Out, m_mfxVppParams.vpp.In);
-                    if (sts != RGY_ERR_NONE) {
-                        PrintMes(RGY_LOG_ERROR, _T("  Failed to reset filter to change interlace settings %s -> %s: %s.\n"), MFXPicStructToStr(picStructPrev).c_str(), MFXPicStructToStr(surfVppIn->Info.PicStruct).c_str(), get_err_mes(sts));
-                        return sts;
-                    }
-                }
-            }
         }
         if (m_stopwatch) m_stopwatch->add(0, 0);
 
@@ -2304,6 +2483,16 @@ public:
 
         //以下の処理は
         mfxFrameSurface1 *surfEncodeIn = (frame) ? dynamic_cast<PipelineTaskOutputSurf *>(frame.get())->surf().mfx()->surf() : nullptr;
+        // 最後の砦。エンコーダは初期化時の解像度でしか動作できないため、上流の正規化漏れをここで検出して明示エラーとする。
+        // これがないとMFXは無言で誤った絵(初期解像度の左上に新解像度の絵が貼りついた状態)をエンコードしてしまう。
+        if (surfEncodeIn != nullptr
+            && (surfEncodeIn->Info.CropW != m_encParams.videoPrm.mfx.FrameInfo.CropW || surfEncodeIn->Info.CropH != m_encParams.videoPrm.mfx.FrameInfo.CropH)) {
+            PrintMes(RGY_LOG_ERROR, _T("input resolution changed from %dx%d to %dx%d, which is not supported yet.\n"),
+                (int)m_encParams.videoPrm.mfx.FrameInfo.CropW, (int)m_encParams.videoPrm.mfx.FrameInfo.CropH,
+                (int)surfEncodeIn->Info.CropW, (int)surfEncodeIn->Info.CropH);
+            PrintMes(RGY_LOG_ERROR, _T("  Please split the input file at the resolution change point.\n"));
+            return RGY_ERR_UNSUPPORTED;
+        }
         if (surfEncodeIn) {
             //TimeStampをMFX_TIMESTAMP_UNKNOWNにしておくと、きちんと設定される
             bsOut->setPts((uint64_t)MFX_TIMESTAMP_UNKNOWN);
@@ -2416,22 +2605,1058 @@ public:
 
 class PipelineTaskOpenCL : public PipelineTask {
 protected:
+    static const int OPENCL_ACQUIRE_QUEUE_DEPTH = 3;
+    static const int OPENCL_RELEASE_QUEUE_DEPTH = 3;
+    // 入力は4件で安定したが、出力は4件でArc B580の終盤ハングを確認したため2件に抑える。
+    // いずれも1へ戻せば従来の単一フレーム処理になる。
+    static const int OPENCL_ACQUIRE_BATCH_SIZE = 4;
+    static const int OPENCL_RELEASE_BATCH_SIZE = 1;
+    struct AcquireWork {
+        std::unique_ptr<PipelineTaskOutput> frame;
+        RGYFrameInfo frameInfo;
+        bool drain;
+        bool stop;
+        AcquireWork() : frame(), frameInfo(), drain(false), stop(false) {};
+    };
+    struct AcquireReady {
+        std::unique_ptr<PipelineTaskOutput> frame;
+        std::unique_ptr<RGYCLFrame> clFrame;
+        RGYFrameInfo frameInfo;
+        RGYOpenCLEvent readyEvent;
+        bool waitReadyEvent;
+        bool drain;
+        AcquireReady() : frame(), clFrame(), frameInfo(), readyEvent(), waitReadyEvent(false), drain(false) {};
+    };
+    struct AcquireFrameHold {
+        std::unique_ptr<RGYCLFrame> frame;
+        RGYOpenCLEvent event;
+        bool waitEvent;
+        AcquireFrameHold(std::unique_ptr<RGYCLFrame>&& frame_, const RGYOpenCLEvent& event_, bool waitEvent_)
+            : frame(std::move(frame_)), event(event_), waitEvent(waitEvent_) {};
+    };
+    struct ReleaseAcquireWork {
+        PipelineTaskSurface surf;
+        RGYFrameInfo frameOut; //acquire要求時点でのチェーン最終段の出力フレーム情報。解像度変更でチェーンを再構築するとm_vpFilters.back()が入れ替わるため、ワーカースレッド側で参照すると再構築後の値を拾ってしまう。要求時点の値をここに固定して渡す
+        bool stop;
+        ReleaseAcquireWork() : surf(), frameOut(), stop(false) {};
+    };
+    struct ReleaseReady {
+        PipelineTaskSurface surf;
+        RGYCLFrameInterop *interop;
+        RGYOpenCLEvent acquireEvent;
+        bool waitAcquireEvent;
+        ReleaseReady() : surf(), interop(nullptr), acquireEvent(), waitAcquireEvent(false) {};
+    };
+    struct ReleaseWork {
+        PipelineTaskSurface surf;
+        RGYCLFrameInterop *interop;
+        RGYOpenCLEvent cropDoneEvent;
+        RGYFrameInfo encSurfaceInfo;
+        bool waitCropDoneEvent;
+        bool stop;
+        ReleaseWork() : surf(), interop(nullptr), cropDoneEvent(), encSurfaceInfo(), waitCropDoneEvent(false), stop(false) {};
+    };
     std::shared_ptr<RGYOpenCLContext> m_cl;
     std::vector<std::unique_ptr<RGYFilter>>& m_vpFilters;
     std::unordered_map<mfxFrameSurface1 *, std::unique_ptr<RGYCLFrameInterop>> m_surfVppInInterop;
     std::unordered_map<mfxFrameSurface1 *, std::unique_ptr<RGYCLFrameInterop>> m_surfVppOutInterop;
     std::deque<std::unique_ptr<PipelineTaskOutput>> m_prevInputFrame; //前回投入されたフレーム、完了通知を待ってから解放するため、参照を保持する
+    std::deque<AcquireFrameHold> m_prevAcquireFrame;
     RGYFilterSsim *m_videoMetric;
+    //以下4つは入力途中の解像度変更対応用。解像度変更を下流に伝播させないため、チェーン先頭を新解像度で作り直した直後に元の解像度へ戻す正規化resizeを挿入する
+    RGYFrameInfo m_normalizeTargetFrame;                              //初期化時のチェーン先頭の出力フレーム情報。正規化resizeはここへ戻す(=下流から見た解像度は不変)
+    std::shared_ptr<RGYFilterParamResize> m_normalizeResizeParam;     //正規化resizeのパラメータ雛形。qsv_pipeline.cpp側で生成されsetNormalizeResizeParam()で渡される
+    int m_normalizeResizeIdx;                                         //挿入済みの正規化resizeのm_vpFilters内index。-1なら未挿入(=まだ解像度変更が起きていない)
+    bool m_resChangeFlush;                                            //解像度変更に伴うフィルタのflush中かどうか。flush中はsendFrame()の出力キューの扱いを変える必要がある
+    int m_openclTaskThreads;
+    RGYOpenCLQueue m_acquireQueue;
+    RGYQueueMPMP<AcquireWork *> m_acquireInQueue;
+    RGYQueueMPMP<AcquireReady *> m_acquireReadyQueue;
+    RGYQueueMPMP<AcquireFrameHold *> m_acquireFreeQueue;
+    std::unique_ptr<std::thread> m_acquireThread;
+    std::atomic<RGY_ERR> m_acquireErr;
+    std::atomic<bool> m_acquireThreadAbort;
+    RGYOpenCLQueue m_releaseQueue;
+    RGYQueueMPMP<ReleaseAcquireWork *> m_releaseAcquireQueue;
+    RGYQueueMPMP<ReleaseReady *> m_releaseReadyQueue;
+    RGYQueueMPMP<ReleaseWork *> m_releaseWorkQueue;
+    RGYQueueMPMP<PipelineTaskOutputSurf *> m_releaseDoneQueue;
+    std::unique_ptr<std::thread> m_releaseThread;
+    std::atomic<RGY_ERR> m_releaseErr;
+    std::atomic<bool> m_releaseThreadAbort;
+    std::atomic<int> m_releaseAcquirePending;
+    std::atomic<int> m_releaseWorkInFlight;
+    std::atomic<int> m_releaseOutputPending;
+    RGYFrameInfo m_acquireFrameInInfo;
+    bool m_acquireDrainSent;
+    bool m_acquireDrainReady;
+    bool m_acquireQueuesClosed;
+    bool m_releaseQueuesClosed;
     MemType m_memType;
+    bool useAcquireWorker() const {
+        return m_openclTaskThreads >= 2 && m_acquireThread != nullptr;
+    }
+    bool useReleaseWorker() const {
+        return m_openclTaskThreads >= 2 && m_releaseThread != nullptr;
+    }
+    void setAcquireWorkerError(RGY_ERR err) {
+        if (err != RGY_ERR_NONE) {
+            m_acquireErr.store(err);
+        }
+    }
+    void setReleaseWorkerError(RGY_ERR err) {
+        if (err != RGY_ERR_NONE) {
+            m_releaseErr.store(err);
+        }
+    }
+    RGY_ERR checkAcquireWorkerError() {
+        auto err = m_acquireErr.load();
+        if (err != RGY_ERR_NONE) {
+            PrintMes(RGY_LOG_ERROR, _T("OpenCL acquire worker failed: %s.\n"), get_err_mes(err));
+        }
+        return err;
+    }
+    RGY_ERR checkReleaseWorkerError() {
+        auto err = m_releaseErr.load();
+        if (err != RGY_ERR_NONE) {
+            PrintMes(RGY_LOG_ERROR, _T("OpenCL release worker failed: %s.\n"), get_err_mes(err));
+        }
+        return err;
+    }
+    RGY_ERR checkWorkerErrors() {
+        auto err = checkAcquireWorkerError();
+        if (err != RGY_ERR_NONE) {
+            return err;
+        }
+        return checkReleaseWorkerError();
+    }
+    void clearPrevInputFrame() {
+        if (m_prevInputFrame.size() > 0) {
+            // 前回投入したフレームの処理が完了していることを確認したうえで参照を破棄することでロックを解放する
+            auto prevframe = std::move(m_prevInputFrame.front());
+            m_prevInputFrame.pop_front();
+            prevframe->depend_clear();
+        }
+        if (m_prevAcquireFrame.size() > 0) {
+            auto prevframe = std::move(m_prevAcquireFrame.front());
+            m_prevAcquireFrame.pop_front();
+            // mainでは待たず、最後に利用するkernelのeventごとworkerへ返して再利用させる。
+            // worker側で別キューのeventを待つため、その前に発行元キューのflushが必須 (未submitのままevent待ちするとハングする)。
+            if (prevframe.waitEvent) {
+                m_cl->queue().flush();
+            }
+            auto hold = std::make_unique<AcquireFrameHold>(std::move(prevframe.frame), prevframe.event, prevframe.waitEvent);
+            auto holdPtr = hold.get();
+            if (useAcquireWorker() && !m_acquireThreadAbort.load() && m_acquireFreeQueue.size() < m_acquireFreeQueue.capacity() && m_acquireFreeQueue.push(holdPtr)) {
+                hold.release();
+            }
+        }
+    }
+    void startAcquireWorker() {
+        if (m_openclTaskThreads < 2) {
+            return;
+        }
+        if (m_vpFilters.empty()) {
+            PrintMes(RGY_LOG_WARN, _T("Failed to start OpenCL acquire worker, fallback to legacy OpenCL path.\n"));
+            m_openclTaskThreads = 0;
+            return;
+        }
+        // workerからfilterを参照しないよう、起動時点の入力フレーム情報だけをコピーして保持する。
+        m_acquireFrameInInfo = m_vpFilters.front()->GetFilterParam()->frameIn;
+        // D3D11 interopを複数queueで並行実行するとIntel OpenCLドライバが異常終了するため、
+        // acquireからrelease完了までをinterop mutexで直列化する。
+        m_acquireQueue = m_cl->createQueue(m_cl->queue().devid(), m_cl->queue().getProperties());
+        if (m_acquireQueue.get() == nullptr) {
+            PrintMes(RGY_LOG_WARN, _T("Failed to create OpenCL queue for acquire worker, fallback to legacy OpenCL path.\n"));
+            m_openclTaskThreads = 0;
+            return;
+        }
+        m_acquireInQueue.init(OPENCL_ACQUIRE_QUEUE_DEPTH + 1, OPENCL_ACQUIRE_QUEUE_DEPTH + 1);
+        m_acquireReadyQueue.init(OPENCL_ACQUIRE_QUEUE_DEPTH + 1, OPENCL_ACQUIRE_QUEUE_DEPTH + 1);
+        m_acquireFreeQueue.init(OPENCL_ACQUIRE_QUEUE_DEPTH + 2, OPENCL_ACQUIRE_QUEUE_DEPTH + 2);
+        m_acquireThread = std::make_unique<std::thread>(&PipelineTaskOpenCL::runAcquireWorker, this);
+    }
+    void startReleaseWorker() {
+        if (m_openclTaskThreads < 2) {
+            return;
+        }
+        if (m_vpFilters.empty()) {
+            PrintMes(RGY_LOG_WARN, _T("Failed to start OpenCL release worker, fallback to legacy OpenCL path.\n"));
+            m_openclTaskThreads = 0;
+            return;
+        }
+        m_releaseQueue = m_cl->createQueue(m_cl->queue().devid(), m_cl->queue().getProperties());
+        if (m_releaseQueue.get() == nullptr) {
+            PrintMes(RGY_LOG_WARN, _T("Failed to create OpenCL queue for release worker, fallback to legacy OpenCL path.\n"));
+            m_openclTaskThreads = 0;
+            return;
+        }
+        m_releaseAcquireQueue.init(OPENCL_RELEASE_QUEUE_DEPTH + 1, OPENCL_RELEASE_QUEUE_DEPTH + 1);
+        m_releaseReadyQueue.init(OPENCL_RELEASE_QUEUE_DEPTH + 1, OPENCL_RELEASE_QUEUE_DEPTH + 1);
+        m_releaseWorkQueue.init(OPENCL_RELEASE_QUEUE_DEPTH + 1, OPENCL_RELEASE_QUEUE_DEPTH + 1);
+        m_releaseDoneQueue.init(OPENCL_RELEASE_QUEUE_DEPTH + 1, OPENCL_RELEASE_QUEUE_DEPTH + 1);
+        m_releaseThread = std::make_unique<std::thread>(&PipelineTaskOpenCL::runReleaseWorker, this);
+    }
+    void drainAcquireQueues() {
+        AcquireWork *work = nullptr;
+        while (m_acquireInQueue.front_copy_and_pop_no_lock(&work)) {
+            delete work;
+            work = nullptr;
+        }
+        AcquireReady *ready = nullptr;
+        while (m_acquireReadyQueue.front_copy_and_pop_no_lock(&ready)) {
+            delete ready;
+            ready = nullptr;
+        }
+        AcquireFrameHold *hold = nullptr;
+        while (m_acquireFreeQueue.front_copy_and_pop_no_lock(&hold)) {
+            delete hold;
+            hold = nullptr;
+        }
+    }
+    void drainReleaseQueues() {
+        ReleaseAcquireWork *acquire = nullptr;
+        while (m_releaseAcquireQueue.front_copy_and_pop_no_lock(&acquire)) {
+            delete acquire;
+            acquire = nullptr;
+        }
+        ReleaseReady *ready = nullptr;
+        while (m_releaseReadyQueue.front_copy_and_pop_no_lock(&ready)) {
+            delete ready;
+            ready = nullptr;
+        }
+        ReleaseWork *work = nullptr;
+        while (m_releaseWorkQueue.front_copy_and_pop_no_lock(&work)) {
+            delete work;
+            work = nullptr;
+        }
+        PipelineTaskOutputSurf *done = nullptr;
+        while (m_releaseDoneQueue.front_copy_and_pop_no_lock(&done)) {
+            delete done;
+            done = nullptr;
+        }
+    }
 public:
-    PipelineTaskOpenCL(std::vector<std::unique_ptr<RGYFilter>>& vppfilters, RGYFilterSsim *videoMetric, std::shared_ptr<RGYOpenCLContext> cl, MemType memType, QSVAllocator *allocator, MFXVideoSession *mfxSession, int outMaxQueueSize, std::shared_ptr<RGYLog> log) :
-        PipelineTask(PipelineTaskType::OPENCL, outMaxQueueSize, mfxSession, MFX_LIB_VERSION_0_0, log), m_cl(cl), m_vpFilters(vppfilters), m_surfVppInInterop(), m_surfVppOutInterop(), m_prevInputFrame(), m_videoMetric(videoMetric), m_memType(memType) {
+    void stopAcquireWorker() {
+        if (m_acquireThread) {
+            m_acquireThreadAbort.store(true);
+            if (m_acquireInQueue.size() < m_acquireInQueue.capacity()) {
+                auto work = std::make_unique<AcquireWork>();
+                work->stop = true;
+                auto workPtr = work.get();
+                if (m_acquireInQueue.push(workPtr)) {
+                    work.release();
+                }
+            }
+            while (m_acquireThread->joinable()) {
+                drainAcquireQueues();
+                m_acquireThread->join();
+                break;
+            }
+            m_acquireThread.reset();
+        }
+        if (m_acquireQueuesClosed) {
+            return;
+        }
+        if (m_openclTaskThreads >= 2) {
+            drainAcquireQueues();
+            m_acquireInQueue.close([](AcquireWork **work) {
+                delete *work;
+            });
+            m_acquireReadyQueue.close([](AcquireReady **ready) {
+                delete *ready;
+            });
+            m_acquireFreeQueue.close([](AcquireFrameHold **hold) {
+                delete *hold;
+            });
+        } else {
+            m_acquireInQueue.close();
+            m_acquireReadyQueue.close();
+            m_acquireFreeQueue.close();
+        }
+        m_acquireQueuesClosed = true;
+    }
+    void stopReleaseWorker() {
+        if (m_releaseThread) {
+            m_releaseThreadAbort.store(true);
+            if (m_releaseAcquireQueue.size() < m_releaseAcquireQueue.capacity()) {
+                auto work = std::make_unique<ReleaseAcquireWork>();
+                work->stop = true;
+                auto workPtr = work.get();
+                if (m_releaseAcquireQueue.push(workPtr)) {
+                    work.release();
+                }
+            }
+            if (m_releaseWorkQueue.size() < m_releaseWorkQueue.capacity()) {
+                auto work = std::make_unique<ReleaseWork>();
+                work->stop = true;
+                auto workPtr = work.get();
+                if (m_releaseWorkQueue.push(workPtr)) {
+                    work.release();
+                }
+            }
+            while (m_releaseThread->joinable()) {
+                drainReleaseQueues();
+                m_releaseThread->join();
+                break;
+            }
+            m_releaseThread.reset();
+        }
+        if (m_releaseQueuesClosed) {
+            return;
+        }
+        if (m_openclTaskThreads >= 2) {
+            drainReleaseQueues();
+            m_releaseAcquireQueue.close([](ReleaseAcquireWork **work) {
+                delete *work;
+            });
+            m_releaseReadyQueue.close([](ReleaseReady **ready) {
+                delete *ready;
+            });
+            m_releaseWorkQueue.close([](ReleaseWork **work) {
+                delete *work;
+            });
+            m_releaseDoneQueue.close([](PipelineTaskOutputSurf **done) {
+                delete *done;
+            });
+        } else {
+            m_releaseAcquireQueue.close();
+            m_releaseReadyQueue.close();
+            m_releaseWorkQueue.close();
+            m_releaseDoneQueue.close();
+        }
+        m_releaseQueuesClosed = true;
+    }
+    void stopWorkers() {
+        stopAcquireWorker();
+        stopReleaseWorker();
+    }
+protected:
+    bool pushAcquireReady(std::unique_ptr<AcquireReady>& ready) {
+        while (!m_acquireThreadAbort.load()) {
+            if (m_acquireReadyQueue.size() < m_acquireReadyQueue.capacity()) {
+                auto readyPtr = ready.get();
+                if (m_acquireReadyQueue.push(readyPtr)) {
+                    ready.release();
+                    return true;
+                }
+            }
+            rgy_yield();
+        }
+        return false;
+    }
+    std::unique_ptr<RGYCLFrame> getAcquireWorkerFrame(const RGYFrameInfo& frameInfo) {
+        RGYFrameInfo bufInfo = frameInfo;
+        bufInfo.mem_type = RGY_MEM_TYPE_GPU;
+        AcquireFrameHold *holdPtr = nullptr;
+        while (m_acquireFreeQueue.front_copy_and_pop_no_lock(&holdPtr)) {
+            std::unique_ptr<AcquireFrameHold> hold(holdPtr);
+            if (hold->waitEvent && hold->event()) {
+                hold->event.wait();
+            }
+            if (hold->frame && !cmpFrameInfoCspResolution(&hold->frame->frame, &bufInfo)) {
+                return std::move(hold->frame);
+            }
+        }
+        return m_cl->createFrameBuffer(bufInfo);
+    }
+    void runAcquireWorker() {
+        while (true) {
+            std::vector<std::unique_ptr<AcquireWork>> works;
+            AcquireWork *workPtr = nullptr;
+            while (!m_acquireInQueue.front_copy_and_pop_no_lock(&workPtr)) {
+                if (m_acquireThreadAbort.load()) {
+                    return;
+                }
+                m_acquireInQueue.wait_for_push();
+            }
+            if (workPtr != nullptr) {
+                works.emplace_back(workPtr);
+            }
+            if (works.empty()) {
+                continue;
+            }
+            while (works.size() < OPENCL_ACQUIRE_BATCH_SIZE && !works.back()->stop && !works.back()->drain) {
+                workPtr = nullptr;
+                if (!m_acquireInQueue.front_copy_and_pop_no_lock(&workPtr)) {
+                    break;
+                }
+                if (workPtr != nullptr) {
+                    works.emplace_back(workPtr);
+                }
+            }
+            bool stopAfterBatch = false;
+            auto batchErr = RGY_ERR_NONE;
+            std::vector<std::unique_ptr<AcquireReady>> readies;
+            struct InteropAcquireItem {
+                AcquireReady *ready;
+                PipelineTaskOutputSurf *taskSurf;
+                RGYCLFrameInterop *interop;
+                RGYFrameInfo frameInfo;
+                std::unique_ptr<RGYCLFrame> clFrame;
+            };
+            std::vector<InteropAcquireItem> interopItems;
+            std::set<RGYCLFrameInterop *> interopFramesInBatch;
+            bool duplicateInteropFrame = false;
+            {
+                // D3D11 interopは単一mutexのまま、バッチ全体をacquireからrelease完了まで直列化する。
+                std::unique_lock<std::recursive_mutex> interopLock(m_cl->interopMutex(), std::defer_lock);
+                if (m_memType == D3D11_MEMORY) {
+                    interopLock.lock();
+                }
+                for (auto& work : works) {
+                    if (!work) {
+                        continue;
+                    }
+                    if (work->stop) {
+                        stopAfterBatch = true;
+                        break;
+                    }
+                    auto ready = std::make_unique<AcquireReady>();
+                    ready->drain = work->drain;
+                    if (work->drain) {
+                        readies.push_back(std::move(ready));
+                        continue;
+                    }
+                    ready->frame = std::move(work->frame);
+                    auto taskSurf = dynamic_cast<PipelineTaskOutputSurf *>(ready->frame.get());
+                    if (taskSurf == nullptr) {
+                        PrintMes(RGY_LOG_ERROR, _T("Invalid task surface.\n"));
+                        batchErr = RGY_ERR_NULL_PTR;
+                        readies.push_back(std::move(ready));
+                        continue;
+                    }
+                    if (taskSurf->surf().mfx()) {
+                        mfxFrameSurface1 *surfVppIn = taskSurf->surf().mfx()->surf();
+                        if (m_surfVppInInterop.count(surfVppIn) == 0) {
+                            // interopのreleaseは生成時のqueueに発行されるため、worker専用queueで生成する。
+                            m_surfVppInInterop[surfVppIn] = getOpenCLFrameInterop(surfVppIn, m_memType, CL_MEM_READ_ONLY, m_allocator, m_cl.get(), m_acquireQueue, m_acquireFrameInInfo);
+                        }
+                        auto clFrameInInterop = m_surfVppInInterop[surfVppIn].get();
+                        if (!clFrameInInterop) {
+                            PrintMes(RGY_LOG_ERROR, _T("Failed to get OpenCL interop [in].\n"));
+                            batchErr = RGY_ERR_NULL_PTR;
+                            readies.push_back(std::move(ready));
+                            continue;
+                        }
+                        clFrameInInterop->frame.flags = work->frameInfo.flags;
+                        clFrameInInterop->frame.timestamp = work->frameInfo.timestamp;
+                        clFrameInInterop->frame.inputFrameId = work->frameInfo.inputFrameId;
+                        clFrameInInterop->frame.picstruct = work->frameInfo.picstruct;
+                        clFrameInInterop->frame.dataList = work->frameInfo.dataList;
+
+                        auto clFrame = getAcquireWorkerFrame(clFrameInInterop->frameInfo());
+                        if (!clFrame) {
+                            PrintMes(RGY_LOG_ERROR, _T("Failed to allocate OpenCL frame for acquire worker.\n"));
+                            batchErr = RGY_ERR_MEMORY_ALLOC;
+                            readies.push_back(std::move(ready));
+                            continue;
+                        }
+                        clFrame->frame.flags = clFrameInInterop->frame.flags;
+                        clFrame->frame.timestamp = clFrameInInterop->frame.timestamp;
+                        clFrame->frame.inputFrameId = clFrameInInterop->frame.inputFrameId;
+                        clFrame->frame.picstruct = clFrameInInterop->frame.picstruct;
+                        clFrame->frame.dataList = clFrameInInterop->frame.dataList;
+
+                        auto readyPtr = ready.get();
+                        readies.push_back(std::move(ready));
+                        // 同じMFX面を複数の論理フレームが共有する場合に備え、timestamp等をここで固定する。
+                        // 後からinterop->frameInfo()を参照すると、バッチ内の最後のフレーム情報へ上書きされている。
+                        interopItems.push_back({ readyPtr, taskSurf, clFrameInInterop, clFrameInInterop->frameInfo(), std::move(clFrame) });
+                        if (!interopFramesInBatch.insert(clFrameInInterop).second) {
+                            duplicateInteropFrame = true;
+                        }
+                    } else if (auto clframe = taskSurf->surf().cl(); clframe != nullptr) {
+                        // OpenCLフレームが来た場合はworker側で追加処理せず、そのままmainへ渡す。
+                        ready->frameInfo = clframe->frameInfo();
+                        readies.push_back(std::move(ready));
+                    } else {
+                        PrintMes(RGY_LOG_ERROR, _T("Invalid input frame.\n"));
+                        batchErr = RGY_ERR_NULL_PTR;
+                        readies.push_back(std::move(ready));
+                    }
+                }
+
+                if (batchErr == RGY_ERR_NONE && !interopItems.empty()) {
+                    // forcecfrの補間フレームなどは、同じMFX面を異なるtimestampで複数回参照する。
+                    // 同一バッチ内で同じinteropを一括acquireするとcl_memが重複した未定義な要求となり、
+                    // フレーム時刻が後の参照値で上書きされることがある。重複時だけ1件ずつ順序付け、
+                    // 通常の異なる面だけのバッチでは従来の一括処理を維持する。
+                    auto processInteropItems = [&](const size_t begin, const size_t end) {
+                        std::vector<RGYCLFrameInterop *> interopFrames;
+                        interopFrames.reserve(end - begin);
+                        for (size_t i = begin; i < end; i++) {
+                            interopFrames.push_back(interopItems[i].interop);
+                        }
+                        auto err = RGYCLFrameInterop::acquire(interopFrames, m_acquireQueue);
+                        if (err != RGY_ERR_NONE) {
+                            PrintMes(RGY_LOG_ERROR, _T("Failed to acquire OpenCL interop input batch: %s.\n"), get_err_mes(err));
+                            return err;
+                        }
+                        auto copyErr = RGY_ERR_NONE;
+                        for (size_t i = begin; i < end; i++) {
+                            auto& item = interopItems[i];
+                            RGYOpenCLEvent copyDoneEvent;
+                            copyErr = m_cl->copyFrame(&item.clFrame->frame, &item.frameInfo, nullptr, m_acquireQueue, {}, &copyDoneEvent, RGYFrameCopyMode::FRAME, "qsv.acquire.copy");
+                            if (copyErr != RGY_ERR_NONE) {
+                                PrintMes(RGY_LOG_ERROR, _T("Failed to copy OpenCL interop input frame: %s.\n"), get_err_mes(copyErr));
+                                break;
+                            }
+                        }
+                        RGYOpenCLEvent inputReleaseEvent;
+                        const auto releaseErr = RGYCLFrameInterop::release(interopFrames, &inputReleaseEvent);
+                        if (releaseErr != RGY_ERR_NONE) {
+                            PrintMes(RGY_LOG_ERROR, _T("Failed to release OpenCL interop input batch: %s.\n"), get_err_mes(releaseErr));
+                            return releaseErr;
+                        }
+                        if (copyErr != RGY_ERR_NONE) {
+                            return copyErr;
+                        }
+                        for (size_t i = begin; i < end; i++) {
+                            auto& item = interopItems[i];
+                            item.taskSurf->addClEvent(inputReleaseEvent);
+                            item.ready->readyEvent = inputReleaseEvent;
+                            item.ready->waitReadyEvent = true;
+                            item.ready->frameInfo = item.clFrame->frameInfo();
+                            item.ready->clFrame = std::move(item.clFrame);
+                        }
+                        return RGY_ERR_NONE;
+                    };
+                    if (duplicateInteropFrame) {
+                        for (size_t i = 0; i < interopItems.size() && batchErr == RGY_ERR_NONE; i++) {
+                            batchErr = processInteropItems(i, i + 1);
+                        }
+                    } else {
+                        batchErr = processInteropItems(0, interopItems.size());
+                    }
+                    if (m_memType == D3D11_MEMORY) {
+                        const auto finishErr = m_acquireQueue.finish();
+                        if (finishErr != RGY_ERR_NONE) {
+                            PrintMes(RGY_LOG_ERROR, _T("Failed to finish acquire worker queue: %s.\n"), get_err_mes(finishErr));
+                            if (batchErr == RGY_ERR_NONE) {
+                                batchErr = finishErr;
+                            }
+                        }
+                    }
+                }
+            }
+
+            if (batchErr != RGY_ERR_NONE) {
+                setAcquireWorkerError(batchErr);
+            }
+            for (auto& ready : readies) {
+                if (!pushAcquireReady(ready)) {
+                    return;
+                }
+            }
+            if (stopAfterBatch) {
+                return;
+            }
+        }
+    }
+    RGY_ERR pushAcquireWork(std::unique_ptr<PipelineTaskOutput>& frame) {
+        if (frame) {
+            auto work = std::make_unique<AcquireWork>();
+            if (auto taskSurf = dynamic_cast<PipelineTaskOutputSurf *>(frame.get()); taskSurf != nullptr) {
+                const auto inputFrameInfo = taskSurf->surf().frame()->frameInfo();
+                copyFramePropWithoutRes(&work->frameInfo, &inputFrameInfo);
+            }
+            work->frame = std::move(frame);
+            auto workPtr = work.get();
+            if (!m_acquireInQueue.push(workPtr)) {
+                return RGY_ERR_MEMORY_ALLOC;
+            }
+            work.release();
+        } else if (!m_acquireDrainSent) {
+            auto work = std::make_unique<AcquireWork>();
+            work->drain = true;
+            auto workPtr = work.get();
+            if (!m_acquireInQueue.push(workPtr)) {
+                return RGY_ERR_MEMORY_ALLOC;
+            }
+            work.release();
+            m_acquireDrainSent = true;
+        }
+        return RGY_ERR_NONE;
+    }
+    std::unique_ptr<AcquireReady> popAcquireReady(bool wait) {
+        AcquireReady *readyPtr = nullptr;
+        while (!m_acquireReadyQueue.front_copy_and_pop_no_lock(&readyPtr)) {
+            if (!wait) {
+                return nullptr;
+            }
+            m_acquireReadyQueue.wait_for_push();
+        }
+        return std::unique_ptr<AcquireReady>(readyPtr);
+    }
+    bool pushReleaseReady(std::unique_ptr<ReleaseReady>& ready) {
+        while (!m_releaseThreadAbort.load()) {
+            if (m_releaseReadyQueue.size() < m_releaseReadyQueue.capacity()) {
+                auto readyPtr = ready.get();
+                if (m_releaseReadyQueue.push(readyPtr)) {
+                    ready.release();
+                    return true;
+                }
+            }
+            rgy_yield();
+        }
+        return false;
+    }
+    bool pushReleaseDone(std::unique_ptr<PipelineTaskOutputSurf>& done) {
+        while (!m_releaseThreadAbort.load()) {
+            if (m_releaseDoneQueue.size() < m_releaseDoneQueue.capacity()) {
+                auto donePtr = done.get();
+                if (m_releaseDoneQueue.push(donePtr)) {
+                    done.release();
+                    return true;
+                }
+            }
+            rgy_yield();
+        }
+        return false;
+    }
+    void runReleaseWorker() {
+        while (!m_releaseThreadAbort.load()) {
+            bool processed = false;
+            bool stopAfterBatch = false;
+            std::vector<std::unique_ptr<ReleaseWork>> releaseWorks;
+            ReleaseWork *workPtr = nullptr;
+            m_releaseWorkInFlight++;
+            if (m_releaseWorkQueue.front_copy_and_pop_no_lock(&workPtr)) {
+                processed = true;
+                if (workPtr != nullptr && !workPtr->stop) {
+                    releaseWorks.emplace_back(workPtr);
+                } else {
+                    m_releaseWorkInFlight--;
+                    if (workPtr != nullptr) {
+                        stopAfterBatch = workPtr->stop;
+                        delete workPtr;
+                    }
+                }
+                while (!stopAfterBatch && !releaseWorks.empty() && releaseWorks.size() < OPENCL_RELEASE_BATCH_SIZE) {
+                    workPtr = nullptr;
+                    m_releaseWorkInFlight++;
+                    if (!m_releaseWorkQueue.front_copy_and_pop_no_lock(&workPtr)) {
+                        m_releaseWorkInFlight--;
+                        break;
+                    }
+                    if (workPtr != nullptr && !workPtr->stop) {
+                        releaseWorks.emplace_back(workPtr);
+                    } else {
+                        m_releaseWorkInFlight--;
+                        if (workPtr != nullptr) {
+                            stopAfterBatch = workPtr->stop;
+                            delete workPtr;
+                        }
+                    }
+                }
+                if (!releaseWorks.empty()) {
+                    auto err = RGY_ERR_NONE;
+                    for (const auto& work : releaseWorks) {
+                        if (work->waitCropDoneEvent && work->cropDoneEvent()) {
+                            err = m_releaseQueue.wait(work->cropDoneEvent);
+                            if (err != RGY_ERR_NONE) {
+                                PrintMes(RGY_LOG_ERROR, _T("Failed to wait crop event on release queue: %s.\n"), get_err_mes(err));
+                                break;
+                            }
+                        }
+                    }
+                    RGYOpenCLEvent releaseEvent;
+                    if (err == RGY_ERR_NONE) {
+                        std::vector<RGYCLFrameInterop *> interopFrames;
+                        for (const auto& work : releaseWorks) {
+                            if (work->interop != nullptr) {
+                                interopFrames.push_back(work->interop);
+                            }
+                        }
+                        if (!interopFrames.empty()) {
+                            std::unique_lock<std::recursive_mutex> interopLock(m_cl->interopMutex(), std::defer_lock);
+                            if (m_memType == D3D11_MEMORY) {
+                                interopLock.lock();
+                            }
+                            err = RGYCLFrameInterop::release(interopFrames, &releaseEvent);
+                            if (err != RGY_ERR_NONE) {
+                                PrintMes(RGY_LOG_ERROR, _T("Failed to release OpenCL interop output batch: %s.\n"), get_err_mes(err));
+                            }
+                            if (err == RGY_ERR_NONE && m_memType == D3D11_MEMORY) {
+                                err = m_releaseQueue.finish();
+                                if (err != RGY_ERR_NONE) {
+                                    PrintMes(RGY_LOG_ERROR, _T("Failed to finish release worker queue: %s.\n"), get_err_mes(err));
+                                }
+                            }
+                        }
+                    }
+                    if (err != RGY_ERR_NONE) {
+                        setReleaseWorkerError(err);
+                        m_releaseWorkInFlight.fetch_sub((int)releaseWorks.size());
+                        return;
+                    }
+                    for (size_t i = 0; i < releaseWorks.size(); i++) {
+                        auto& work = releaseWorks[i];
+                        auto doneEvent = (work->interop != nullptr) ? releaseEvent : work->cropDoneEvent;
+                        work->surf.frame()->setTimestamp(work->encSurfaceInfo.timestamp);
+                        work->surf.frame()->setInputFrameId(work->encSurfaceInfo.inputFrameId);
+                        work->surf.frame()->setPicstruct(work->encSurfaceInfo.picstruct);
+                        work->surf.frame()->setFlags(work->encSurfaceInfo.flags);
+                        work->surf.frame()->setDataList(work->encSurfaceInfo.dataList);
+                        std::unique_ptr<PipelineTaskOutput> dependency;
+                        auto done = std::make_unique<PipelineTaskOutputSurf>(m_mfxSession, work->surf, dependency, doneEvent);
+                        if (!pushReleaseDone(done)) {
+                            m_releaseWorkInFlight.fetch_sub((int)(releaseWorks.size() - i));
+                            return;
+                        }
+                        m_releaseWorkInFlight--;
+                    }
+                }
+                if (stopAfterBatch) {
+                    return;
+                }
+            } else {
+                m_releaseWorkInFlight--;
+            }
+
+            std::vector<std::unique_ptr<ReleaseAcquireWork>> acquireWorks;
+            ReleaseAcquireWork *acquirePtr = nullptr;
+            if (m_releaseAcquireQueue.front_copy_and_pop_no_lock(&acquirePtr)) {
+                processed = true;
+                if (acquirePtr != nullptr) {
+                    acquireWorks.emplace_back(acquirePtr);
+                }
+                while (!acquireWorks.empty() && acquireWorks.size() < OPENCL_RELEASE_BATCH_SIZE && !acquireWorks.back()->stop) {
+                    acquirePtr = nullptr;
+                    if (!m_releaseAcquireQueue.front_copy_and_pop_no_lock(&acquirePtr)) {
+                        break;
+                    }
+                    if (acquirePtr != nullptr) {
+                        acquireWorks.emplace_back(acquirePtr);
+                    }
+                }
+                stopAfterBatch = false;
+                if (!acquireWorks.empty() && acquireWorks.back()->stop) {
+                    stopAfterBatch = true;
+                    acquireWorks.pop_back();
+                }
+
+                auto batchErr = RGY_ERR_NONE;
+                std::vector<std::unique_ptr<ReleaseReady>> readies;
+                std::vector<RGYCLFrameInterop *> interopFrames;
+                {
+                    std::unique_lock<std::recursive_mutex> interopLock(m_cl->interopMutex(), std::defer_lock);
+                    if (m_memType == D3D11_MEMORY) {
+                        interopLock.lock();
+                    }
+                    for (auto& acquire : acquireWorks) {
+                        auto ready = std::make_unique<ReleaseReady>();
+                        ready->surf = acquire->surf;
+                        if (auto mfxsurfOut = (ready->surf.mfx()) ? ready->surf.mfx()->surf() : nullptr; mfxsurfOut != nullptr) {
+                            if (m_surfVppOutInterop.count(mfxsurfOut) == 0) {
+                                m_surfVppOutInterop[mfxsurfOut] = getOpenCLFrameInterop(mfxsurfOut, m_memType, CL_MEM_WRITE_ONLY, m_allocator, m_cl.get(), m_releaseQueue, acquire->frameOut);
+                            }
+                            ready->interop = m_surfVppOutInterop[mfxsurfOut].get();
+                            if (!ready->interop) {
+                                PrintMes(RGY_LOG_ERROR, _T("Failed to get OpenCL interop [out].\n"));
+                                batchErr = RGY_ERR_NULL_PTR;
+                            } else {
+                                interopFrames.push_back(ready->interop);
+                            }
+                        } else if (ready->surf.cl() != nullptr) {
+                            // OpenCLフレームの場合はinterop処理不要。
+                        } else {
+                            PrintMes(RGY_LOG_ERROR, _T("Invalid work frame [out].\n"));
+                            batchErr = RGY_ERR_NULL_PTR;
+                        }
+                        readies.push_back(std::move(ready));
+                    }
+                    if (batchErr == RGY_ERR_NONE && !interopFrames.empty()) {
+                        RGYOpenCLEvent acquireEvent;
+                        batchErr = RGYCLFrameInterop::acquire(interopFrames, m_releaseQueue, &acquireEvent);
+                        if (batchErr != RGY_ERR_NONE) {
+                            PrintMes(RGY_LOG_ERROR, _T("Failed to acquire OpenCL interop output batch: %s.\n"), get_err_mes(batchErr));
+                        } else {
+                            for (auto& ready : readies) {
+                                if (ready->interop != nullptr) {
+                                    ready->acquireEvent = acquireEvent;
+                                    ready->waitAcquireEvent = true;
+                                }
+                            }
+                        }
+                        if (batchErr == RGY_ERR_NONE && m_memType == D3D11_MEMORY) {
+                            batchErr = m_releaseQueue.finish();
+                            if (batchErr != RGY_ERR_NONE) {
+                                PrintMes(RGY_LOG_ERROR, _T("Failed to finish output acquire: %s.\n"), get_err_mes(batchErr));
+                            }
+                        }
+                    }
+                }
+                if (batchErr != RGY_ERR_NONE) {
+                    setReleaseWorkerError(batchErr);
+                }
+                for (auto& ready : readies) {
+                    if (!pushReleaseReady(ready)) {
+                        return;
+                    }
+                }
+                if (batchErr != RGY_ERR_NONE || stopAfterBatch) {
+                    return;
+                }
+            }
+            if (!processed) {
+                rgy_yield();
+            }
+        }
+    }
+    RGY_ERR feedReleaseAcquireQueue() {
+        if (!useReleaseWorker()) {
+            return RGY_ERR_NONE;
+        }
+        // workerがacquire queueから取り出した処理中の要素も含めて上限を判定し、
+        // ready queueへの投入待ちでrelease処理が停止する循環待ちを防ぐ。
+        while (!m_releaseThreadAbort.load()
+            && m_releaseAcquirePending.load() < (int)m_releaseReadyQueue.capacity()
+            && m_releaseAcquireQueue.size() < m_releaseAcquireQueue.capacity()) {
+            auto surf = getWorkSurf();
+            if (surf == nullptr) {
+                return RGY_ERR_MORE_SURFACE;
+            }
+            auto work = std::make_unique<ReleaseAcquireWork>();
+            work->surf = surf;
+            const auto filterParam = (m_vpFilters.empty()) ? nullptr : m_vpFilters.back()->GetFilterParam();
+            if (filterParam == nullptr) {
+                PrintMes(RGY_LOG_ERROR, _T("Failed to get the last OpenCL filter parameters for output surface acquisition.\n"));
+                return RGY_ERR_INVALID_OPERATION;
+            }
+            work->frameOut = filterParam->frameOut; //チェーン再構築でm_vpFilters.back()が差し替わるので、要求時点の値をworkに固定しておく
+            auto workPtr = work.get();
+            m_releaseAcquirePending++;
+            if (!m_releaseAcquireQueue.push(workPtr)) {
+                m_releaseAcquirePending--;
+                return RGY_ERR_MEMORY_ALLOC;
+            }
+            work.release();
+        }
+        return RGY_ERR_NONE;
+    }
+    std::unique_ptr<ReleaseReady> popReleaseReady(bool wait) {
+        ReleaseReady *readyPtr = nullptr;
+        while (!m_releaseReadyQueue.front_copy_and_pop_no_lock(&readyPtr)) {
+            if (!wait) {
+                return nullptr;
+            }
+            // release workerがdone queueへのバッチ投入で待っている場合に備え、
+            // acquire完了待ちの間もmain側でdoneを回収して循環待ちを避ける。
+            collectReleaseDone(false);
+            if (m_releaseErr.load() != RGY_ERR_NONE || m_releaseThreadAbort.load()) {
+                return nullptr;
+            }
+            rgy_yield();
+        }
+        m_releaseAcquirePending--;
+        return std::unique_ptr<ReleaseReady>(readyPtr);
+    }
+    RGY_ERR pushReleaseWork(PipelineTaskSurface& surf, RGYCLFrameInterop *interop, const RGYOpenCLEvent& cropDoneEvent, const RGYFrameInfo& encSurfaceInfo) {
+        auto work = std::make_unique<ReleaseWork>();
+        work->surf = surf;
+        work->interop = interop;
+        work->cropDoneEvent = cropDoneEvent;
+        work->waitCropDoneEvent = cropDoneEvent();
+        work->encSurfaceInfo = encSurfaceInfo;
+        auto workPtr = work.get();
+        m_releaseOutputPending++;
+        while (!m_releaseThreadAbort.load()) {
+            if (m_releaseWorkQueue.size() < m_releaseWorkQueue.capacity()) {
+                if (m_releaseWorkQueue.push(workPtr)) {
+                    work.release();
+                    return RGY_ERR_NONE;
+                }
+            }
+            collectReleaseDone(false);
+            rgy_yield();
+        }
+        m_releaseOutputPending--;
+        return RGY_ERR_ABORTED;
+    }
+    void collectReleaseDone(bool wait) {
+        if (!useReleaseWorker()) {
+            return;
+        }
+        PipelineTaskOutputSurf *donePtr = nullptr;
+        while (true) {
+            while (m_releaseDoneQueue.front_copy_and_pop_no_lock(&donePtr)) {
+                m_outQeueue.push_back(std::unique_ptr<PipelineTaskOutput>(donePtr));
+                m_releaseOutputPending--;
+                donePtr = nullptr;
+            }
+            if (!wait) {
+                return;
+            }
+            if (m_outQeueue.size() > 0 || m_releaseDoneQueue.size() == 0) {
+                return;
+            }
+            m_releaseDoneQueue.wait_for_push();
+        }
+    }
+    bool hasReleaseWorkPending() const {
+        return m_releaseOutputPending.load() > 0;
+    }
+    // 解像度変更に伴うflush中であることを示すフラグをRAIIで立てる。flush中はsendFrame()を再帰的に呼ぶため、
+    // 途中でエラー復帰しても必ずフラグが下りるようにする必要がある。
+    class ResolutionChangeFlushGuard {
+        bool *m_flag;
+    public:
+        ResolutionChangeFlushGuard(bool& flag) : m_flag(&flag) {
+            *m_flag = true;
+        }
+        ~ResolutionChangeFlushGuard() {
+            release();
+        }
+        void release() {
+            if (m_flag != nullptr) {
+                *m_flag = false;
+                m_flag = nullptr;
+            }
+        }
+    };
+    // 入力解像度変更への追従の本丸。チェーン先頭のCspCropを新解像度で再初期化し、その直後に元の解像度へ戻す正規化resizeを挿入(2回目以降は更新)する。
+    // これによりチェーン2段目以降(および下流のエンコーダ)から見た解像度は初期値のまま変わらないので、それらは再初期化不要。
+    // 呼び出し前にフィルタのflushが完了していること(内部に旧解像度のフレームが残っていないこと)が前提。
+    RGY_ERR reconstructFilterChain(const RGYFrameInfo& newInputFrame) {
+        // ---- 以下、前提が崩れている構成は追従せず明示エラーとする(無言で壊すよりエラーで止める) ----
+        if (m_vpFilters.empty()) {
+            PrintMes(RGY_LOG_ERROR, _T("resolution change is not supported for an empty OpenCL filter configuration.\n"));
+            return RGY_ERR_UNSUPPORTED;
+        }
+        if (m_vpFilters.front() == nullptr || m_vpFilters.back() == nullptr) {
+            PrintMes(RGY_LOG_ERROR, _T("resolution change is not supported because the OpenCL filter configuration contains a null filter.\n"));
+            return RGY_ERR_UNSUPPORTED;
+        }
+        const auto firstFilterParam = m_vpFilters.front()->GetFilterParam();
+        if (firstFilterParam == nullptr) {
+            PrintMes(RGY_LOG_ERROR, _T("resolution change is not supported because the first OpenCL filter has no parameters.\n"));
+            return RGY_ERR_UNSUPPORTED;
+        }
+        if (newInputFrame.csp != firstFilterParam->frameIn.csp) {
+            PrintMes(RGY_LOG_ERROR, _T("resolution change with colorspace change is not supported: %s -> %s.\n"),
+                RGY_CSP_NAMES[firstFilterParam->frameIn.csp], RGY_CSP_NAMES[newInputFrame.csp]);
+            return RGY_ERR_UNSUPPORTED;
+        }
+        //先頭と末尾のCspCrop(入力csp->内部csp、内部csp->出力csp)はチェーン構築時に必ず入る前提。
+        //先頭の出力が3plane(=YUV planar)であることも、正規化resizeが扱えるcspであることの確認を兼ねている。
+        if (m_vpFilters.size() < 2
+            || typeid(*m_vpFilters.front()) != typeid(RGYFilterCspCrop)
+            || typeid(*m_vpFilters.back()) != typeid(RGYFilterCspCrop)
+            || RGY_CSP_PLANES[firstFilterParam->frameOut.csp] < 3) {
+            PrintMes(RGY_LOG_ERROR, _T("resolution change is not supported for this OpenCL filter configuration (filters: %d, first frameOut csp: %s).\n"),
+                (int)m_vpFilters.size(), RGY_CSP_NAMES[firstFilterParam->frameOut.csp]);
+            return RGY_ERR_UNSUPPORTED;
+        }
+        const auto oldCropParam = dynamic_cast<const RGYFilterParamCrop *>(firstFilterParam);
+        if (oldCropParam == nullptr) {
+            PrintMes(RGY_LOG_ERROR, _T("resolution change is not supported because the first OpenCL filter is not CspCrop.\n"));
+            return RGY_ERR_UNSUPPORTED;
+        }
+        if (m_normalizeResizeParam == nullptr
+            || m_normalizeTargetFrame.width <= 0
+            || m_normalizeTargetFrame.height <= 0
+            || m_normalizeTargetFrame.csp == RGY_CSP_NA) {
+            PrintMes(RGY_LOG_ERROR, _T("resolution change is not supported because the OpenCL normalization resize parameters are not initialized.\n"));
+            return RGY_ERR_INVALID_OPERATION;
+        }
+
+        //先頭CspCropの入力側だけを新解像度に差し替えて再初期化する。frameOutはcropParam->frameOutとしてinit内で再計算される。
+        //pitchも引き継がないと、上流から来るフレームの実際のpitchとずれてコピーが崩れる。
+        auto newCropParam = std::make_shared<RGYFilterParamCrop>(*oldCropParam);
+        newCropParam->frameIn.width = newInputFrame.width;
+        newCropParam->frameIn.height = newInputFrame.height;
+        newCropParam->frameIn.picstruct = newInputFrame.picstruct;
+        for (int i = 0; i < (int)_countof(newCropParam->frameIn.pitch); i++) {
+            newCropParam->frameIn.pitch[i] = newInputFrame.pitch[i];
+        }
+        auto sts = m_vpFilters.front()->init(newCropParam, m_log);
+        if (sts != RGY_ERR_NONE) {
+            PrintMes(RGY_LOG_ERROR, _T("Failed to reinitialize the first OpenCL CspCrop on resolution change (%dx%d): %s.\n"),
+                newInputFrame.width, newInputFrame.height, get_err_mes(sts));
+            return sts;
+        }
+        const auto cropParam = m_vpFilters.front()->GetFilterParam();
+        if (cropParam == nullptr) {
+            PrintMes(RGY_LOG_ERROR, _T("Failed to get the reinitialized first OpenCL CspCrop parameters.\n"));
+            return RGY_ERR_INVALID_OPERATION;
+        }
+        PrintMes(RGY_LOG_DEBUG, _T("resolution change: first OpenCL CspCrop reinitialized (frameIn: %dx%d %s, frameOut: %dx%d %s).\n"),
+            cropParam->frameIn.width, cropParam->frameIn.height, RGY_CSP_NAMES[cropParam->frameIn.csp],
+            cropParam->frameOut.width, cropParam->frameOut.height, RGY_CSP_NAMES[cropParam->frameOut.csp]);
+
+        //正規化resizeは「先頭CspCropの新しい出力」から「初期化時の先頭CspCropの出力(=m_normalizeTargetFrame)」へ戻す。
+        //解像度以外(csp/bitdepth/picstruct)は現在のチェーンに合わせる必要があるので、m_normalizeTargetFrameからは解像度だけを使う形になる。
+        auto resizeParam = std::make_shared<RGYFilterParamResize>(*m_normalizeResizeParam);
+        resizeParam->frameIn = cropParam->frameOut;
+        resizeParam->frameOut = m_normalizeTargetFrame;
+        resizeParam->frameOut.csp = resizeParam->frameIn.csp;
+        resizeParam->frameOut.bitdepth = RGY_CSP_BIT_DEPTH[resizeParam->frameOut.csp];
+        resizeParam->frameOut.picstruct = resizeParam->frameIn.picstruct;
+        resizeParam->baseFps = m_normalizeResizeParam->baseFps;
+        const bool insertResize = m_normalizeResizeIdx < 0; //初回の解像度変更でのみ挿入。2回目以降は同じフィルタをinitし直すだけ
+        if (insertResize) {
+            auto resizeFilter = std::make_unique<RGYFilterResize>(m_cl);
+            sts = resizeFilter->init(resizeParam, m_log);
+            if (sts != RGY_ERR_NONE) {
+                PrintMes(RGY_LOG_ERROR, _T("Failed to initialize the OpenCL normalization resize on resolution change: %s.\n"), get_err_mes(sts));
+                return sts;
+            }
+            m_vpFilters.insert(m_vpFilters.begin() + 1, std::move(resizeFilter));
+            m_normalizeResizeIdx = 1;
+        } else {
+            if (m_normalizeResizeIdx >= (int)m_vpFilters.size()
+                || m_vpFilters[m_normalizeResizeIdx] == nullptr
+                || typeid(*m_vpFilters[m_normalizeResizeIdx]) != typeid(RGYFilterResize)) {
+                PrintMes(RGY_LOG_ERROR, _T("Invalid OpenCL normalization resize filter index: %d.\n"), m_normalizeResizeIdx);
+                return RGY_ERR_INVALID_OPERATION;
+            }
+            sts = m_vpFilters[m_normalizeResizeIdx]->init(resizeParam, m_log);
+            if (sts != RGY_ERR_NONE) {
+                PrintMes(RGY_LOG_ERROR, _T("Failed to reinitialize the OpenCL normalization resize on resolution change: %s.\n"), get_err_mes(sts));
+                return sts;
+            }
+        }
+        PrintMes(RGY_LOG_DEBUG, _T("resolution change: OpenCL normalization resize %s (frameIn: %dx%d %s, frameOut: %dx%d %s).\n"),
+            insertResize ? _T("inserted") : _T("updated"),
+            resizeParam->frameIn.width, resizeParam->frameIn.height, RGY_CSP_NAMES[resizeParam->frameIn.csp],
+            resizeParam->frameOut.width, resizeParam->frameOut.height, RGY_CSP_NAMES[resizeParam->frameOut.csp]);
+
+        //2段目以降のフィルタは解像度が変わらないため再初期化不要だが、afs/nnedi/mpdecimateなど前後フレームを参照するフィルタは
+        //解像度変更をまたいだ内部保持フレームを捨てさせる必要がある(そうしないと切替直後に前の絵が混ざる)。
+        //ここでinitしたばかりの先頭(0)と正規化resizeは除外する。
+        int temporalStateResetCount = 0;
+        for (int i = 0; i < (int)m_vpFilters.size(); i++) {
+            if (i != 0 && i != m_normalizeResizeIdx) {
+                m_vpFilters[i]->resetTemporalState();
+                temporalStateResetCount++;
+            }
+        }
+        PrintMes(RGY_LOG_DEBUG, _T("resolution change: reset temporal state for %d OpenCL filters.\n"), temporalStateResetCount);
+        PrintMes(RGY_LOG_DEBUG, _T("resolution change: OpenCL filter chain reconstruction completed.\n"));
+        return RGY_ERR_NONE;
+    }
+public:
+    PipelineTaskOpenCL(std::vector<std::unique_ptr<RGYFilter>>& vppfilters, RGYFilterSsim *videoMetric, std::shared_ptr<RGYOpenCLContext> cl, int openclTaskThreads, MemType memType, QSVAllocator *allocator, MFXVideoSession *mfxSession, int outMaxQueueSize, std::shared_ptr<RGYLog> log) :
+        PipelineTask(PipelineTaskType::OPENCL, outMaxQueueSize, mfxSession, MFX_LIB_VERSION_0_0, log), m_cl(cl), m_vpFilters(vppfilters), m_surfVppInInterop(), m_surfVppOutInterop(), m_prevInputFrame(), m_prevAcquireFrame(), m_videoMetric(videoMetric), m_normalizeTargetFrame(), m_normalizeResizeParam(), m_normalizeResizeIdx(-1), m_resChangeFlush(false), m_openclTaskThreads(openclTaskThreads), m_acquireQueue(), m_acquireInQueue(), m_acquireReadyQueue(), m_acquireFreeQueue(), m_acquireThread(), m_acquireErr(RGY_ERR_NONE), m_acquireThreadAbort(false), m_releaseQueue(), m_releaseAcquireQueue(), m_releaseReadyQueue(), m_releaseWorkQueue(), m_releaseDoneQueue(), m_releaseThread(), m_releaseErr(RGY_ERR_NONE), m_releaseThreadAbort(false), m_releaseAcquirePending(0), m_releaseWorkInFlight(0), m_releaseOutputPending(0), m_acquireFrameInInfo(), m_acquireDrainSent(false), m_acquireDrainReady(false), m_acquireQueuesClosed(false), m_releaseQueuesClosed(false), m_memType(memType) {
         m_allocator = allocator;
+        //解像度変更時に「戻すべき解像度」は初期化時点のチェーン先頭の出力。ここで控えておかないと、
+        //先頭CspCropを再初期化した後では取得できなくなる。
+        if (!m_vpFilters.empty() && m_vpFilters.front()->GetFilterParam() != nullptr) {
+            m_normalizeTargetFrame = m_vpFilters.front()->GetFilterParam()->frameOut;
+        }
+        startAcquireWorker();
+        startReleaseWorker();
     };
     virtual ~PipelineTaskOpenCL() {
+        stopWorkers();
         m_prevInputFrame.clear();
+        m_prevAcquireFrame.clear();
         m_surfVppInInterop.clear();
         m_surfVppOutInterop.clear();
+        m_acquireQueue.clear();
+        m_releaseQueue.clear();
         m_cl.reset();
     };
 
@@ -2443,6 +3668,18 @@ public:
     }
     void setVideoQualityMetricFilter(RGYFilterSsim *videoMetric) {
         m_videoMetric = videoMetric;
+    }
+    void setNormalizeResizeParam(const std::shared_ptr<RGYFilterParamResize>& resizeParam) {
+        if (resizeParam == nullptr) {
+            m_normalizeResizeParam.reset();
+            return;
+        }
+        m_normalizeResizeParam = std::make_shared<RGYFilterParamResize>(*resizeParam);
+        //渡されるパラメータはOpenCLブロックが複数ある場合も共有される汎用のものなので、baseFpsだけはこのブロックの実際の値で上書きする。
+        //(ブロックによってはvpp-decimate等によりfpsが変わっているため)
+        if (!m_vpFilters.empty() && m_vpFilters.front()->GetFilterParam() != nullptr) {
+            m_normalizeResizeParam->baseFps = m_vpFilters.front()->GetFilterParam()->baseFps;
+        }
     }
 
     virtual RGY_ERR getOutputFrameInfo(mfxFrameInfo& info) override {
@@ -2457,28 +3694,162 @@ public:
 
     virtual std::optional<mfxFrameAllocRequest> requiredSurfIn() override { return std::nullopt; };
     virtual std::optional<mfxFrameAllocRequest> requiredSurfOut() override { return std::nullopt; };
+    virtual int additionalInputSurfaces() const override {
+        if (!useAcquireWorker()) {
+            return 0;
+        }
+        const auto maxWorkerInputSurfaces = m_acquireInQueue.capacity()
+            + OPENCL_ACQUIRE_BATCH_SIZE
+            + m_acquireReadyQueue.capacity();
+        // 単一フレーム処理分は既存の基本割当で確保済みのため、その1枚を除外する。
+        return static_cast<int>(maxWorkerInputSurfaces) - 1;
+    }
     virtual int additionalOutputSurfaces() const override {
         int frames = 0;
         for (const auto& filter : m_vpFilters) {
             frames += filter->requiredOutputFrames();
         }
+        if (m_openclTaskThreads >= 2) {
+            frames += 2 * (OPENCL_ACQUIRE_QUEUE_DEPTH + 1) + 2;
+            frames += 2 * (OPENCL_RELEASE_QUEUE_DEPTH + 1) + 2 + (OPENCL_RELEASE_BATCH_SIZE - 1);
+        }
         return frames;
     }
     virtual RGY_ERR sendFrame(std::unique_ptr<PipelineTaskOutput>& frame) override {
         if (m_stopwatch) m_stopwatch->set(0);
-        if (m_prevInputFrame.size() > 0) {
-            //前回投入したフレームの処理が完了していることを確認したうえで参照を破棄することでロックを解放する
-            auto prevframe = std::move(m_prevInputFrame.front());
-            m_prevInputFrame.pop_front();
-            prevframe->depend_clear();
-        }
+        clearPrevInputFrame();
+        collectReleaseDone(false);
         if (m_stopwatch) m_stopwatch->add(0, 0);
+
+        // 入力途中の解像度変更の検出と追従。上流から流れてきたフレームの解像度がチェーン先頭の期待する入力解像度と違えば、
+        // (1)チェーン内に残っている旧解像度のフレームをすべて吐き出し (2)チェーンを再構築して新解像度を受け入れる、という順で処理する。
+        // 再構築後は正規化resizeが入るため、この関数の出力解像度は変わらない(=下流のtaskは何も知らずに済む)。
+        if (frame && !m_vpFilters.empty()) {
+            auto taskSurf = dynamic_cast<PipelineTaskOutputSurf *>(frame.get());
+            const auto filterParam = m_vpFilters.front()->GetFilterParam();
+            if (taskSurf != nullptr && filterParam != nullptr) {
+                const auto inputFrame = taskSurf->surf().frame();
+                if (inputFrame->width() != filterParam->frameIn.width || inputFrame->height() != filterParam->frameIn.height) {
+                    const auto newInputFrame = inputFrame->frameInfo();
+                    const int oldInputWidth = filterParam->frameIn.width;
+                    const int oldInputHeight = filterParam->frameIn.height;
+                    PrintMes(RGY_LOG_DEBUG, _T("input resolution change detected in OpenCL filter input: %dx%d -> %dx%d, flushing filter chain.\n"),
+                        oldInputWidth, oldInputHeight, newInputFrame.width, newInputFrame.height);
+
+                    ResolutionChangeFlushGuard flushGuard(m_resChangeFlush);
+                    const size_t queueSizeBefore = m_outQeueue.size();
+                    // flush中はm_outQeueueから取り出さないので、その増加がフィルタチェーンの前進を示す。
+                    // workerの完了待ちで空回りする回数は事前に見積もれないため、
+                    // 反復回数ではなく「前進しないまま連続した回数」でハングを検出する。
+                    size_t queueSizeLast = queueSizeBefore;
+                    int drainLoop = 0;
+                    int drainStall = 0;
+                    for (;;) {
+                        // 空フレームを渡した再帰呼び出しでチェーン内のフレームを押し出す。
+                        // このときm_resChangeFlushが立っているので、末尾のm_outQeueue処理は出力を取り出さず溜め込むだけになる。
+                        std::unique_ptr<PipelineTaskOutput> nullFrame;
+                        auto sts = sendFrame(nullFrame);
+                        drainLoop++;
+                        if (sts == RGY_ERR_MORE_DATA) {
+                            break;
+                        }
+                        if (sts != RGY_ERR_NONE) {
+                            PrintMes(RGY_LOG_ERROR, _T("Failed to drain the OpenCL filter chain on resolution change %dx%d -> %dx%d: %s.\n"),
+                                oldInputWidth, oldInputHeight, newInputFrame.width, newInputFrame.height, get_err_mes(sts));
+                            return sts;
+                        }
+                        if (m_outQeueue.size() != queueSizeLast) {
+                            queueSizeLast = m_outQeueue.size();
+                            drainStall = 0;
+                        } else if (++drainStall > 65536) {
+                            PrintMes(RGY_LOG_ERROR, _T("Failed to drain the OpenCL filter chain on resolution change: no progress after %d iterations.\n"), drainLoop);
+                            return RGY_ERR_UNKNOWN;
+                        } else {
+                            rgy_yield();
+                        }
+                    }
+                    collectReleaseDone(false);
+                    if (hasReleaseWorkPending()) {
+                        PrintMes(RGY_LOG_ERROR, _T("Failed to drain the OpenCL release worker on resolution change.\n"));
+                        return RGY_ERR_UNKNOWN;
+                    }
+                    PrintMes(RGY_LOG_DEBUG, _T("resolution change: OpenCL filter chain drained (loops: %d, frames queued: %d).\n"),
+                        drainLoop, (int)(m_outQeueue.size() - queueSizeBefore));
+
+                    // 出力のOpenCLイベントを完了させてから、フィルタが保持するバッファを再構築する。
+                    for (auto& output : m_outQeueue) {
+                        output->depend_clear();
+                    }
+                    while (!m_prevInputFrame.empty() || !m_prevAcquireFrame.empty()) {
+                        clearPrevInputFrame();
+                    }
+                    //入力側のinteropは旧解像度でmfxFrameSurface1と紐づいているため、破棄して次回の入力から作り直させる
+                    m_surfVppInInterop.clear();
+
+                    auto sts = reconstructFilterChain(newInputFrame);
+                    if (sts != RGY_ERR_NONE) {
+                        return sts;
+                    }
+                    //acquireワーカーが確保するフレームの情報も新しいものに更新する。drainフラグもflushで消費済みなので戻しておく
+                    m_acquireFrameInInfo = m_vpFilters.front()->GetFilterParam()->frameIn;
+                    m_acquireDrainSent = false;
+                    m_acquireDrainReady = false;
+                    flushGuard.release();
+                    PrintMes(RGY_LOG_DEBUG, _T("resolution change: OpenCL filter processing resumed.\n"));
+                }
+            }
+        }
 
         deque<std::pair<RGYFrameInfo, uint32_t>> filterframes;
         RGYCLFrameInterop *clFrameInInterop = nullptr;
+        std::unique_ptr<AcquireReady> acquireReady;
+        std::vector<RGYOpenCLEvent> firstFilterWaitEvents;
 
         bool drain = !frame;
-        if (!frame) {
+        if (useAcquireWorker()) {
+            auto err = checkWorkerErrors();
+            if (err != RGY_ERR_NONE) {
+                return err;
+            }
+            if (!m_acquireDrainReady) {
+                // readyQueueが満杯のままinQueueへpushするとworkerと相互待ちになるため、先に回収する。
+                acquireReady = popAcquireReady(false);
+            }
+            if ((err = pushAcquireWork(frame)) != RGY_ERR_NONE) {
+                return err;
+            }
+            if (m_acquireDrainReady) {
+                filterframes.push_back(std::make_pair(RGYFrameInfo(), 0u));
+            } else {
+                if (!acquireReady) {
+                    acquireReady = popAcquireReady(drain);
+                }
+                if (!acquireReady) {
+                    return RGY_ERR_NONE;
+                }
+                if ((err = checkWorkerErrors()) != RGY_ERR_NONE) {
+                    return err;
+                }
+                if (acquireReady->drain) {
+                    m_acquireDrainReady = true;
+                    filterframes.push_back(std::make_pair(RGYFrameInfo(), 0u));
+                } else {
+                    // EOF後に残っている入力フレームを処理する間は、まだfilter chainをflushしない。
+                    drain = false;
+                    if (acquireReady->waitReadyEvent) {
+                        firstFilterWaitEvents.push_back(acquireReady->readyEvent);
+                    }
+                    if (acquireReady->clFrame) {
+                        m_prevAcquireFrame.emplace_back(std::move(acquireReady->clFrame), RGYOpenCLEvent(), false);
+                        filterframes.push_back(std::make_pair(m_prevAcquireFrame.back().frame->frameInfo(), 0u));
+                    } else {
+                        filterframes.push_back(std::make_pair(acquireReady->frameInfo, 0u));
+                    }
+                    // worker側でcopy/release完了eventを入力surfaceに登録済みなので、ここでは参照保持だけ行う。
+                    m_prevInputFrame.push_back(std::move(acquireReady->frame));
+                }
+            }
+        } else if (!frame) {
             filterframes.push_back(std::make_pair(RGYFrameInfo(), 0u));
         } else {
             auto taskSurf = dynamic_cast<PipelineTaskOutputSurf *>(frame.get());
@@ -2496,7 +3867,10 @@ public:
                     PrintMes(RGY_LOG_ERROR, _T("Failed to get OpenCL interop [in].\n"));
                     return RGY_ERR_NULL_PTR;
                 }
-                auto err = clFrameInInterop->acquire(m_cl->queue());
+                auto err = RGY_ERR_NONE;
+                {
+                    err = clFrameInInterop->acquire(m_cl->queue());
+                }
                 if (err != RGY_ERR_NONE) {
                     PrintMes(RGY_LOG_ERROR, _T("Failed to acquire OpenCL interop [in]: %s.\n"), get_err_mes(err));
                     return RGY_ERR_NULL_PTR;
@@ -2524,6 +3898,7 @@ public:
         std::vector<std::unique_ptr<PipelineTaskOutputSurf>> outputSurfs;
         // flush中に途中returnする場合もあるので、生成済み出力を失わないようqueue投入を共通化する。
         auto queueOutputSurfs = [this, &outputSurfs]() {
+            collectReleaseDone(false);
             m_outQeueue.insert(m_outQeueue.end(),
                 std::make_move_iterator(outputSurfs.begin()),
                 std::make_move_iterator(outputSurfs.end())
@@ -2546,14 +3921,27 @@ public:
 
                 int nOutFrames = 0;
                 RGYFrameInfo *outInfo[16] = { 0 };
-                auto sts_filter = m_vpFilters[ifilter]->filter(&input, (RGYFrameInfo **)&outInfo, &nOutFrames);
+                RGYOpenCLEvent firstFilterDoneEvent;
+                auto sts_filter = RGY_ERR_NONE;
+                if (!firstFilterWaitEvents.empty()) {
+                    sts_filter = m_vpFilters[ifilter]->filter(&input, (RGYFrameInfo **)&outInfo, &nOutFrames, m_cl->queue(), firstFilterWaitEvents, &firstFilterDoneEvent);
+                    firstFilterWaitEvents.clear();
+                    if (!m_prevAcquireFrame.empty() && !m_prevAcquireFrame.back().waitEvent && firstFilterDoneEvent()) {
+                        m_prevAcquireFrame.back().event = firstFilterDoneEvent;
+                        m_prevAcquireFrame.back().waitEvent = true;
+                    }
+                } else {
+                    sts_filter = m_vpFilters[ifilter]->filter(&input, (RGYFrameInfo **)&outInfo, &nOutFrames);
+                }
                 if (sts_filter != RGY_ERR_NONE) {
                     PrintMes(RGY_LOG_ERROR, _T("Error while running filter \"%s\".\n"), m_vpFilters[ifilter]->name().c_str());
                     return sts_filter;
                 }
                 if (clFrameInInterop) {
                     RGYOpenCLEvent inputReleaseEvent;
-                    clFrameInInterop->release(&inputReleaseEvent); // input frameの解放
+                    {
+                        clFrameInInterop->release(&inputReleaseEvent); // input frameの解放
+                    }
                     clFrameInInterop = nullptr;
                     if (!m_prevInputFrame.empty() && m_prevInputFrame.back()) {
                         //解放処理のeventを入力フレームを使用し終わったことの合図として登録する
@@ -2591,6 +3979,14 @@ public:
                 continue;
             }
             if (filterframes.front().first.ptr[0] == nullptr) {
+                collectReleaseDone(false);
+                //通常はm_outQeueueに出力が溜まった時点でいったん呼び出し元に返すが、解像度変更のflush中は
+                //呼び出し元(=このsendFrameの再帰元)が出力を取り出さないため、ここで返すとdrainが進まずハングする。
+                //flush中はチェーンが空になる(RGY_ERR_MORE_DATA)まで進め続ける。
+                if (useReleaseWorker() && (hasReleaseWorkPending() || (!m_resChangeFlush && m_outQeueue.size() > 0))) {
+                    if (m_outQeueue.size() > 0 && m_stopwatch) m_stopwatch->add(0, 2);
+                    return RGY_ERR_NONE;
+                }
                 if (!outputSurfs.empty()) {
                     // 出力を返した後も、呼び出し元が再度flushして残りのpendingを取りに来る。
                     queueOutputSurfs();
@@ -2606,9 +4002,34 @@ public:
                 PrintMes(RGY_LOG_ERROR, _T("Last filter setting invalid.\n"));
                 return RGY_ERR_INVALID_PARAM;
             }
-            auto surfVppOut = getWorkSurf();
+            PipelineTaskSurface surfVppOut;
             RGYCLFrameInterop *clFrameOutInterop = nullptr;
-            if (auto mfxsurfOut = (surfVppOut.mfx()) ? surfVppOut.mfx()->surf() : nullptr; mfxsurfOut != nullptr) {
+            std::unique_ptr<ReleaseReady> releaseReady;
+            if (useReleaseWorker()) {
+                auto err = feedReleaseAcquireQueue();
+                if (err != RGY_ERR_NONE && err != RGY_ERR_MORE_SURFACE) {
+                    return err;
+                }
+                releaseReady = popReleaseReady(true);
+                if (!releaseReady) {
+                    if ((err = checkWorkerErrors()) != RGY_ERR_NONE) {
+                        return err;
+                    }
+                    return RGY_ERR_MORE_SURFACE;
+                }
+                if ((err = checkWorkerErrors()) != RGY_ERR_NONE) {
+                    return err;
+                }
+                surfVppOut = releaseReady->surf;
+                clFrameOutInterop = releaseReady->interop;
+                if (releaseReady->waitAcquireEvent) {
+                    firstFilterWaitEvents.push_back(releaseReady->acquireEvent);
+                }
+            } else {
+                surfVppOut = getWorkSurf();
+            }
+            auto mfxsurfOut = (surfVppOut.mfx()) ? surfVppOut.mfx()->surf() : nullptr;
+            if (!useReleaseWorker() && mfxsurfOut != nullptr) {
                 // 通常のmfxフレームの場合
                 if (m_surfVppOutInterop.count(mfxsurfOut) == 0) {
                     m_surfVppOutInterop[mfxsurfOut] = getOpenCLFrameInterop(mfxsurfOut, m_memType, CL_MEM_WRITE_ONLY, m_allocator, m_cl.get(), m_cl->queue(), m_vpFilters.back()->GetFilterParam()->frameOut);
@@ -2618,13 +4039,18 @@ public:
                     PrintMes(RGY_LOG_ERROR, _T("Failed to get OpenCL interop [out].\n"));
                     return RGY_ERR_NULL_PTR;
                 }
-                auto err = clFrameOutInterop->acquire(m_cl->queue());
+                auto err = RGY_ERR_NONE;
+                {
+                    err = clFrameOutInterop->acquire(m_cl->queue());
+                }
                 if (err != RGY_ERR_NONE) {
                     PrintMes(RGY_LOG_ERROR, _T("Failed to acquire OpenCL interop [out]: %s.\n"), get_err_mes(err));
                     return RGY_ERR_NULL_PTR;
                 }
             } else if (surfVppOut.cl() != nullptr) {
                 //OpenCLフレームが出てきた時の場合...特にすることはない
+            } else if (useReleaseWorker() && clFrameOutInterop != nullptr) {
+                // Releaseワーカーでacquire済みのmfxフレーム。
             } else {
                 PrintMes(RGY_LOG_ERROR, _T("Invalid work frame [out].\n"));
                 return RGY_ERR_NULL_PTR;
@@ -2635,10 +4061,15 @@ public:
             RGYFrameInfo *outInfo[1];
             outInfo[0] = &encSurfaceInfo;
             RGYOpenCLEvent clevent; // 最終フィルタの処理完了を伝えるevent
-            auto sts_filter = lastFilter->filter(&filterframes.front().first, (RGYFrameInfo **)&outInfo, &nOutFrames, m_cl->queue(), &clevent);
+            auto sts_filter = (!firstFilterWaitEvents.empty())
+                ? lastFilter->filter(&filterframes.front().first, (RGYFrameInfo **)&outInfo, &nOutFrames, m_cl->queue(), firstFilterWaitEvents, &clevent)
+                : lastFilter->filter(&filterframes.front().first, (RGYFrameInfo **)&outInfo, &nOutFrames, m_cl->queue(), &clevent);
+            firstFilterWaitEvents.clear();
             if (sts_filter != RGY_ERR_NONE) {
                 PrintMes(RGY_LOG_ERROR, _T("Error while running filter \"%s\".\n"), lastFilter->name().c_str());
-                if (clFrameOutInterop) clFrameOutInterop->release();
+                if (clFrameOutInterop) {
+                    clFrameOutInterop->release();
+                }
                 return sts_filter;
             }
             if (m_videoMetric) {
@@ -2647,33 +4078,51 @@ public:
                 auto err = m_videoMetric->filter(&filterframes.front().first, nullptr, &dummy, m_cl->queue(), &clevent);
                 if (err != RGY_ERR_NONE) {
                     PrintMes(RGY_LOG_ERROR, _T("Failed to send frame for video metric calcualtion: %s.\n"), get_err_mes(err));
-                    if (clFrameOutInterop) clFrameOutInterop->release();
+                    if (clFrameOutInterop) {
+                        clFrameOutInterop->release();
+                    }
                     return err;
                 }
             }
             filterframes.pop_front();
 
-            if (clFrameOutInterop) {
-                auto err = clFrameOutInterop->release(&clevent);
+            if (clFrameOutInterop && !useReleaseWorker()) {
+                auto err = RGY_ERR_NONE;
+                {
+                    err = clFrameOutInterop->release(&clevent);
+                }
                 if (err != RGY_ERR_NONE) {
                     PrintMes(RGY_LOG_ERROR, _T("Failed to release out frame interop after \"%s\".\n"), lastFilter->name().c_str());
                     return sts_filter;
                 }
             }
-            surfVppOut.frame()->setTimestamp(encSurfaceInfo.timestamp);
-            surfVppOut.frame()->setInputFrameId(encSurfaceInfo.inputFrameId);
-            surfVppOut.frame()->setPicstruct(encSurfaceInfo.picstruct);
-            surfVppOut.frame()->setFlags(encSurfaceInfo.flags);
-            surfVppOut.frame()->setDataList(encSurfaceInfo.dataList);
+            if (!m_prevAcquireFrame.empty() && !m_prevAcquireFrame.back().waitEvent && clevent()) {
+                m_prevAcquireFrame.back().event = clevent;
+                m_prevAcquireFrame.back().waitEvent = true;
+            }
 
-            outputSurfs.push_back(std::make_unique<PipelineTaskOutputSurf>(m_mfxSession, surfVppOut, frame, clevent));
+            if (useReleaseWorker() && clFrameOutInterop) {
+                m_cl->queue().flush();
+                auto err = pushReleaseWork(surfVppOut, clFrameOutInterop, clevent, encSurfaceInfo);
+                if (err != RGY_ERR_NONE) {
+                    return err;
+                }
+                collectReleaseDone(false);
+            } else {
+                surfVppOut.frame()->setTimestamp(encSurfaceInfo.timestamp);
+                surfVppOut.frame()->setInputFrameId(encSurfaceInfo.inputFrameId);
+                surfVppOut.frame()->setPicstruct(encSurfaceInfo.picstruct);
+                surfVppOut.frame()->setFlags(encSurfaceInfo.flags);
+                surfVppOut.frame()->setDataList(encSurfaceInfo.dataList);
+                outputSurfs.push_back(std::make_unique<PipelineTaskOutputSurf>(m_mfxSession, surfVppOut, frame, clevent));
+            }
             if (drain) {
                 // Flush may receive several frames from one filter call (for example KFM VFR emits up to 4).
                 // Do not return while real frames are still queued locally, or they will be dropped.
                 const auto drainOutputLimit = std::max<size_t>(1, std::min<size_t>(
                     4,
                     std::max<size_t>(1, m_workSurfs.bufCount() / 2)));
-                if (outputSurfs.size() >= drainOutputLimit
+                if ((outputSurfs.size() + m_outQeueue.size()) >= drainOutputLimit
                     && (filterframes.empty() || filterframes.front().first.ptr[0] == nullptr)) {
                     queueOutputSurfs();
                     if (m_stopwatch) m_stopwatch->add(0, 2);
@@ -2683,7 +4132,9 @@ public:
         }
         if (clFrameInInterop) {
             RGYOpenCLEvent clevent;
-            clFrameInInterop->release(&clevent); // input frameの解放
+            {
+                clFrameInInterop->release(&clevent); // input frameの解放
+            }
             for (auto& surf : outputSurfs) {
                 surf->addClEvent(clevent);
             }

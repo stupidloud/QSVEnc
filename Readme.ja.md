@@ -75,42 +75,21 @@ QSVEncを使用したことによる、いかなる損害・トラブルにつ�
 - AVX2までを使用した処理の高速化
 - マルチGPUも活用した並列エンコード
 - エンコード結果のSSIM/PSNRを計算
-- VPP機能
-  - Media Functionを使用した高速フィルタリング
-    - リサイズ
-    - インタレ解除 (normal / bob / it)
-    - エッジ強調
-    - ノイズ低減
-    - Image Stablizier
-  - CUDAによるGPUフィルタリング
-    - インタレ解除
-      - afs (自動フィールドシフト)
-      - nnedi
-    - decimate
-    - mpdecimate
-    - delogo
-    - 字幕焼きこみ
-    - 色空間変換 (x64版のみ)
-      - hdr2sdr
-      - tonemap ([libplacebo](https://code.videolan.org/videolan/libplacebo))
-    - リサイズ  
-      - bilinear
-      - spline16, spline36, spline64
-      - lanczos2, lanczos3, lanczos4
-      - [libplacebo](https://code.videolan.org/videolan/libplacebo)
-    - 回転 / 反転
-    - パディング(黒帯)の追加
-    - バンディング低減
-      - deband
-      - [libplacebo](https://code.videolan.org/videolan/libplacebo)
-    - ノイズ除去
-      - knn (K-nearest neighbor)
-      - pmd (正則化pmd法)
-    - 輪郭・ディテール強調
-      - unsharp
-      - edgelevel (エッジレベル調整)
-      - warpsharp
-      - maa (masked anti-aliasing)
+- VPPフィルタ
+
+  | カテゴリ | フィルタ |
+  |:--|:--|
+  | インタレ解除 | deinterlace (Media Function), afs, bwdif, yadif, nnedi, rtgmc, kfm, decomb, onnx-deint |
+  | 逆テレシネ・間引き | rff, ivtc, decimate, mpdecimate |
+  | ノイズ除去 | knn, pmd, nlmeans, hqdn3d, smooth, denoise-dct, fft3d, msmooth, degrain, convolution3d, denoise (Media Function), mctf |
+  | リサイズ | resize (様々なアルゴリズム, [libplacebo](https://code.videolan.org/videolan/libplacebo)), descale |
+  | 輪郭・ディテール強調 | unsharp, edgelevel, warpsharp, maa, cas, msharpen, detailsharpen, detail-enhance (Media Function) |
+  | デハロ・リンギング除去 | dehalo, finedehalo, hqdering, vinverse |
+  | 色調補正 | tweak, curves, softlight, chromashift, colorfix |
+  | 色空間変換・HDR | colorspace, libplacebo-tonemapping |
+  | バンディング低減 | deband, libplacebo-deband |
+  | フレーム補間 | rife-ov, ai-frameinterp |
+  | その他 | delogo, subburn, pad, overlay, rotate, transform, stab, deflicker, deblock, image-stab (Media Function), libplacebo-shader, onnx, anime4k-shader |
 
 ### QSVEnc.auo
 - 音声エンコード

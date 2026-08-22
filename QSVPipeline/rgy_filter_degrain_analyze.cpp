@@ -58,6 +58,11 @@ static uint64_t degrain_cl_perf_end(const bool enabled, const uint64_t start_ns)
 
 constexpr int degrainAnalyzePad = 8;
 
+// kernel_degrain_mv_export_sad のlocal size
+// 同カーネルは1blockあたり1work-itemで完結し、local id・local memory・barrierを使用しないため、
+// local sizeは結果に影響しない (以前は1で、work-group当たり1work-itemしか動かず非効率だった)
+constexpr size_t DEGRAIN_MV_EXPORT_SAD_LOCAL_SIZE = 64;
+
 uint32_t degrainAnalyzeFlags(const std::shared_ptr<RGYFilterParamDegrain> &prm, const bool usesAnalysisLuma, const bool includesChromaSad) {
     uint32_t flags = RGY_DEGRAIN_FRAME_META_FLAG_NONE;
     if (prm && usesAnalysisLuma) {
@@ -180,6 +185,20 @@ bool degrainChromaAnalysisFrameSupported(const RGYFrameInfo *frame) {
     }
 }
 
+int degrainAnalyzeChromaScaleX(const RGY_CSP csp) {
+    switch (RGY_CSP_CHROMA_FORMAT[csp]) {
+    case RGY_CHROMAFMT_YUV420:
+    case RGY_CHROMAFMT_YUV422:
+        return 2;
+    default:
+        return 1;
+    }
+}
+
+int degrainAnalyzeChromaScaleY(const RGY_CSP csp) {
+    return RGY_CSP_CHROMA_FORMAT[csp] == RGY_CHROMAFMT_YUV420 ? 2 : 1;
+}
+
 bool degrainValidAnalysisPlane(const RGYFrameInfo &plane) {
     return plane.ptr[0] != nullptr && plane.pitch[0] > 0 && plane.width > 0 && plane.height > 0;
 }
@@ -242,6 +261,11 @@ RGYDegrainAnalyzeChromaPlanes degrainMakeAnalyzeChromaPlanes(
     return planes;
 }
 
+static bool degrainSubpelPlanesEnabledFromEnv() {
+    static const bool enabled = degrainEnvFlagNotDisabled("QSVENC_DEGRAIN_SUBPEL_PLANES");
+    return enabled;
+}
+
 bool allocDegrainMotionSearchWorkspaceBuffer(
     const std::shared_ptr<RGYOpenCLContext> &cl,
     std::unique_ptr<RGYCLBuf> &buf,
@@ -294,6 +318,12 @@ RGYDegrainMotionSearchConfig rgy_degrain_make_motion_search_config(
     scaledDegrain.blksize = layout.blockSize;
     scaledDegrain.overlap = layout.overlap;
     cfg.lowSadWeightScale = (int)rgy_degrain_scale_sad_threshold(scaledDegrain, frameInfo, degrain.lsad);
+    cfg.searchEarlySadThreshold = (level != 0 || degrain.searchEarlySad < 0)
+        ? -1
+        : (int)rgy_degrain_scale_sad_threshold(scaledDegrain, frameInfo, degrain.searchEarlySad);
+    cfg.spatialEarlySadThreshold = (level != 1 || degrain.spatialEarlySad < 0)
+        ? -1
+        : (int)rgy_degrain_scale_sad_threshold(scaledDegrain, frameInfo, degrain.spatialEarlySad);
     cfg.zeroCandidateCostScale = degrain.pnew;
     cfg.frameAverageCandidateCostScale = 0;
     cfg.predictorCandidateCostScale = degrain.plevel;
@@ -332,6 +362,8 @@ std::string makeDegrainMotionSearchBuildOptions(const RGYDegrainMotionSearchConf
         << " -D DEGRAIN_PAD=" << cfg.pad
         << " -D DEGRAIN_MOTION_COST_SCALE=" << cfg.motionCostScale
         << " -D DEGRAIN_LOW_SAD_WEIGHT_SCALE=" << cfg.lowSadWeightScale
+        << " -D DEGRAIN_MOTION_SEARCH_EARLY_SAD_THRESHOLD=" << cfg.searchEarlySadThreshold
+        << " -D DEGRAIN_MOTION_SPATIAL_EARLY_SAD_THRESHOLD=" << cfg.spatialEarlySadThreshold
         << " -D DEGRAIN_ZERO_CANDIDATE_COST_SCALE=" << cfg.zeroCandidateCostScale
         << " -D DEGRAIN_FRAME_AVERAGE_CANDIDATE_COST_SCALE=" << cfg.frameAverageCandidateCostScale
         << " -D DEGRAIN_PREDICTOR_CANDIDATE_COST_SCALE=" << cfg.predictorCandidateCostScale
@@ -425,6 +457,15 @@ RGY_ERR RGYFilterDegrain::allocAnalysisBuffers(const std::shared_ptr<RGYFilterPa
     auto &motionSearchWorkspace = m_analysis.motionSearchWorkspace;
     motionSearchWorkspace.buildOptionsLevel0 = makeDegrainMotionSearchBuildOptions(motionSearchConfig);
     motionSearchWorkspace.buildOptionsLevel1 = makeDegrainMotionSearchBuildOptions(motionSearchConfigLevel1);
+    const auto spatialRefineCount = [&](const int level) {
+        if (prm->degrain.mvSpatialRefine >= 0) {
+            return prm->degrain.mvSpatialRefine;
+        }
+        const int innerLevel = (prm->degrain.levels > 1) ? 1 : 0;
+        return (level == innerLevel) ? 1 : 0;
+    };
+    motionSearchWorkspace.buildOptionsLevel0 += strsprintf(" -D DEGRAIN_MOTION_SEARCH_PASS_FLAT_FLAG=%d", spatialRefineCount(0) > 0 ? 1 : 0);
+    motionSearchWorkspace.buildOptionsLevel1 += strsprintf(" -D DEGRAIN_MOTION_SEARCH_PASS_FLAT_FLAG=%d", spatialRefineCount(1) > 0 ? 1 : 0);
     if (degrainMotionSearchSubgroupEnabled(m_cl)) {
         const auto subgroupOptions = strsprintf(" -cl-std=CL2.0 -D DEGRAIN_MOTION_SEARCH_SUBGROUP=1 -D DEGRAIN_MOTION_SEARCH_SUBGROUP_DIRECT_REDUCE=%d",
             degrainMotionSearchSubgroupDirectReduceEnabled() ? 1 : 0);
@@ -735,9 +776,7 @@ RGYDegrainAnalyzeResultSet RGYFilterDegrain::analyzeResultSet() const {
     }
     const int maxDelta = std::min(RGY_DEGRAIN_MAX_DELTA, std::max(1, baseResult.layout.temporalDirections / 2));
     for (int delta = 1; delta <= maxDelta; delta++) {
-        auto slot = baseResult;
-        slot.layout.temporalDirections = rgy_degrain_temporal_direction_count(delta);
-        resultSet.slots[delta] = slot;
+        resultSet.slots[delta] = baseResult;
     }
     return resultSet;
 }
@@ -747,9 +786,7 @@ bool RGYFilterDegrain::setDirectAnalyzeResult(const RGYDegrainAnalyzeResult &res
     if (result.valid() && result.hasFrameIdentity()) {
         const int maxDelta = std::min(RGY_DEGRAIN_MAX_DELTA, std::max(1, result.layout.temporalDirections / 2));
         for (int delta = 1; delta <= maxDelta; delta++) {
-            auto slot = result;
-            slot.layout.temporalDirections = rgy_degrain_temporal_direction_count(delta);
-            resultSet.slots[delta] = slot;
+            resultSet.slots[delta] = result;
         }
     }
     return setDirectAnalyzeResultSet(resultSet);
@@ -789,22 +826,123 @@ bool RGYFilterDegrain::validateAnalyzeResultFrame(const RGYDegrainAnalyzeResult 
     return true;
 }
 
+static bool degrainLayoutCompatibleSubset(const RGYDegrainBlockLayout &src, const RGYDegrainBlockLayout &dst) {
+    return src.blockSize == dst.blockSize
+        && src.overlap == dst.overlap
+        && src.step == dst.step
+        && src.search == dst.search
+        && src.blocksX == dst.blocksX
+        && src.blocksY == dst.blocksY
+        && src.coveredWidth == dst.coveredWidth
+        && src.coveredHeight == dst.coveredHeight
+        && src.temporalDirections >= dst.temporalDirections;
+}
+
+bool RGYFilterDegrain::bindAnalyzeResult(const RGYDegrainAnalyzeResult &result, const RGYFrameInfo *frame, const int currentFrame, const TCHAR *sourceName, const bool requireFrameIndex, RGYOpenCLQueue &queue) {
+    if (!result.valid()) {
+        return false;
+    }
+    if (!validateAnalyzeResultFrame(result, frame, currentFrame, sourceName, requireFrameIndex)) {
+        return false;
+    }
+    if (rgy_degrain_layout_equal(result.layout, m_analysis.layout)) {
+        m_boundAnalyzeResult = result;
+        m_frameAnalysisLayout = result.layout;
+        logAnalyzeBinding(sourceName, frame, result);
+        logAnalysisSamples(sourceName, frame, queue);
+        return true;
+    }
+    if (!degrainLayoutCompatibleSubset(result.layout, m_analysis.layout)) {
+        AddMessage(RGY_LOG_DEBUG, _T("degrain %s MV/SAD layout mismatch; falling back to frame data/local analysis.\n"), sourceName);
+        return false;
+    }
+    if (!m_analysis.mv || !m_analysis.sad || m_analysis.mv->size() < m_analysis.mvBytes || m_analysis.sad->size() < m_analysis.sadBytes) {
+        AddMessage(RGY_LOG_ERROR, _T("degrain %s MV/SAD compact workspace is not ready.\n"), sourceName);
+        return false;
+    }
+
+    std::vector<RGYOpenCLEvent> mvWaitEvents;
+    if (result.event() != nullptr) {
+        mvWaitEvents.push_back(result.event);
+    }
+    auto& perf_collector = RGYOpenCLPerfCollector::instance();
+    const bool perf_enabled = perf_collector.isEnabled();
+    const size_t srcMvPitch = (size_t)result.layout.temporalDirections * sizeof(RGYDegrainMV);
+    const size_t dstMvPitch = (size_t)m_analysis.layout.temporalDirections * sizeof(RGYDegrainMV);
+    const size_t blockCount = result.layout.blockCount();
+    const size_t srcOrigin[3] = { 0, 0, 0 };
+    const size_t dstOrigin[3] = { 0, 0, 0 };
+    const size_t mvRegion[3] = { dstMvPitch, blockCount, 1 };
+    const auto mvWaitList = degrainWaitEventList(mvWaitEvents);
+    RGYOpenCLEvent mvCopyEvent;
+    const auto mvCopyStart = degrain_cl_perf_begin(perf_enabled);
+    auto clerr = clEnqueueCopyBufferRect(
+        queue.get(),
+        result.mv->mem(),
+        m_analysis.mv->mem(),
+        srcOrigin, dstOrigin, mvRegion,
+        srcMvPitch, srcMvPitch * blockCount,
+        dstMvPitch, dstMvPitch * blockCount,
+        (cl_uint)mvWaitList.size(),
+        mvWaitList.data(),
+        mvCopyEvent.reset_ptr());
+    const auto mvCopyHostTime = degrain_cl_perf_end(perf_enabled, mvCopyStart);
+    if (perf_enabled && clerr == CL_SUCCESS) {
+        perf_collector.recordCommand("clEnqueueCopyBufferRect:degrain.compact_mv", dstMvPitch * blockCount, mvCopyHostTime, mvCopyEvent,
+            mvCopyStart, mvCopyStart + mvCopyHostTime, (uint64_t)(uintptr_t)queue.get());
+    }
+    auto err = err_cl_to_rgy(clerr);
+    if (err != RGY_ERR_NONE) {
+        AddMessage(RGY_LOG_ERROR, _T("failed to compact degrain %s MV/SAD layout MV: %s.\n"), sourceName, get_err_mes(err));
+        return false;
+    }
+
+    const size_t srcSadPitch = (size_t)result.layout.temporalDirections * sizeof(RGYDegrainSAD);
+    const size_t dstSadPitch = (size_t)m_analysis.layout.temporalDirections * sizeof(RGYDegrainSAD);
+    const size_t sadRegion[3] = { dstSadPitch, blockCount, 1 };
+    const auto sadWaitList = degrainWaitEventList({ mvCopyEvent });
+    RGYOpenCLEvent sadCopyEvent;
+    const auto sadCopyStart = degrain_cl_perf_begin(perf_enabled);
+    clerr = clEnqueueCopyBufferRect(
+        queue.get(),
+        result.sad->mem(),
+        m_analysis.sad->mem(),
+        srcOrigin, dstOrigin, sadRegion,
+        srcSadPitch, srcSadPitch * blockCount,
+        dstSadPitch, dstSadPitch * blockCount,
+        (cl_uint)sadWaitList.size(),
+        sadWaitList.data(),
+        sadCopyEvent.reset_ptr());
+    const auto sadCopyHostTime = degrain_cl_perf_end(perf_enabled, sadCopyStart);
+    if (perf_enabled && clerr == CL_SUCCESS) {
+        perf_collector.recordCommand("clEnqueueCopyBufferRect:degrain.compact_sad", dstSadPitch * blockCount, sadCopyHostTime, sadCopyEvent,
+            sadCopyStart, sadCopyStart + sadCopyHostTime, (uint64_t)(uintptr_t)queue.get());
+    }
+    err = err_cl_to_rgy(clerr);
+    if (err != RGY_ERR_NONE) {
+        AddMessage(RGY_LOG_ERROR, _T("failed to compact degrain %s MV/SAD layout SAD: %s.\n"), sourceName, get_err_mes(err));
+        return false;
+    }
+
+    m_boundAnalyzeResult = result;
+    m_boundAnalyzeResult.layout = m_analysis.layout;
+    m_boundAnalyzeResult.mv = m_analysis.mv.get();
+    m_boundAnalyzeResult.sad = m_analysis.sad.get();
+    m_boundAnalyzeResult.event = sadCopyEvent;
+    m_frameAnalysisLayout = m_analysis.layout;
+    logAnalyzeBinding(sourceName, frame, m_boundAnalyzeResult);
+    logAnalysisSamples(sourceName, frame, queue);
+    return true;
+}
+
 bool RGYFilterDegrain::bindDirectAnalyzeResult(const RGYFrameInfo *frame, const int currentFrame, RGYOpenCLQueue &queue) {
     const auto result = m_directAnalyzeResultSet.get(requestedDelta());
     if (!result) {
         return false;
     }
-    if (!validateAnalyzeResultFrame(*result, frame, currentFrame, _T("direct"), true)) {
+    if (!bindAnalyzeResult(*result, frame, currentFrame, _T("direct"), true, queue)) {
         return false;
     }
-    if (!rgy_degrain_layout_equal(result->layout, m_analysis.layout)) {
-        AddMessage(RGY_LOG_DEBUG, _T("degrain direct MV/SAD layout mismatch; falling back to frame data/local analysis.\n"));
-        return false;
-    }
-    m_boundAnalyzeResult = *result;
-    m_frameAnalysisLayout = result->layout;
-    logAnalyzeBinding(_T("direct"), frame, *result);
-    logAnalysisSamples(_T("direct"), frame, queue);
     return true;
 }
 
@@ -813,19 +951,10 @@ bool RGYFilterDegrain::bindFrameAnalysisData(const RGYFrameInfo *frame, const in
     auto frameAnalysis = rgy_degrain_get_frame_data(frame);
     if (frameAnalysis) {
         const auto result = frameAnalysis->analyzeResult();
-        const auto layout = result.layout;
-        if (result.hasFrameIdentity() && !validateAnalyzeResultFrame(result, frame, currentFrame, _T("attached"), false)) {
+        if (!bindAnalyzeResult(result, frame, currentFrame, _T("attached"), false, queue)) {
             return false;
         }
-        if (!rgy_degrain_layout_equal(layout, m_analysis.layout)) {
-            AddMessage(RGY_LOG_DEBUG, _T("degrain attached MV/SAD layout mismatch; falling back to local analysis.\n"));
-            return false;
-        }
-        m_boundAnalyzeResult = result;
-        m_frameAnalysisLayout = layout;
         m_frameAnalysisData = frameAnalysis;
-        logAnalyzeBinding(_T("attached"), frame, result);
-        logAnalysisSamples(_T("attached"), frame, queue);
         return true;
     }
     return bindDirectAnalyzeResult(frame, currentFrame, queue);
@@ -851,9 +980,11 @@ RGYDegrainRefDisableArray RGYFilterDegrain::analysisAvailabilityDisableRefs(cons
     return m_boundAnalyzeResult.valid() ? m_boundAnalyzeResult.availabilityDisableRefs : degrainReferenceAvailability(frames);
 }
 
-RGY_ERR RGYFilterDegrain::attachAnalysisData(const RGYFrameInfo *sourceFrame, RGYFrameInfo *outputFrame,
-    const int currentFrame, RGYOpenCLQueue &queue, const RGYOpenCLEvent &frameCopyEvent, RGYOpenCLEvent *event) {
-    if (!sourceFrame || !outputFrame || !m_analysis.mv || !m_analysis.sad) {
+RGY_ERR RGYFilterDegrain::createAnalysisSideDataSnapshot(const RGYFrameInfo *frame, const int currentFrame,
+    const RGYDegrainRefDisableArray &availabilityDisableRefs, RGYOpenCLQueue &queue,
+    const std::vector<RGYOpenCLEvent> &wait_events,
+    std::shared_ptr<RGYFrameDataDegrain> &frameDataOut) {
+    if (!frame || !m_analysis.mv || !m_analysis.sad) {
         return RGY_ERR_INVALID_PARAM;
     }
 
@@ -872,10 +1003,7 @@ RGY_ERR RGYFilterDegrain::attachAnalysisData(const RGYFrameInfo *sourceFrame, RG
         return RGY_ERR_MEMORY_ALLOC;
     }
 
-    std::vector<RGYOpenCLEvent> mvWaitEvents;
-    if (frameCopyEvent() != nullptr) {
-        mvWaitEvents.push_back(frameCopyEvent);
-    }
+    std::vector<RGYOpenCLEvent> mvWaitEvents = wait_events;
     if (m_analysis.event() != nullptr) {
         mvWaitEvents.push_back(m_analysis.event);
     }
@@ -930,21 +1058,68 @@ RGY_ERR RGYFilterDegrain::attachAnalysisData(const RGYFrameInfo *sourceFrame, RG
     auto prm = std::dynamic_pointer_cast<RGYFilterParamDegrain>(m_param);
     const uint32_t flags = degrainAnalyzeFlags(prm, useAnalysisLumaCache() || m_lastAnalysisUsedSearchLuma, m_lastAnalysisIncludedChroma);
 
-    auto frameData = std::make_shared<RGYFrameDataDegrain>(
+    frameDataOut = std::make_shared<RGYFrameDataDegrain>(
         rgy_degrain_make_frame_meta_header(m_analysis.layout, flags),
         std::move(mv),
         std::move(sad),
         sadCopyEvent,
         currentFrame,
-        sourceFrame->inputFrameId,
-        sourceFrame->timestamp,
-        sourceFrame->duration,
-        m_analysis.lastAvailabilityDisableRefs,
+        frame->inputFrameId,
+        frame->timestamp,
+        frame->duration,
+        availabilityDisableRefs,
         m_sideDataBufferPool);
+    return RGY_ERR_NONE;
+}
+
+void RGYFilterDegrain::bindSnapshotAnalysisData(const std::shared_ptr<RGYFrameDataDegrain> &frameData, const RGYFrameInfo *frame, RGYOpenCLQueue &queue) {
+    if (!frameData) {
+        return;
+    }
+    m_frameAnalysisData = frameData;
+    m_boundAnalyzeResult = frameData->analyzeResult();
+    m_frameAnalysisLayout = m_boundAnalyzeResult.layout;
+    if (degrainDebugLogEnabled() && frame && m_boundAnalyzeResult.valid()) {
+        logAnalyzeBinding(_T("snapshot"), frame, m_boundAnalyzeResult);
+        logAnalysisSamples(_T("snapshot"), frame, queue);
+    }
+}
+
+RGY_ERR RGYFilterDegrain::snapshotFallbackAnalysisData(const RGYFilterDegrainProcessFrameSet &frames, const int currentFrame, RGYOpenCLQueue &queue) {
+    if (!frames.render.cur) {
+        return RGY_ERR_INVALID_CALL;
+    }
+    const auto availabilityDisableRefs = degrainReferenceAvailability(frames.analysis);
+    std::shared_ptr<RGYFrameDataDegrain> frameData;
+    auto err = createAnalysisSideDataSnapshot(frames.render.cur, currentFrame, availabilityDisableRefs, queue, {}, frameData);
+    if (err != RGY_ERR_NONE) {
+        AddMessage(RGY_LOG_ERROR, _T("failed to snapshot degrain fallback analysis data.\n"));
+        return err;
+    }
+    bindSnapshotAnalysisData(frameData, frames.render.cur, queue);
+    return RGY_ERR_NONE;
+}
+
+RGY_ERR RGYFilterDegrain::attachAnalysisData(const RGYFrameInfo *sourceFrame, RGYFrameInfo *outputFrame,
+    const int currentFrame, RGYOpenCLQueue &queue, const RGYOpenCLEvent &frameCopyEvent, RGYOpenCLEvent *event) {
+    if (!sourceFrame || !outputFrame || !m_analysis.mv || !m_analysis.sad) {
+        return RGY_ERR_INVALID_PARAM;
+    }
+
+    std::vector<RGYOpenCLEvent> waitEvents;
+    if (frameCopyEvent() != nullptr) {
+        waitEvents.push_back(frameCopyEvent);
+    }
+    std::shared_ptr<RGYFrameDataDegrain> frameData;
+    auto err = createAnalysisSideDataSnapshot(sourceFrame, currentFrame, m_analysis.lastAvailabilityDisableRefs, queue, waitEvents, frameData);
+    if (err != RGY_ERR_NONE) {
+        return err;
+    }
+
     rgy_degrain_erase_frame_data(outputFrame->dataList);
     outputFrame->dataList.push_back(frameData);
     if (event) {
-        *event = sadCopyEvent;
+        *event = frameData->analyzeResult().event;
     }
     return RGY_ERR_NONE;
 }
@@ -1148,6 +1323,32 @@ RGY_ERR RGYFilterDegrain::prepareAnalysisStateMotionSearch(const RGYFrameInfo &p
     const auto levelPlaneBase = [](const int dir, const int planeStride) { return dir * planeStride; };
     const auto blockPlaneBase = [](const int dir, const int blockCount) { return dir * blockCount; };
 
+    // pel=2: 4位相サブペルプレーン (整数/H/V/HV) を事前計算し、
+    // SADの毎サンプル6タップ補間を整数座標のプレーン参照に置き換える。
+    bool useSubpelPlanes = (prm->degrain.pel == 2)
+        && (RGY_CSP_BIT_DEPTH[planeCur.csp] <= 8)
+        && degrainSubpelPlanesEnabledFromEnv();
+    int subpelL0Stride = 0;
+    int subpelL1Stride = 0;
+    if (useSubpelPlanes) {
+        subpelL0Stride = planeCur.pitch[0] * planeCur.height;
+        subpelL1Stride = m_analysis.lumaLevel1Pitch * m_analysis.lumaLevel1Height;
+        if (!allocDegrainMotionSearchWorkspaceBuffer(m_cl, ws.subpelLevel0, ws.subpelLevel0Bytes, (size_t)subpelL0Stride * 4)
+            || !allocDegrainMotionSearchWorkspaceBuffer(m_cl, ws.subpelLevel1, ws.subpelLevel1Bytes, (size_t)subpelL1Stride * 4)) {
+            AddMessage(RGY_LOG_WARN, _T("failed to allocate degrain subpel plane buffers; falling back to on-the-fly interpolation.\n"));
+            ws.subpelLevel0.reset();
+            ws.subpelLevel1.reset();
+            ws.subpelLevel0Bytes = 0;
+            ws.subpelLevel1Bytes = 0;
+            useSubpelPlanes = false;
+        }
+    } else {
+        ws.subpelLevel0.reset();
+        ws.subpelLevel1.reset();
+        ws.subpelLevel0Bytes = 0;
+        ws.subpelLevel1Bytes = 0;
+    }
+
     RGYOpenCLEvent initLevel1Event;
     auto profileStepStart = profileNow();
     auto err = programL1->kernel("kernel_degrain_mv_seed_anchor_vectors").config(
@@ -1188,6 +1389,35 @@ RGY_ERR RGYFilterDegrain::prepareAnalysisStateMotionSearch(const RGYFrameInfo &p
         const int planeBase1 = levelPlaneBase(dir, planeStride1);
         const int blockBase1 = blockPlaneBase(dir, blockCount1);
 
+        if (useSubpelPlanes) {
+            auto errSubpel = programL0->kernel("kernel_degrain_mv_build_subpel_planes").config(
+                queue, RGYWorkSize(DEGRAIN_DEBUG_BLOCK_X, DEGRAIN_DEBUG_BLOCK_Y),
+                RGYWorkSize(planeCur.width, planeCur.height)).launch(
+                    planeMem(refPlanes[dir]),
+                    planeCur.pitch[0],
+                    ws.subpelLevel0->mem(),
+                    subpelL0Stride,
+                    planeCur.width,
+                    planeCur.height);
+            if (errSubpel != RGY_ERR_NONE) {
+                AddMessage(RGY_LOG_ERROR, _T("failed to build degrain level0 subpel planes: %s.\n"), get_err_mes(errSubpel));
+                return errSubpel;
+            }
+            errSubpel = programL1->kernel("kernel_degrain_mv_build_subpel_planes").config(
+                queue, RGYWorkSize(DEGRAIN_DEBUG_BLOCK_X, DEGRAIN_DEBUG_BLOCK_Y),
+                RGYWorkSize(m_analysis.lumaLevel1Width, m_analysis.lumaLevel1Height)).launch(
+                    m_analysis.lumaLevel1[dir + 1]->mem(),
+                    m_analysis.lumaLevel1Pitch,
+                    ws.subpelLevel1->mem(),
+                    subpelL1Stride,
+                    m_analysis.lumaLevel1Width,
+                    m_analysis.lumaLevel1Height);
+            if (errSubpel != RGY_ERR_NONE) {
+                AddMessage(RGY_LOG_ERROR, _T("failed to build degrain level1 subpel planes: %s.\n"), get_err_mes(errSubpel));
+                return errSubpel;
+            }
+        }
+
         std::vector<RGYOpenCLEvent> seedLevel1Wait = { initLevel1Event };
         if (previousEvent() != nullptr) {
             seedLevel1Wait.push_back(previousEvent);
@@ -1213,11 +1443,14 @@ RGY_ERR RGYFilterDegrain::prepareAnalysisStateMotionSearch(const RGYFrameInfo &p
 
         RGYOpenCLEvent searchLevel1Event;
         profileStepStart = profileNow();
+        std::vector<RGYOpenCLEvent> searchLevel1Wait = { seedLevel1Event, downsampleEvents[0], downsampleEvents[dir + 1] };
         err = programL1->kernel("kernel_degrain_mv_search_parallel").config(
             queue, searchLocal1, searchGlobal1,
-            { seedLevel1Event, downsampleEvents[0], downsampleEvents[dir + 1] }, &searchLevel1Event).launch(
+            searchLevel1Wait, &searchLevel1Event).launch(
                 m_analysis.lumaLevel1[0]->mem(),
                 m_analysis.lumaLevel1[dir + 1]->mem(),
+                useSubpelPlanes ? ws.subpelLevel1->mem() : m_analysis.lumaLevel1[dir + 1]->mem(),
+                useSubpelPlanes ? subpelL1Stride : 0,
                 ws.level1.vectors->mem(),
                 m_analysis.lumaLevel1Pitch,
                 m_analysis.lumaLevel1Width,
@@ -1249,6 +1482,8 @@ RGY_ERR RGYFilterDegrain::prepareAnalysisStateMotionSearch(const RGYFrameInfo &p
                 queue, searchLocal1, searchGlobal1, { level1VectorReadyEvent }, &refineEvent).launch(
                     m_analysis.lumaLevel1[0]->mem(),
                     m_analysis.lumaLevel1[dir + 1]->mem(),
+                    useSubpelPlanes ? ws.subpelLevel1->mem() : m_analysis.lumaLevel1[dir + 1]->mem(),
+                    useSubpelPlanes ? subpelL1Stride : 0,
                     ws.level1.vectors->mem(),
                     ws.level1.vectorsPrev->mem(),
                     ws.level1.vectorsFinal->mem(),
@@ -1284,8 +1519,11 @@ RGY_ERR RGYFilterDegrain::prepareAnalysisStateMotionSearch(const RGYFrameInfo &p
 
         RGYOpenCLEvent exportLevel1Event;
         profileStepStart = profileNow();
+        // kernel_degrain_mv_export_sad は get_global_id(0) のみに依存し、local id・local memory・barrier を
+        // 使用しないため、local sizeを変えても結果は変わらない
+        const RGYWorkSize exportLocal1(DEGRAIN_MV_EXPORT_SAD_LOCAL_SIZE);
         err = programL1->kernel("kernel_degrain_mv_export_sad").config(
-            queue, RGYWorkSize(1), RGYWorkSize(blockCount1), { level1VectorReadyEvent }, &exportLevel1Event).launch(
+            queue, exportLocal1, RGYWorkSize(blockCount1).ceilGlobal(exportLocal1), { level1VectorReadyEvent }, &exportLevel1Event).launch(
                 ws.level1.vectorsFinal->mem(),
                 ws.level1.sads->mem(),
                 (cl_mem)nullptr,
@@ -1306,6 +1544,20 @@ RGY_ERR RGYFilterDegrain::prepareAnalysisStateMotionSearch(const RGYFrameInfo &p
 
         const int planeBase0 = levelPlaneBase(dir, planeStride0);
         const int blockBase0 = blockPlaneBase(dir, blockCount0);
+        if (prm->degrain.globalMotion) {
+            // level1の平均ベクトルをlevel0のGLOBALアンカーに反映する
+            err = programL0->kernel("kernel_degrain_mv_seed_global_from_coarse").config(
+                queue, RGYWorkSize(256), RGYWorkSize(256)).launch(
+                    ws.level0.vectors->mem(),
+                    ws.level1.vectorsFinal->mem(),
+                    planeBase0,
+                    blockBase1,
+                    blockCount1);
+            if (err != RGY_ERR_NONE) {
+                AddMessage(RGY_LOG_ERROR, _T("failed to seed degrain motion search global vector from coarse level: %s.\n"), get_err_mes(err));
+                return err;
+            }
+        }
         RGYOpenCLEvent interpolateEvent;
         profileStepStart = profileNow();
         err = programL0->kernel("kernel_degrain_mv_expand_coarse_vectors").config(
@@ -1337,6 +1589,8 @@ RGY_ERR RGYFilterDegrain::prepareAnalysisStateMotionSearch(const RGYFrameInfo &p
             queue, searchLocal0, searchGlobal0, { interpolateEvent }, &searchLevel0Event).launch(
                 planeMem(planeCur),
                 planeMem(refPlanes[dir]),
+                useSubpelPlanes ? ws.subpelLevel0->mem() : planeMem(refPlanes[dir]),
+                useSubpelPlanes ? subpelL0Stride : 0,
                 ws.level0.vectors->mem(),
                 planeCur.pitch[0],
                 planeCur.width,
@@ -1368,6 +1622,8 @@ RGY_ERR RGYFilterDegrain::prepareAnalysisStateMotionSearch(const RGYFrameInfo &p
                 queue, searchLocal0, searchGlobal0, { level0VectorReadyEvent }, &refineEvent).launch(
                     planeMem(planeCur),
                     planeMem(refPlanes[dir]),
+                    useSubpelPlanes ? ws.subpelLevel0->mem() : planeMem(refPlanes[dir]),
+                    useSubpelPlanes ? subpelL0Stride : 0,
                     ws.level0.vectors->mem(),
                     ws.level0.vectorsPrev->mem(),
                     ws.level0.vectorsFinal->mem(),
@@ -1403,8 +1659,9 @@ RGY_ERR RGYFilterDegrain::prepareAnalysisStateMotionSearch(const RGYFrameInfo &p
 
         RGYOpenCLEvent exportLevel0Event;
         profileStepStart = profileNow();
+        const RGYWorkSize exportLocal0(DEGRAIN_MV_EXPORT_SAD_LOCAL_SIZE);
         err = programL0->kernel("kernel_degrain_mv_export_sad").config(
-            queue, RGYWorkSize(1), RGYWorkSize(blockCount0), { level0VectorReadyEvent }, &exportLevel0Event).launch(
+            queue, exportLocal0, RGYWorkSize(blockCount0).ceilGlobal(exportLocal0), { level0VectorReadyEvent }, &exportLevel0Event).launch(
                 ws.level0.vectorsFinal->mem(),
                 ws.level0.sads->mem(),
                 m_analysis.mv->mem(),
@@ -1552,6 +1809,48 @@ RGY_ERR RGYFilterDegrain::prepareAnalysisState(const RGYFilterDegrainFrameSet &f
     if (motionSearchErr != RGY_ERR_NONE) {
         AddMessage(RGY_LOG_ERROR, _T("degrain motion search analysis failed: %s.\n"), get_err_mes(motionSearchErr));
         return motionSearchErr;
+    }
+    if (chromaPlanes.enable) {
+        auto programL0 = getDegrainMotionSearchProgram(m_analysis.motionSearchWorkspace.buildOptionsLevel0);
+        if (!programL0) {
+            AddMessage(RGY_LOG_ERROR, _T("failed to build degrain chroma SAD program.\n"));
+            return RGY_ERR_UNSUPPORTED;
+        }
+        const int planeScaleX = degrainAnalyzeChromaScaleX(analysisFrames.cur->csp);
+        const int planeScaleY = degrainAnalyzeChromaScaleY(analysisFrames.cur->csp);
+        const RGYWorkSize chromaSadLocal(DEGRAIN_MV_EXPORT_SAD_LOCAL_SIZE);
+        for (int dir = 0; dir < m_analysis.layout.temporalDirections; dir++) {
+            RGYOpenCLEvent chromaSadEvent;
+            const std::vector<RGYOpenCLEvent> chromaSadWaitEvents = m_analysis.event() != nullptr
+                ? std::vector<RGYOpenCLEvent>{ m_analysis.event }
+                : std::vector<RGYOpenCLEvent>{};
+            const auto chromaSadErr = programL0->kernel("kernel_degrain_mv_add_chroma_sad").config(
+                queue, chromaSadLocal, RGYWorkSize(m_analysis.layout.blockCount()).ceilGlobal(chromaSadLocal),
+                chromaSadWaitEvents, &chromaSadEvent).launch(
+                    (cl_mem)chromaPlanes.curU.ptr[0],
+                    (cl_mem)chromaPlanes.curV.ptr[0],
+                    chromaPlanes.curU.pitch[0],
+                    (cl_mem)chromaPlanes.refU[dir].ptr[0],
+                    (cl_mem)chromaPlanes.refV[dir].ptr[0],
+                    chromaPlanes.refU[dir].pitch[0],
+                    chromaPlanes.width,
+                    chromaPlanes.height,
+                    m_analysis.mv->mem(),
+                    m_analysis.sad->mem(),
+                    m_analysis.layout.blocksX,
+                    (int)m_analysis.layout.blockCount(),
+                    m_analysis.layout.blockSize,
+                    m_analysis.layout.step,
+                    planeScaleX,
+                    planeScaleY,
+                    dir);
+            if (chromaSadErr != RGY_ERR_NONE) {
+                AddMessage(RGY_LOG_ERROR, _T("degrain analysis chroma SAD calculation failed: %s.\n"), get_err_mes(chromaSadErr));
+                return chromaSadErr;
+            }
+            m_analysis.event = chromaSadEvent;
+        }
+        m_lastAnalysisIncludedChroma = true;
     }
     logAnalysisSamples(_T("local"), frames.cur, queue);
     return RGY_ERR_NONE;

@@ -191,6 +191,15 @@ private:
     int frameDataNum;
     int64_t frameIndex;
 
+    void copyMetadataFrom(const RGYBitstream *pBitstream) {
+        m_bitstream.DataFlag = pBitstream->m_bitstream.DataFlag;
+        m_bitstream.FrameType = pBitstream->m_bitstream.FrameType;
+        m_bitstream.PicStruct = pBitstream->m_bitstream.PicStruct;
+        m_bitstream.TimeStamp = pBitstream->m_bitstream.TimeStamp;
+        m_bitstream.DecodeTimeStamp = pBitstream->m_bitstream.DecodeTimeStamp;
+        frameIndex = pBitstream->frameIndex;
+    }
+
 public:
     mfxBitstream *bsptr() {
         return &m_bitstream;
@@ -282,7 +291,7 @@ public:
     }
 
     int64_t pts() const {
-        return (int64_t)m_bitstream.TimeStamp;
+        return m_bitstream.TimeStamp;
     }
 
     void setDts(int64_t dts) {
@@ -290,7 +299,7 @@ public:
     }
 
     int64_t dts() const {
-        return (int64_t)m_bitstream.DecodeTimeStamp;
+        return m_bitstream.DecodeTimeStamp;
     }
 
     uint32_t avgQP() {
@@ -306,11 +315,14 @@ public:
             _aligned_free(m_bitstream.Data);
             m_bitstream.Data = nullptr;
         }
+        m_bitstream.MaxLength = 0;
     }
 
     void clear() {
         free_mem();
-        memset(&m_bitstream, 0, sizeof(m_bitstream));
+        clearFrameDataList();
+        m_bitstream.DataLength = 0;
+        m_bitstream.DataOffset = 0;
     }
 
     RGY_ERR init(size_t nSize) {
@@ -365,18 +377,7 @@ public:
         if (sts != RGY_ERR_NONE) {
             return sts;
         }
-
-        auto ptr = m_bitstream.Data;
-        auto offset = m_bitstream.DataOffset;
-        auto datalength = m_bitstream.DataLength;
-        auto maxLength = m_bitstream.MaxLength;
-
-        memcpy(&m_bitstream, pBitstream, sizeof(pBitstream[0]));
-
-        m_bitstream.Data = ptr;
-        m_bitstream.DataLength = datalength;
-        m_bitstream.DataOffset = offset;
-        m_bitstream.MaxLength = maxLength;
+        copyMetadataFrom(pBitstream);
         return RGY_ERR_NONE;
     }
 
@@ -520,8 +521,7 @@ public:
         cr.e.bottom = m_surface.Info.Height - m_surface.Info.CropH - m_surface.Info.CropY;
         return cr;
     }
-    // MFX APIのfieldはunsignedだが、bit patternを保ったままsigned timestampを受け渡す。
-    virtual void setTimestamp(int64_t timestamp) override { m_surface.Data.TimeStamp = (mfxU64)timestamp; }
+    virtual void setTimestamp(int64_t timestamp) override { m_surface.Data.TimeStamp = timestamp; }
     virtual void setDuration(uint64_t frame_duration) override { m_duration = frame_duration; }
     virtual void setPicstruct(RGY_PICSTRUCT picstruct) override { m_surface.Info.PicStruct = picstruct_rgy_to_enc(picstruct); }
     virtual void setInputFrameId(int inputFrameId) override { m_inputFrameId = inputFrameId; }

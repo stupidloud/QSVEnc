@@ -72,9 +72,11 @@ public:
 
     RGY_ERR feedFrameOnly(const RGYFrameInfo *pInputFrame, RGYOpenCLQueue &queue, const std::vector<RGYOpenCLEvent> &wait_events, RGYOpenCLEvent *event = nullptr);
     bool outputReady() const;
-    RGY_ERR buildCompensateInlineParams(std::array<RGYDegrainCompensateInlineParams, 3> &paramsOut, RGYFrameInfo *outputFrameIdentity, RGYOpenCLQueue &queue);
+    RGY_ERR buildCompensateInlineParams(std::array<RGYDegrainCompensateInlineParams, 3> &paramsOut, RGYFrameInfo *outputFrameIdentity,
+        RGYOpenCLQueue &queue, bool *processChromaOut = nullptr);
     bool drainReady() const;
-    RGY_ERR drainBuildInlineParams(std::array<RGYDegrainCompensateInlineParams, 3> &paramsOut, RGYFrameInfo *outputFrameIdentity, RGYOpenCLQueue &queue);
+    RGY_ERR drainBuildInlineParams(std::array<RGYDegrainCompensateInlineParams, 3> &paramsOut, RGYFrameInfo *outputFrameIdentity,
+        RGYOpenCLQueue &queue, bool *processChromaOut = nullptr);
 
 protected:
     virtual RGY_ERR run_filter(const RGYFrameInfo *pInputFrame, RGYFrameInfo **ppOutputFrames, int *pOutputFrameNum,
@@ -105,6 +107,12 @@ protected:
         RGYOpenCLQueue &queue, RGYOpenCLEvent *event);
     RGY_ERR attachAnalysisData(const RGYFrameInfo *sourceFrame, RGYFrameInfo *outputFrame,
         int currentFrame, RGYOpenCLQueue &queue, const RGYOpenCLEvent &frameCopyEvent, RGYOpenCLEvent *event);
+    RGY_ERR createAnalysisSideDataSnapshot(const RGYFrameInfo *frame, int currentFrame,
+        const RGYDegrainRefDisableArray &availabilityDisableRefs, RGYOpenCLQueue &queue,
+        const std::vector<RGYOpenCLEvent> &wait_events,
+        std::shared_ptr<RGYFrameDataDegrain> &frameDataOut);
+    RGY_ERR snapshotFallbackAnalysisData(const RGYFilterDegrainProcessFrameSet &frames, int currentFrame, RGYOpenCLQueue &queue);
+    void bindSnapshotAnalysisData(const std::shared_ptr<RGYFrameDataDegrain> &frameData, const RGYFrameInfo *frame, RGYOpenCLQueue &queue);
     RGY_ERR prepareAnalysisState(const RGYFilterDegrainFrameSet &frames, RGYOpenCLQueue &queue, const std::vector<RGYOpenCLEvent> &wait_events);
     RGY_ERR prepareFallbackAnalysisState(const RGYFilterDegrainProcessFrameSet &frames, int currentFrame, RGYOpenCLQueue &queue, const std::vector<RGYOpenCLEvent> &wait_events);
     RGY_ERR prepareAnalysisStateMotionSearch(const RGYFrameInfo &planeCur, const std::array<RGYFrameInfo, RGY_DEGRAIN_MAX_TEMPORAL_DIRECTIONS> &refPlanes,
@@ -211,6 +219,7 @@ protected:
         const RGYDegrainRefDisableArray &disableRefs, RGYOpenCLQueue &queue);
     int requestedDelta() const;
     bool validateAnalyzeResultFrame(const RGYDegrainAnalyzeResult &result, const RGYFrameInfo *frame, int currentFrame, const TCHAR *sourceName, bool requireFrameIndex);
+    bool bindAnalyzeResult(const RGYDegrainAnalyzeResult &result, const RGYFrameInfo *frame, int currentFrame, const TCHAR *sourceName, bool requireFrameIndex, RGYOpenCLQueue &queue);
     bool bindDirectAnalyzeResult(const RGYFrameInfo *frame, int currentFrame, RGYOpenCLQueue &queue);
     bool bindFrameAnalysisData(const RGYFrameInfo *frame, int currentFrame, RGYOpenCLQueue &queue);
     RGYCLBuf *analysisMV() const;

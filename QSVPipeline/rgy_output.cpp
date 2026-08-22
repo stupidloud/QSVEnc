@@ -752,8 +752,13 @@ RGY_ERR RGYOutputBSF::applyBitstreamFilter(RGYBitstream *bitstream) {
                 char_to_tstring(m_bsfc.get()->filter->name).c_str(), qsv_av_err2str(ret).c_str());
             return RGY_ERR_UNKNOWN;
         }
-        bitstream->clear();
-        bitstream->append(pkt->data, pkt->size);
+        auto sts = bitstream->copy(pkt->data, pkt->size);
+        if (sts != RGY_ERR_NONE) {
+            av_packet_unref(pkt);
+            AddMessage(RGY_LOG_ERROR, _T("failed to copy bitstream after running %s bitstream filter.\n"),
+                char_to_tstring(m_bsfc.get()->filter->name).c_str());
+            return sts;
+        }
         av_bsf_flush(m_bsfc.get());
         av_packet_unref(pkt);
     } else {
@@ -1106,6 +1111,9 @@ RGY_ERR RGYOutFrame::WriteNextFrame(RGYBitstream *pBitstream) {
 }
 
 RGY_ERR RGYOutFrame::WriteNextFrame(RGYFrame *pSurface) {
+    if (!pSurface) {
+        return RGY_ERR_NONE;
+    }
     if (!m_fDest) {
         return RGY_ERR_NULL_PTR;
     }
@@ -1316,6 +1324,10 @@ static bool audioSelected(const AudioSelect *sel, const AVDemuxStream *stream) {
     if (sel->trackID == TRACK_SELECT_BY_LANG && rgy_lang_equal(sel->lang, stream->lang)) {
         return true;
     }
+    if (sel->trackID == TRACK_SELECT_BY_LANG_EXCLUDE) {
+        const auto langs = split(sel->lang, ",");
+        return std::none_of(langs.begin(), langs.end(), [&](const auto& lang) { return rgy_lang_equal(lang, stream->lang); });
+    }
     if (sel->trackID == TRACK_SELECT_BY_CODEC && stream->stream != nullptr && avcodec_equal(sel->selectCodec, stream->stream->codecpar->codec_id)) {
         return true;
     }
@@ -1327,6 +1339,10 @@ static bool subSelected(const SubtitleSelect *sel, const AVDemuxStream *stream) 
     }
     if (sel->trackID == TRACK_SELECT_BY_LANG && rgy_lang_equal(sel->lang, stream->lang)) {
         return true;
+    }
+    if (sel->trackID == TRACK_SELECT_BY_LANG_EXCLUDE) {
+        const auto langs = split(sel->lang, ",");
+        return std::none_of(langs.begin(), langs.end(), [&](const auto& lang) { return rgy_lang_equal(lang, stream->lang); });
     }
     if (sel->trackID == TRACK_SELECT_BY_CODEC && stream->stream != nullptr && avcodec_equal(sel->selectCodec, stream->stream->codecpar->codec_id)) {
         return true;

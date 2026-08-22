@@ -30,9 +30,29 @@
 #define Type uchar
 #endif
 
+#define KFM_CAT_(a, b) a##b
+#define KFM_CAT(a, b) KFM_CAT_(a, b)
+#define Type4 KFM_CAT(Type, 4)
+
 #ifndef bit_depth
 #define bit_depth 8
 #endif
+
+static inline int4 kfm_to_int4(const Type4 v) {
+#if bit_depth > 8
+    return (int4)(v.x, v.y, v.z, v.w);
+#else
+    return convert_int4(v);
+#endif
+}
+
+static inline Type4 kfm_to_type4(const int4 v) {
+#if bit_depth > 8
+    return convert_ushort4_sat(v);
+#else
+    return convert_uchar4_sat(v);
+#endif
+}
 
 static inline Type kfm_max_value(void) {
 #if bit_depth > 8
@@ -57,6 +77,23 @@ static inline void kfm_store_pixel(
     const int y,
     const Type v) {
     ((__global Type *)(dst + y * pitch))[x] = v;
+}
+
+static inline Type4 kfm_load_pixel4(
+    const __global uchar *src,
+    const int pitch,
+    const int x,
+    const int y) {
+    return vload4(0, ((const __global Type *)(src + y * pitch)) + x);
+}
+
+static inline void kfm_store_pixel4(
+    __global uchar *dst,
+    const int pitch,
+    const int x,
+    const int y,
+    const Type4 v) {
+    vstore4(v, 0, ((__global Type *)(dst + y * pitch)) + x);
 }
 
 static inline int kfm_absdiff_render(const Type a, const Type b) {
@@ -116,17 +153,24 @@ static inline uchar4 kfm_analyze_block_render(
 
     for (int tx = 0; tx < 8; ++tx) {
         const int x = xBase + tx;
-        const int y = yBase;
+        const int srcIdx0 = x * pixelStep + pixelOffset + yBase * srcPitchT;
+        const int srcIdx1 = srcIdx0 + srcPitchT;
+        const int srcIdx2 = srcIdx1 + srcPitchT;
+        const int srcIdx3 = srcIdx2 + srcPitchT;
+        const int srcIdx4 = srcIdx3 + srcPitchT;
+        const int srcIdx5 = srcIdx4 + srcPitchT;
+        const int srcIdx6 = srcIdx5 + srcPitchT;
+        const int srcIdx7 = srcIdx6 + srcPitchT;
 
         {
-            const Type T00 = kfm_load_src_render(f0, srcPitchT, x, y + 0, pixelStep, pixelOffset);
-            const Type B00 = kfm_load_src_render(f0, srcPitchT, x, y + 1, pixelStep, pixelOffset);
-            const Type T01 = kfm_load_src_render(f0, srcPitchT, x, y + 2, pixelStep, pixelOffset);
-            const Type B01 = kfm_load_src_render(f0, srcPitchT, x, y + 3, pixelStep, pixelOffset);
-            const Type T02 = kfm_load_src_render(f0, srcPitchT, x, y + 4, pixelStep, pixelOffset);
-            const Type B02 = kfm_load_src_render(f0, srcPitchT, x, y + 5, pixelStep, pixelOffset);
-            const Type T03 = kfm_load_src_render(f0, srcPitchT, x, y + 6, pixelStep, pixelOffset);
-            const Type B03 = kfm_load_src_render(f0, srcPitchT, x, y + 7, pixelStep, pixelOffset);
+            const Type T00 = f0[srcIdx0];
+            const Type B00 = f0[srcIdx1];
+            const Type T01 = f0[srcIdx2];
+            const Type B01 = f0[srcIdx3];
+            const Type T02 = f0[srcIdx4];
+            const Type B02 = f0[srcIdx5];
+            const Type T03 = f0[srcIdx6];
+            const Type B03 = f0[srcIdx7];
             const int tmp = kfm_calc_combe_render(T00, B00, T01, B01, T02, B02, T03, B03);
             if (parity) {
                 sum0 += tmp;
@@ -136,48 +180,48 @@ static inline uchar4 kfm_analyze_block_render(
         }
 
         if (parity) {
-            const Type T10 = kfm_load_src_render(f1, srcPitchT, x, y + 0, pixelStep, pixelOffset);
-            const Type B00 = kfm_load_src_render(f0, srcPitchT, x, y + 1, pixelStep, pixelOffset);
-            const Type T11 = kfm_load_src_render(f1, srcPitchT, x, y + 2, pixelStep, pixelOffset);
-            const Type B01 = kfm_load_src_render(f0, srcPitchT, x, y + 3, pixelStep, pixelOffset);
-            const Type T12 = kfm_load_src_render(f1, srcPitchT, x, y + 4, pixelStep, pixelOffset);
-            const Type B02 = kfm_load_src_render(f0, srcPitchT, x, y + 5, pixelStep, pixelOffset);
-            const Type T13 = kfm_load_src_render(f1, srcPitchT, x, y + 6, pixelStep, pixelOffset);
-            const Type B03 = kfm_load_src_render(f0, srcPitchT, x, y + 7, pixelStep, pixelOffset);
+            const Type T10 = f1[srcIdx0];
+            const Type B00 = f0[srcIdx1];
+            const Type T11 = f1[srcIdx2];
+            const Type B01 = f0[srcIdx3];
+            const Type T12 = f1[srcIdx4];
+            const Type B02 = f0[srcIdx5];
+            const Type T13 = f1[srcIdx6];
+            const Type B03 = f0[srcIdx7];
             sum2 += kfm_calc_combe_render(T10, B00, T11, B01, T12, B02, T13, B03);
         } else {
-            const Type T00 = kfm_load_src_render(f0, srcPitchT, x, y + 0, pixelStep, pixelOffset);
-            const Type B10 = kfm_load_src_render(f1, srcPitchT, x, y + 1, pixelStep, pixelOffset);
-            const Type T01 = kfm_load_src_render(f0, srcPitchT, x, y + 2, pixelStep, pixelOffset);
-            const Type B11 = kfm_load_src_render(f1, srcPitchT, x, y + 3, pixelStep, pixelOffset);
-            const Type T02 = kfm_load_src_render(f0, srcPitchT, x, y + 4, pixelStep, pixelOffset);
-            const Type B12 = kfm_load_src_render(f1, srcPitchT, x, y + 5, pixelStep, pixelOffset);
-            const Type T03 = kfm_load_src_render(f0, srcPitchT, x, y + 6, pixelStep, pixelOffset);
-            const Type B13 = kfm_load_src_render(f1, srcPitchT, x, y + 7, pixelStep, pixelOffset);
+            const Type T00 = f0[srcIdx0];
+            const Type B10 = f1[srcIdx1];
+            const Type T01 = f0[srcIdx2];
+            const Type B11 = f1[srcIdx3];
+            const Type T02 = f0[srcIdx4];
+            const Type B12 = f1[srcIdx5];
+            const Type T03 = f0[srcIdx6];
+            const Type B13 = f1[srcIdx7];
             sum0 += kfm_calc_combe_render(T00, B10, T01, B11, T02, B12, T03, B13);
         }
 
         {
-            const Type T00 = kfm_load_src_render(f0, srcPitchT, x, y + 0, pixelStep, pixelOffset);
-            const Type T10 = kfm_load_src_render(f1, srcPitchT, x, y + 0, pixelStep, pixelOffset);
-            const Type T01 = kfm_load_src_render(f0, srcPitchT, x, y + 2, pixelStep, pixelOffset);
-            const Type T11 = kfm_load_src_render(f1, srcPitchT, x, y + 2, pixelStep, pixelOffset);
-            const Type T02 = kfm_load_src_render(f0, srcPitchT, x, y + 4, pixelStep, pixelOffset);
-            const Type T12 = kfm_load_src_render(f1, srcPitchT, x, y + 4, pixelStep, pixelOffset);
-            const Type T03 = kfm_load_src_render(f0, srcPitchT, x, y + 6, pixelStep, pixelOffset);
-            const Type T13 = kfm_load_src_render(f1, srcPitchT, x, y + 6, pixelStep, pixelOffset);
+            const Type T00 = f0[srcIdx0];
+            const Type T10 = f1[srcIdx0];
+            const Type T01 = f0[srcIdx2];
+            const Type T11 = f1[srcIdx2];
+            const Type T02 = f0[srcIdx4];
+            const Type T12 = f1[srcIdx4];
+            const Type T03 = f0[srcIdx6];
+            const Type T13 = f1[srcIdx6];
             sum1 += kfm_calc_diff_render(T00, T10, T01, T11, T02, T12, T03, T13);
         }
 
         {
-            const Type B00 = kfm_load_src_render(f0, srcPitchT, x, y + 1, pixelStep, pixelOffset);
-            const Type B10 = kfm_load_src_render(f1, srcPitchT, x, y + 1, pixelStep, pixelOffset);
-            const Type B01 = kfm_load_src_render(f0, srcPitchT, x, y + 3, pixelStep, pixelOffset);
-            const Type B11 = kfm_load_src_render(f1, srcPitchT, x, y + 3, pixelStep, pixelOffset);
-            const Type B02 = kfm_load_src_render(f0, srcPitchT, x, y + 5, pixelStep, pixelOffset);
-            const Type B12 = kfm_load_src_render(f1, srcPitchT, x, y + 5, pixelStep, pixelOffset);
-            const Type B03 = kfm_load_src_render(f0, srcPitchT, x, y + 7, pixelStep, pixelOffset);
-            const Type B13 = kfm_load_src_render(f1, srcPitchT, x, y + 7, pixelStep, pixelOffset);
+            const Type B00 = f0[srcIdx1];
+            const Type B10 = f1[srcIdx1];
+            const Type B01 = f0[srcIdx3];
+            const Type B11 = f1[srcIdx3];
+            const Type B02 = f0[srcIdx5];
+            const Type B12 = f1[srcIdx5];
+            const Type B03 = f0[srcIdx7];
+            const Type B13 = f1[srcIdx7];
             sum3 += kfm_calc_diff_render(B00, B10, B01, B11, B02, B12, B03, B13);
         }
     }
@@ -187,6 +231,29 @@ static inline uchar4 kfm_analyze_block_render(
         (uchar)clamp(sum1 >> shift, 0, 255),
         (uchar)clamp(sum2 >> shift, 0, 255),
         (uchar)clamp(sum3 >> shift, 0, 255));
+}
+
+// blockを丸ごと(uchar4)返す版。1つのblockからfield 0/1の両方を取り出す場合に使う
+static inline uchar4 kfm_analyze_super_pair_render4(
+    const __global uchar *src0,
+    const __global uchar *src1,
+    const int srcPitch,
+    const int widthPairs,
+    const int height,
+    const int parity,
+    const int pixelStep,
+    const int pixelOffset,
+    const int x,
+    const int row) {
+    if (x <= 0 || x >= widthPairs || row < 2 || row >= height * 2) {
+        return (uchar4)(0, 0, 0, 0);
+    }
+    const int bx = x - 1;
+    const int by = (row >> 1) - 1;
+    if (bx >= widthPairs - 1 || by < 0 || by >= height - 1) {
+        return (uchar4)(0, 0, 0, 0);
+    }
+    return kfm_analyze_block_render(src0, src1, srcPitch, parity, pixelStep, pixelOffset, bx, by);
 }
 
 static inline uchar2 kfm_analyze_super_pair_render(
@@ -200,15 +267,8 @@ static inline uchar2 kfm_analyze_super_pair_render(
     const int pixelOffset,
     const int x,
     const int row) {
-    if (x <= 0 || x >= widthPairs || row < 2 || row >= height * 2) {
-        return (uchar2)(0, 0);
-    }
-    const int bx = x - 1;
-    const int by = (row >> 1) - 1;
-    if (bx >= widthPairs - 1 || by < 0 || by >= height - 1) {
-        return (uchar2)(0, 0);
-    }
-    const uchar4 v = kfm_analyze_block_render(src0, src1, srcPitch, parity, pixelStep, pixelOffset, bx, by);
+    const uchar4 v = kfm_analyze_super_pair_render4(
+        src0, src1, srcPitch, widthPairs, height, parity, pixelStep, pixelOffset, x, row);
     return (row & 1) ? (uchar2)(v.z, v.w) : (uchar2)(v.x, v.y);
 }
 
@@ -250,6 +310,50 @@ static inline Type kfm_telecine_weave_pixel(
             sum = v;
         } else {
             sum = (Type)(((int)sum + (int)v) >> 1);
+        }
+        count++;
+    }
+    return sum;
+}
+
+static inline Type4 kfm_telecine_weave_pixel4(
+    const __global uchar *src0,
+    const int src0Pitch,
+    const __global uchar *src1,
+    const int src1Pitch,
+    const __global uchar *src2,
+    const int src2Pitch,
+    const int x,
+    const int y,
+    const int srcYOffset,
+    const int fieldStart,
+    const int fieldCount,
+    const int parity) {
+    const int srcOutY = y + srcYOffset;
+    const int outField = ((srcOutY & 1) == (parity & 1)) ? 1 : 0;
+    const int fieldBase = fieldStart & ~1;
+    const int fieldEnd = fieldStart + fieldCount;
+    Type4 sum = (Type4)0;
+    int count = 0;
+
+    for (int field = fieldStart; field < fieldEnd; field++) {
+        if ((field & 1) != outField) {
+            continue;
+        }
+        const int frameOffset = (field - fieldBase) >> 1;
+        const int srcY = (field & 1) + ((srcOutY >> 1) << 1);
+        Type4 v = (Type4)0;
+        if (frameOffset == 0) {
+            v = kfm_load_pixel4(src0, src0Pitch, x, srcY);
+        } else if (frameOffset == 1) {
+            v = kfm_load_pixel4(src1, src1Pitch, x, srcY);
+        } else {
+            v = kfm_load_pixel4(src2, src2Pitch, x, srcY);
+        }
+        if (count == 0) {
+            sum = v;
+        } else {
+            sum = kfm_to_type4((kfm_to_int4(sum) + kfm_to_int4(v)) >> 1);
         }
         count++;
     }
@@ -322,14 +426,23 @@ __kernel void kernel_kfm_telecine_weave(
     const int fieldStart,
     const int fieldCount,
     const int parity) {
-    const int x = get_global_id(0);
+    const int x = get_global_id(0) * 4;
     const int y = get_global_id(1);
     if (x >= width || y >= height) return;
 
-    const Type v = kfm_telecine_weave_pixel(
-        src0, src0Pitch, src1, src1Pitch, src2, src2Pitch,
-        x, y, srcYOffset, fieldStart, fieldCount, parity);
-    kfm_store_pixel(dst, dstPitch, x, y, v);
+    if (x + 3 < width) {
+        const Type4 v = kfm_telecine_weave_pixel4(
+            src0, src0Pitch, src1, src1Pitch, src2, src2Pitch,
+            x, y, srcYOffset, fieldStart, fieldCount, parity);
+        kfm_store_pixel4(dst, dstPitch, x, y, v);
+    } else {
+        for (int ix = x; ix < width; ix++) {
+            const Type v = kfm_telecine_weave_pixel(
+                src0, src0Pitch, src1, src1Pitch, src2, src2Pitch,
+                ix, y, srcYOffset, fieldStart, fieldCount, parity);
+            kfm_store_pixel(dst, dstPitch, ix, y, v);
+        }
+    }
 }
 
 __kernel void kernel_kfm_telecine_super_max(
@@ -424,14 +537,21 @@ __kernel void kernel_kfm_clean_super_direct_max(
     if (x >= widthPairs || y >= height) return;
 
     const int srcField = field & 1;
-    const int curRow = y * 2 + srcField;
-    const int prevRow = (srcField == 0) ? (y * 2 + 1) : (y * 2);
-    const uchar2 vcur = kfm_analyze_super_pair_render(
-        curSrc0, curSrc1, curSrcPitch, widthPairs, height, curParity,
-        pixelStep, pixelOffset, x, curRow);
-    const uchar2 vprev = (srcField == 0)
-        ? kfm_analyze_super_pair_render(prevSrc0, prevSrc1, prevSrcPitch, widthPairs, height, prevParity, pixelStep, pixelOffset, x, prevRow)
-        : kfm_analyze_super_pair_render(curSrc0, curSrc1, curSrcPitch, widthPairs, height, curParity, pixelStep, pixelOffset, x, prevRow);
+    uchar2 vcur;
+    uchar2 vprev;
+    if (srcField == 0) {
+        vcur = kfm_analyze_super_pair_render(curSrc0, curSrc1, curSrcPitch, widthPairs, height, curParity,
+            pixelStep, pixelOffset, x, y * 2 + 0);
+        vprev = kfm_analyze_super_pair_render(prevSrc0, prevSrc1, prevSrcPitch, widthPairs, height, prevParity,
+            pixelStep, pixelOffset, x, y * 2 + 1);
+    } else {
+        // odd fieldではvcur(row=y*2+1)とvprev(row=y*2)が同じblockを指すため、解析は1回で済む。
+        // row依存の境界判定もy==0のときに両者とも0を返すため、結果は変わらない。
+        const uchar4 v4 = kfm_analyze_super_pair_render4(curSrc0, curSrc1, curSrcPitch, widthPairs, height, curParity,
+            pixelStep, pixelOffset, x, y * 2 + 1);
+        vcur = (uchar2)(v4.z, v4.w);
+        vprev = (uchar2)(v4.x, v4.y);
+    }
 
     uchar2 v = vcur;
     if (vprev.y <= cleanThresh && v.y <= cleanThresh) {
@@ -496,17 +616,41 @@ __kernel void kernel_kfm_remove_combe_binomial(
     const int teleFieldStart,
     const int teleFieldCount,
     const int teleParity) {
-    const int x = get_global_id(0);
+    const int x = get_global_id(0) * 4;
     const int y = get_global_id(1);
     if (x >= width || y >= height) return;
 
-    const int sx = x * srcStep + srcOffset;
-    const int cx = (x >> 2) * 2 * combeStep + combeOffset;
     const int cy = y >> 2;
-    const int score = (int)combe[cy * combePitch + cx];
-    Type v = kfm_load_pixel(src, srcPitch, sx, y);
+    if (srcStep == 1 && x + 3 < width) {
+        const int sx = x + srcOffset;
+        const int cx = (x >> 2) * 2 * combeStep + combeOffset;
+        const int score = (int)combe[cy * combePitch + cx];
+        Type4 v = kfm_load_pixel4(src, srcPitch, sx, y);
+        if (score >= threshold) {
+            const int prevY = max(y - 1, 0);
+            const int nextY = min(y + 1, height - 1);
+            const Type4 prev = (y > 0)
+                ? kfm_load_pixel4(src, srcPitch, sx, prevY)
+                : kfm_telecine_weave_pixel4(teleSrc0, teleSrc0Pitch, teleSrc1, teleSrc1Pitch, teleSrc2, teleSrc2Pitch, sx, y - 1, teleSrcYOffset, teleFieldStart, teleFieldCount, teleParity);
+            const Type4 next = (y + 1 < height)
+                ? kfm_load_pixel4(src, srcPitch, sx, nextY)
+                : kfm_telecine_weave_pixel4(teleSrc0, teleSrc0Pitch, teleSrc1, teleSrc1Pitch, teleSrc2, teleSrc2Pitch, sx, y + 1, teleSrcYOffset, teleFieldStart, teleFieldCount, teleParity);
+            v = kfm_to_type4((kfm_to_int4(prev) + (int4)2 * kfm_to_int4(v) + kfm_to_int4(next) + (int4)2) >> 2);
+        }
+        kfm_store_pixel4(dst, dstPitch, sx, y, v);
+        return;
+    }
 
-    if (score >= threshold) {
+    const int xEnd = min(x + 4, width);
+    for (int ix = x; ix < xEnd; ix++) {
+        const int sx = ix * srcStep + srcOffset;
+        const int cx = (ix >> 2) * 2 * combeStep + combeOffset;
+        const int score = (int)combe[cy * combePitch + cx];
+        Type v = kfm_load_pixel(src, srcPitch, sx, y);
+        if (score < threshold) {
+            kfm_store_pixel(dst, dstPitch, sx, y, v);
+            continue;
+        }
         const int prevY = max(y - 1, 0);
         const int nextY = min(y + 1, height - 1);
         const int prev = (int)((y > 0)
@@ -517,6 +661,6 @@ __kernel void kernel_kfm_remove_combe_binomial(
             ? kfm_load_pixel(src, srcPitch, sx, nextY)
             : kfm_telecine_weave_pixel(teleSrc0, teleSrc0Pitch, teleSrc1, teleSrc1Pitch, teleSrc2, teleSrc2Pitch, sx, y + 1, teleSrcYOffset, teleFieldStart, teleFieldCount, teleParity));
         v = (Type)((prev + 2 * cur + next + 2) >> 2);
+        kfm_store_pixel(dst, dstPitch, sx, y, v);
     }
-    kfm_store_pixel(dst, dstPitch, sx, y, v);
 }

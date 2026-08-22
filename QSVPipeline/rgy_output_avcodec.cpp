@@ -497,8 +497,15 @@ void RGYOutputAvcodec::CloseVideo(AVMuxVideo *muxVideo) {
 
 void RGYOutputAvcodec::CloseFormat(AVMuxFormat *muxFormat) {
     if (muxFormat->formatCtx) {
-        if (!muxFormat->streamError && m_Mux.format.fileHeaderWritten) {
-            av_write_trailer(muxFormat->formatCtx);
+        if (m_Mux.format.fileHeaderWritten) {
+            //trailerを書かないとmp4のmoovが作られず、それまでに書き出した分すら再生できないファイルになってしまう。
+            //そのため、途中でエラーになった場合でもtrailerの書き込みは必ず試みて、部分的にでも再生できる状態で残す
+            const auto ret = av_write_trailer(muxFormat->formatCtx);
+            if (ret < 0) {
+                AddMessage(RGY_LOG_WARN, _T("failed to write trailer: %s.\n"), qsv_av_err2str(ret).c_str());
+            } else if (muxFormat->streamError) {
+                AddMessage(RGY_LOG_WARN, _T("output file was finalized, but it is incomplete due to the error above.\n"));
+            }
         }
 #if USE_CUSTOM_IO
         if (!muxFormat->fpOutput) {
@@ -1824,8 +1831,8 @@ RGY_ERR RGYOutputAvcodec::InitAudio(AVMuxAudio *muxAudio, AVOutputStreamPrm *inp
         }
         int enc_sample_rate = (inputAudio->samplingRate) ? inputAudio->samplingRate : muxAudio->outCodecDecodeCtx->sample_rate;
         //select samplefmt
-        muxAudio->outCodecEncodeCtx->sample_fmt          = AutoSelectSampleFmt(muxAudio->outCodecEncode->sample_fmts, muxAudio->outCodecDecodeCtx);
-        muxAudio->outCodecEncodeCtx->sample_rate         = AutoSelectSamplingRate(muxAudio->outCodecEncode->supported_samplerates, enc_sample_rate);
+        muxAudio->outCodecEncodeCtx->sample_fmt          = AutoSelectSampleFmt(rgy_avcodec_get_sample_fmts(muxAudio->outCodecEncode), muxAudio->outCodecDecodeCtx);
+        muxAudio->outCodecEncodeCtx->sample_rate         = AutoSelectSamplingRate(rgy_avcodec_get_supported_samplerates(muxAudio->outCodecEncode), enc_sample_rate);
 #if AV_CHANNEL_LAYOUT_STRUCT_AVAIL
         muxAudio->outCodecEncodeCtx->ch_layout           = (*enc_channel_layout.get());
 #else
@@ -2006,8 +2013,6 @@ RGY_ERR RGYOutputAvcodec::InitAudio(AVMuxAudio *muxAudio, AVOutputStreamPrm *inp
             }
         }
         muxAudio->streamOut->codecpar->codec_tag = codectag;
-
-        avformat_transfer_internal_stream_timing_info(m_Mux.format.formatCtx->oformat, muxAudio->streamOut, inputAudio->src.stream, AVFMT_TBCF_AUTO);
 
         if (muxAudio->streamOut->codecpar->codec_id == AV_CODEC_ID_MP3) {
             if (   muxAudio->streamOut->codecpar->block_align == 1
@@ -3438,7 +3443,8 @@ RGY_ERR RGYOutputAvcodec::WriteNextFrameInternal(RGYBitstream *bitstream, int64_
         RGYTimestampMapVal bs_framedata = m_Mux.video.timestamp->getByEncodeFrameID(m_Mux.video.prevEncodeFrameId + 1);
         if (bs_framedata.inputFrameId < 0) {
             bs_framedata.inputFrameId = m_Mux.video.prevInputFrameId;
-            AddMessage(RGY_LOG_WARN, _T("Failed to get timestamp for id %lld, using %lld.\n"), bitstream->pts(), bs_framedata.inputFrameId);
+            AddMessage(RGY_LOG_WARN, _T("Failed to get timestamp for encode frame id %lld, using input frame id %lld.\n"),
+                m_Mux.video.prevEncodeFrameId + 1, bs_framedata.inputFrameId);
         } else {
             m_Mux.video.prevInputFrameId = bs_framedata.inputFrameId;
             m_Mux.video.prevEncodeFrameId++;
@@ -3795,13 +3801,22 @@ void RGYOutputAvcodec::WriteNextPacketProcessed(AVMuxAudio *muxAudio, AVPacket *
     pkt->flags = AV_PKT_FLAG_KEY; //元のpacketの上位16bitにはトラック番号を紛れ込ませているので、av_interleaved_write_frame前に消すこと
     const AVRational samplerate = { 1, (muxAudio->outCodecEncodeCtx) ? muxAudio->outCodecEncodeCtx->sample_rate : muxAudio->streamIn->codecpar->sample_rate };
     const bool ptsInvalid = pkt->pts == AV_NOPTS_VALUE;
+    bool ptsEstimated = false;
+    const auto estimateAudioPts = [&]() {
+        if (muxAudio->lastPtsOut == AV_NOPTS_VALUE) {
+            muxAudio->outputSampleOffset = 0;
+            return (int64_t)0;
+        }
+        muxAudio->outputSampleOffset += samples;
+        return muxAudio->lastPtsOut + av_rescale_q(muxAudio->outputSampleOffset, samplerate, muxAudio->streamOut->time_base);
+    };
     if (!muxAudio->outCodecEncodeCtx) {
         if (samples > 0) {
             //av_rescale_deltaの入力ptsはAV_NOPTS_VALUEではない必要があるのでチェックする
             if (pkt->pts == AV_NOPTS_VALUE) {
-                muxAudio->outputSampleOffset += samples;
-                pkt->pts = muxAudio->lastPtsOut + (int)av_rescale_q(muxAudio->outputSampleOffset, samplerate, muxAudio->streamOut->time_base);
+                pkt->pts = estimateAudioPts();
                 muxAudio->dec_rescale_delta = AV_NOPTS_VALUE;
+                ptsEstimated = true;
             } else {
                 pkt->pts = av_rescale_delta(muxAudio->streamIn->time_base, pkt->pts, samplerate, samples, &muxAudio->dec_rescale_delta, muxAudio->streamOut->time_base);
             }
@@ -3809,7 +3824,12 @@ void RGYOutputAvcodec::WriteNextPacketProcessed(AVMuxAudio *muxAudio, AVPacket *
             pkt->pts = av_rescale_q(pkt->pts, muxAudio->streamIn->time_base, muxAudio->streamOut->time_base);
         }
     } else {
-        pkt->pts = av_rescale_q(pkt->pts, muxAudio->outCodecEncodeCtx->time_base, muxAudio->streamOut->time_base);
+        if (pkt->pts == AV_NOPTS_VALUE) {
+            pkt->pts = estimateAudioPts();
+            ptsEstimated = true;
+        } else {
+            pkt->pts = av_rescale_q(pkt->pts, muxAudio->outCodecEncodeCtx->time_base, muxAudio->streamOut->time_base);
+        }
     }
     if (m_Mux.video.streamOut && m_Mux.video.inputFirstKeyPts != 0 && !m_Mux.format.timestampPassThrough) {
         pkt->pts -= av_rescale_q(m_Mux.video.inputFirstKeyPts, m_Mux.video.inputStreamTimebase, muxAudio->streamOut->time_base);
@@ -3839,7 +3859,7 @@ void RGYOutputAvcodec::WriteNextPacketProcessed(AVMuxAudio *muxAudio, AVPacket *
     if (pkt->duration == 0) {
         pkt->duration = (int)(pkt->pts - muxAudio->lastPtsOut);
     }
-    if (!ptsInvalid) {
+    if (!ptsInvalid || ptsEstimated) {
         muxAudio->lastPtsOut = pkt->pts;
         muxAudio->outputSampleOffset = 0;
     }
@@ -4261,7 +4281,9 @@ RGY_ERR RGYOutputAvcodec::WriteOtherPacket(AVPacket *pkt) {
         //以前のptsより前になりそうになったら修正する
         const auto maxPts = pMuxOther->lastPtsOut + ((m_Mux.format.formatCtx->oformat->flags & AVFMT_TS_NONSTRICT) ? 0 : 1);
         if (pkt->pts < maxPts) {
-            auto loglevel = (maxPts - pkt->pts > 2 && pMuxOther->streamOut->codecpar->codec_type != AVMEDIA_TYPE_SUBTITLE /*字幕の場合は頻繁に発生することがある*/) ? RGY_LOG_WARN : RGY_LOG_DEBUG;
+            const auto loglevel = (pMuxOther->streamOut->codecpar->codec_type == AVMEDIA_TYPE_SUBTITLE)
+                ? RGY_LOG_TRACE // 字幕の場合は頻繁に発生することがある
+                : ((maxPts - pkt->pts > 2) ? RGY_LOG_WARN : RGY_LOG_DEBUG);
             if (loglevel >= m_printMes->getLogLevel(RGY_LOGT_OUT)) {
                 AddMessage(loglevel, _T("Timestamp error in stream %d, previous: %lld, current: %lld [timebase: %d/%d].\n"),
                     pMuxOther->streamOut->index,
@@ -4415,30 +4437,41 @@ RGY_ERR RGYOutputAvcodec::AddAudQueue(AVPktMuxData *pktData, int type) {
 //maxDtsToWriteはm_AudPktBufFileHeadにキャッシュしてあるパケットを処理する際に、
 //処理するdtsの上限を決める
 RGY_ERR RGYOutputAvcodec::WriteNextPacketInternal(AVPktMuxData *pktData, int64_t maxDtsToWrite) {
-    if (!m_Mux.format.fileHeaderWritten) {
-        // まだフレームヘッダーが書かれていなければ、パケットをキャッシュして終了。
-        // 重い/遅延する映像フィルタでは、音声スレッドが最初の映像フレームより先に
-        // mux へ到達することがある。
-        m_AudPktBufFileHead.push_back(*pktData);
-        return RGY_ERR_NONE;
-    }
-    // m_AudPktBufFileHeadにキャッシュしてあるパケットかどうかを調べる
-    if (m_AudPktBufFileHead.end() == std::find_if(m_AudPktBufFileHead.begin(), m_AudPktBufFileHead.end(),
-        [pktData](const AVPktMuxData& data) { return pktData->pkt == data.pkt; })) {
-        // キャッシュしてあるパケットでないなら、キャッシュしてあるパケットをまず処理する。
-        for (auto bufPkt : m_AudPktBufFileHead) {
-            RGY_ERR sts = WriteNextPacketInternal(&bufPkt, maxDtsToWrite);
-            //処理するdtsの上限を超えたかチェック
-            if (bufPkt.dts > maxDtsToWrite) {
-                pktData->dts = bufPkt.dts;
-                return RGY_ERR_NONE;
-            }
-            if (sts != RGY_ERR_NONE) {
-                return sts;
-            }
+    if (m_Mux.thread.threadActiveAudio()) {
+        // 音声スレッドがある場合はフレームヘッダが書かれてからここに来るはず
+        if (!m_Mux.format.fileHeaderWritten) {
+            AddMessage(RGY_LOG_ERROR, _T("File header not written, unexpected error!\n"));
+            return RGY_ERR_UNKNOWN;
         }
-        //キャッシュをすべて書き出したらクリア
-        m_AudPktBufFileHead.clear();
+        // 音声スレッドがある場合はm_AudPktBufFileHeadはたまっていないはず
+        if (!m_AudPktBufFileHead.empty()) {
+            AddMessage(RGY_LOG_ERROR, _T("m_AudPktBufFileHead not empty, unexpected error!\n"));
+            return RGY_ERR_UNKNOWN;
+        }
+    } else {
+        if (!m_Mux.format.fileHeaderWritten) {
+            //まだフレームヘッダーが書かれていなければ、パケットをキャッシュして終了
+            m_AudPktBufFileHead.push_back(*pktData);
+            return RGY_ERR_NONE;
+        }
+        //m_AudPktBufFileHeadにキャッシュしてあるパケットかどうかを調べる
+        if (m_AudPktBufFileHead.end() == std::find_if(m_AudPktBufFileHead.begin(), m_AudPktBufFileHead.end(),
+            [pktData](const AVPktMuxData& data) { return pktData->pkt == data.pkt; })) {
+            //キャッシュしてあるパケットでないなら、キャッシュしてあるパケットをまず処理する
+            for (auto bufPkt : m_AudPktBufFileHead) {
+                RGY_ERR sts = WriteNextPacketInternal(&bufPkt, maxDtsToWrite);
+                //処理するdtsの上限を超えたかチェック
+                if (bufPkt.dts > maxDtsToWrite) {
+                    pktData->dts = bufPkt.dts;
+                    return RGY_ERR_NONE;
+                }
+                if (sts != RGY_ERR_NONE) {
+                    return sts;
+                }
+            }
+            //キャッシュをすべて書き出したらクリア
+            m_AudPktBufFileHead.clear();
+        }
     }
 
     if (pktData->pkt == nullptr) {

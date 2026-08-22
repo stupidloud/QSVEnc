@@ -489,6 +489,9 @@
     <ClCompile Include="rgy_device_vulkan.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
+    <ClCompile Include="rgy_libass.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
     <ClCompile Include="rgy_libplacebo.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
@@ -508,6 +511,30 @@
       <Filter>ソース ファイル</Filter>
     </ClCompile>
     <ClCompile Include="rgy_filter_ivtc.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="rgy_openvino.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="rgy_model_registry.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="rgy_filter_onnx.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="rgy_filter_rife_ov.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="rgy_filter_onnx_deint.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="rgy_filter_anime4k.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="rgy_filter_lenscorrection.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="rgy_filter_v360.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
   </ItemGroup>
@@ -956,6 +983,9 @@
     <ClInclude Include="rgy_libdovi.h">
       <Filter>ヘッダー ファイル</Filter>
     </ClInclude>
+    <ClInclude Include="rgy_libass.h">
+      <Filter>ヘッダー ファイル</Filter>
+    </ClInclude>
     <ClInclude Include="rgy_libplacebo.h">
       <Filter>ヘッダー ファイル</Filter>
     </ClInclude>
@@ -986,6 +1016,30 @@
     <ClInclude Include="rgy_filter_ivtc.h">
       <Filter>ヘッダー ファイル</Filter>
     </ClInclude>
+    <ClInclude Include="rgy_filter_onnx.h">
+      <Filter>ヘッダー ファイル</Filter>
+    </ClInclude>
+    <ClInclude Include="rgy_filter_rife_ov.h">
+      <Filter>ヘッダー ファイル</Filter>
+    </ClInclude>
+    <ClInclude Include="rgy_filter_onnx_deint.h">
+      <Filter>ヘッダー ファイル</Filter>
+    </ClInclude>
+    <ClInclude Include="rgy_model_registry.h">
+      <Filter>ヘッダー ファイル</Filter>
+    </ClInclude>
+    <ClInclude Include="rgy_openvino.h">
+      <Filter>ヘッダー ファイル</Filter>
+    </ClInclude>
+    <ClInclude Include="rgy_filter_anime4k.h">
+      <Filter>ヘッダー ファイル</Filter>
+    </ClInclude>
+    <ClInclude Include="rgy_filter_lenscorrection.h">
+      <Filter>ヘッダー ファイル</Filter>
+    </ClInclude>
+    <ClInclude Include="rgy_filter_v360.h">
+      <Filter>ヘッダー ファイル</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <None Include="rgy_filter.cl">
@@ -995,6 +1049,12 @@
       <Filter>ソース ファイル</Filter>
     </None>
     <None Include="rgy_filter_resize.cl">
+      <Filter>ソース ファイル</Filter>
+    </None>
+    <None Include="rgy_filter_lenscorrection.cl">
+      <Filter>ソース ファイル</Filter>
+    </None>
+    <None Include="rgy_filter_v360.cl">
       <Filter>ソース ファイル</Filter>
     </None>
     <None Include="rgy_filter_transform.cl">
@@ -1165,6 +1225,9 @@
     <None Include="rgy_filter_kfm_ucf.cl">
       <Filter>ソース ファイル</Filter>
     </None>
+    <None Include="rgy_filter_anime4k.cl">
+      <Filter>ソース ファイル</Filter>
+    </None>
     <None Include="rgy_filter_mpdecimate.cl">
       <Filter>ソース ファイル</Filter>
     </None>
@@ -1181,6 +1244,12 @@
       <Filter>ソース ファイル</Filter>
     </None>
     <None Include="rgy_filter_overlay.cl">
+      <Filter>ソース ファイル</Filter>
+    </None>
+    <None Include="rgy_filter_onnx.cl">
+      <Filter>ソース ファイル</Filter>
+    </None>
+    <None Include="rgy_filter_onnx_deint.cl">
       <Filter>ソース ファイル</Filter>
     </None>
     <None Include="rgy_filter_curves.cl">

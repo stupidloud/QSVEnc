@@ -31,9 +31,9 @@
 
 #include "rgy_rev.h"
 
-#define VER_FILEVERSION             0,8,15,0
-#define VER_STR_FILEVERSION          "8.15"
-#define VER_STR_FILEVERSION_TCHAR _T("8.15")
+#define VER_FILEVERSION             0,8,27,0
+#define VER_STR_FILEVERSION          "8.27"
+#define VER_STR_FILEVERSION_TCHAR _T("8.27")
 
 #ifdef _M_IX86
 #define BUILD_ARCH_STR _T("x86")
@@ -63,6 +63,7 @@ const char *get_encoder_version();
 #define ENABLE_QSV_TUNE_QUERY 1
 #define ENABLE_AVOID_IDLE_CLOCK 1
 #define ENABLE_VPP_SMOOTH_QP_FRAME 0
+#define ENABLE_ONNXRUNTIME 0
 
 #if defined(_WIN32) || defined(_WIN64)
 
@@ -106,6 +107,11 @@ const char *get_encoder_version();
 #define ENABLE_LIBDOVI 1
 #define ENABLE_LIBHDR10PLUS 1
 #define ENABLE_VULKAN 0
+#ifdef _M_IX86
+#define ENABLE_OPENVINO 0
+#else
+#define ENABLE_OPENVINO 1
+#endif
 
 #define ENABLE_VMAF 0
 #define ENABLE_LIBVSHIP 0
@@ -126,7 +132,6 @@ const char *get_encoder_version();
 #define ENABLE_CUSTOM_VPP         1
 #define ENABLE_LIBAVDEVICE        0
 #define ENABLE_LIBASS_SUBBURN     1
-#define ENABLE_METRIC_FRAMEWORK   0
 #define ENABLE_CAPTION2ASS        0
 #define ENABLE_AUTO_PICSTRUCT     0
 #else
@@ -144,16 +149,9 @@ const char *get_encoder_version();
 #define ENABLE_LIBASS_SUBBURN     1
 #define ENABLE_CUSTOM_VPP         1
 #define ENABLE_LIBAVDEVICE        1
-#ifndef ENABLE_METRIC_FRAMEWORK
-#if defined(_M_IX86)
-#define ENABLE_METRIC_FRAMEWORK   0
-#else
-#define ENABLE_METRIC_FRAMEWORK   0
-#endif
-#endif
 #define ENABLE_CAPTION2ASS        1
 #define ENABLE_AUTO_PICSTRUCT     1
-#endif //#ifndef ENABLE_METRIC_FRAMEWORK
+#endif //#ifdef BUILD_AUO
 
 #else //#if defined(WIN32) || defined(WIN64)
 #define USE_ONEVPL 1
@@ -162,11 +160,11 @@ const char *get_encoder_version();
 #define MFX_D3D11_SUPPORT 0
 #define ENABLE_D3D11 (MFX_D3D11_SUPPORT)
 #define FOR_AUO 0
-#define ENABLE_METRIC_FRAMEWORK 0
 #define ENABLE_PERF_COUNTER 0
 #define ENABLE_CAPTION2ASS 0
 #define ENABLE_DOVI_METADATA_OPTIONS 1
 #define ENABLE_HYPER_MODE 0
+#define ENABLE_AUTO_PICSTRUCT 1
 #include "rgy_config.h"
 #define ENCODER_NAME              "QSVEncC"
 #define DECODER_NAME              "qsv"

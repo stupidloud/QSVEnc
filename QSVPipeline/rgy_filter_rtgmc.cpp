@@ -74,6 +74,12 @@ static int rtgmcNestedAnalyzeDelta(const VppRtgmc &rtgmc) {
     return std::max({ 1, std::min(rtgmc.analyze.delta, RGY_DEGRAIN_MAX_DELTA), std::min(rtgmc.tr1.delta, RGY_DEGRAIN_MAX_DELTA), std::min(rtgmc.tr2.delta, RGY_DEGRAIN_MAX_DELTA) });
 }
 
+static bool rtgmcDegrainOverlapSupported(const VppDegrain &degrain) {
+    return degrain.overlap == 0
+        || degrain.overlap == degrain.blksize / 4
+        || degrain.overlap == degrain.blksize / 2;
+}
+
 static bool rtgmcInputTypeBlendEnabled(const VppRtgmc &rtgmc) {
     return (rtgmc.inputType == 2 || rtgmc.inputType == 3) && rtgmc.progSADMask > 0.0f;
 }
@@ -85,6 +91,7 @@ static void eraseRtgmcInternalFrameData(RGYFrameInfo *frame) {
     rgy_degrain_erase_frame_data(frame->dataList);
     frame->dataList.erase(std::remove_if(frame->dataList.begin(), frame->dataList.end(), [](const std::shared_ptr<RGYFrameData> &data) {
         return std::dynamic_pointer_cast<RGYFrameDataRtgmcSearchLuma>(data) != nullptr
+            || std::dynamic_pointer_cast<RGYFrameDataRtgmcSourceTwin>(data) != nullptr
             || std::dynamic_pointer_cast<RGYFrameDataRtgmcEdi>(data) != nullptr
             || std::dynamic_pointer_cast<RGYFrameDataRtgmcComp>(data) != nullptr
             || std::dynamic_pointer_cast<RGYFrameDataRtgmcNoise>(data) != nullptr;
@@ -172,6 +179,7 @@ RGYFilterRtgmc::RGYFilterRtgmc(shared_ptr<RGYOpenCLContext> context) :
     m_pendingOutputFrames(),
     m_sourceCache(),
     m_sharedFramePool(std::make_shared<RGYCLSharedFramePool>(context)),
+    m_ediSideDataFramePool(std::make_shared<RGYCLSharedFramePool>(context)),
     m_borderFrame(),
     m_borderCopy(),
     m_noiseDiffFilter(),
@@ -276,6 +284,16 @@ RGY_ERR RGYFilterRtgmc::checkParam(const std::shared_ptr<RGYFilterParamRtgmc> &p
         AddMessage(RGY_LOG_ERROR, _T("rtgmc mv_spatial_refine must be -1 or greater.\n"));
         return RGY_ERR_INVALID_PARAM;
     }
+    if (prm->rtgmc.rep1.repThin < 0 || prm->rtgmc.rep1.repThin > 7
+        || prm->rtgmc.rep2.repThin < 0 || prm->rtgmc.rep2.repThin > 7) {
+        AddMessage(RGY_LOG_ERROR, _T("rtgmc rep1-thin/rep2-thin must be 0 - 7.\n"));
+        return RGY_ERR_INVALID_PARAM;
+    }
+    if (prm->rtgmc.rep1.repPad < 0 || prm->rtgmc.rep1.repPad > 3
+        || prm->rtgmc.rep2.repPad < 0 || prm->rtgmc.rep2.repPad > 3) {
+        AddMessage(RGY_LOG_ERROR, _T("rtgmc rep1-pad/rep2-pad must be 0 - 3.\n"));
+        return RGY_ERR_INVALID_PARAM;
+    }
     if (rtgmcInputTypeBlendEnabled(prm->rtgmc) && !RGY_HAS_RTGMC_MMASK_FILTER) {
         AddMessage(RGY_LOG_ERROR, _T("rtgmc input_type=2/3 with prog_sad_mask>0 requires rtgmc-mmask filter, but it is not available in this build.\n"));
         return RGY_ERR_UNSUPPORTED;
@@ -362,9 +380,9 @@ RGY_ERR RGYFilterRtgmc::initRetouchCompFilters(const std::shared_ptr<RGYFilterPa
         param->baseFps = baseFps;
         param->bOutOverwrite = false;
         param->degrain = prm->rtgmc.tr1;
-        if (param->degrain.overlap != 0 && param->degrain.overlap * 2 != param->degrain.blksize) {
+        if (!rtgmcDegrainOverlapSupported(param->degrain)) {
             AddMessage(RGY_LOG_WARN,
-                _T("retouch helper overlap=%d is adjusted to %d because the current Degrain backend supports overlap=0 or blksize/2.\n"),
+                _T("retouch helper overlap=%d is adjusted to %d because the current Degrain backend supports overlap=0, blksize/4 or blksize/2.\n"),
                 param->degrain.overlap, param->degrain.blksize / 2);
             param->degrain.overlap = param->degrain.blksize / 2;
         }
@@ -396,6 +414,9 @@ RGY_ERR RGYFilterRtgmc::initSourceMatchCorrectionFilters(const std::shared_ptr<R
         return RGY_ERR_NONE;
     }
     const bool combineCorrectionKernels = rtgmcMatchCorrectionKernelMergeEnabled();
+    const bool matchEdiProvidesChroma = prm->rtgmc.matchEdi.mode != VppRtgmcEdiMode::NNEDI3
+        || prm->rtgmc.matchEdi.chromaEdi == VppRtgmcChromaEdiMode::NNEDI3;
+    const bool processSourceMatchChroma = prm->rtgmc.searchPrefilter.chromaMotion && matchEdiProvidesChroma;
 
     auto initOne = [&](RGYFilter *filter, const std::shared_ptr<RGYFilterParam> &param) {
         param->frameIn = frameInfo;
@@ -408,15 +429,16 @@ RGY_ERR RGYFilterRtgmc::initSourceMatchCorrectionFilters(const std::shared_ptr<R
         auto &pass = m_matchCorrectionPasses[stageIdx];
         const int matchTR = (stageIdx == 0) ? prm->rtgmc.matchTR1 : 0;
         pass.fusedCorrectionBuild = combineCorrectionKernels;
-        pass.fusedCorrectionApply = combineCorrectionKernels && matchTR == 0;
+        pass.fusedCorrectionApply = combineCorrectionKernels && matchTR == 0 && processSourceMatchChroma;
         pass.interpolator = std::make_unique<RGYFilterRtgmcEdi>(m_cl);
         {
             auto param = std::make_shared<RGYFilterParamRtgmcEdi>();
             param->mode = prm->rtgmc.matchEdi.mode;
-            param->chromaEdi = VppRtgmcChromaEdiMode::None;
+            param->chromaEdi = prm->rtgmc.matchEdi.chromaEdi;
             param->nnsize = prm->rtgmc.matchEdi.nnsize;
             param->nneurons = prm->rtgmc.matchEdi.nneurons;
             param->ediqual = prm->rtgmc.matchEdi.ediqual;
+            param->order = prm->rtgmc.bob.order;
             param->sourceFrameIn = sourceFrameIn;
             param->sourceBaseFps = sourceBaseFps;
             param->sourceTimebase = sourceTimebase;
@@ -433,6 +455,8 @@ RGY_ERR RGYFilterRtgmc::initSourceMatchCorrectionFilters(const std::shared_ptr<R
             } else {
                 param->op = RGYRtgmcPrimitiveOp::MakeDiff;
             }
+            param->processChroma = processSourceMatchChroma;
+            param->planes = processSourceMatchChroma ? 0x07 : 0x01;
             auto sts = initOne(pass.correctionBuild.get(), param);
             if (sts != RGY_ERR_NONE) return sts;
         }
@@ -441,6 +465,8 @@ RGY_ERR RGYFilterRtgmc::initSourceMatchCorrectionFilters(const std::shared_ptr<R
             auto param = std::make_shared<RGYFilterParamRtgmcPrimitive>();
             param->op = RGYRtgmcPrimitiveOp::RemoveGrain;
             param->mode = 20;
+            param->processChroma = processSourceMatchChroma;
+            param->planes = processSourceMatchChroma ? 0x07 : 0x01;
             auto sts = initOne(pass.correctionSpatialPrepass.get(), param);
             if (sts != RGY_ERR_NONE) return sts;
         }
@@ -448,9 +474,10 @@ RGY_ERR RGYFilterRtgmc::initSourceMatchCorrectionFilters(const std::shared_ptr<R
             pass.correctionTemporalFilter = std::make_unique<RGYFilterDegrain>(m_cl);
             auto param = std::make_shared<RGYFilterParamDegrain>();
             param->degrain = (stageIdx == 0) ? prm->rtgmc.tr1 : prm->rtgmc.tr2;
-            if (param->degrain.overlap != 0 && param->degrain.overlap * 2 != param->degrain.blksize) {
+            param->degrain.chroma = processSourceMatchChroma;
+            if (!rtgmcDegrainOverlapSupported(param->degrain)) {
                 AddMessage(RGY_LOG_WARN,
-                    _T("source-match correction overlap=%d is adjusted to %d because the current Degrain backend supports overlap=0 or blksize/2.\n"),
+                    _T("source-match correction overlap=%d is adjusted to %d because the current Degrain backend supports overlap=0, blksize/4 or blksize/2.\n"),
                     param->degrain.overlap, param->degrain.blksize / 2);
                 param->degrain.overlap = param->degrain.blksize / 2;
             }
@@ -464,6 +491,8 @@ RGY_ERR RGYFilterRtgmc::initSourceMatchCorrectionFilters(const std::shared_ptr<R
             pass.correctionApply = std::make_unique<RGYFilterRtgmcPrimitive>(m_cl);
             auto param = std::make_shared<RGYFilterParamRtgmcPrimitive>();
             param->op = RGYRtgmcPrimitiveOp::AddDiff;
+            param->processChroma = processSourceMatchChroma;
+            param->planes = processSourceMatchChroma ? 0x07 : 0x01;
             auto sts = initOne(pass.correctionApply.get(), param);
             if (sts != RGY_ERR_NONE) return sts;
         }
@@ -479,6 +508,7 @@ RGY_ERR RGYFilterRtgmc::initSourceMatchCorrectionFilters(const std::shared_ptr<R
             param->rtgmc_retouch.sovs = 0;
             param->rtgmc_retouch.svthin = 0.0f;
             param->rtgmc_retouch.sbb = 0;
+            param->processChroma = processSourceMatchChroma;
             auto sts = initOne(pass.correctionEnhance.get(), param);
             if (sts != RGY_ERR_NONE) return sts;
         }
@@ -498,18 +528,19 @@ RGY_ERR RGYFilterRtgmc::attachEdiReference(RGYFrameInfo *frame, RGYOpenCLQueue &
         storeEdiReference(frame, attached, event ? *event : RGYOpenCLEvent());
         return RGY_ERR_NONE;
     }
-    auto sharedFrame = getSharedFrameBuffer(frame);
+    auto sharedFrame = m_ediSideDataFramePool ? m_ediSideDataFramePool->acquire(frame) : nullptr;
     if (!sharedFrame) {
         AddMessage(RGY_LOG_ERROR, _T("failed to allocate edi side-data frame.\n"));
         return RGY_ERR_MEMORY_ALLOC;
     }
+    resetRtgmcFrameState(sharedFrame->frame);
     auto err = m_cl->copyFrame(&sharedFrame->frame, frame, nullptr, queue, wait_events, event, RGYFrameCopyMode::FRAME, "rtgmc.edi_ref");
     if (err != RGY_ERR_NONE) {
         AddMessage(RGY_LOG_ERROR, _T("failed to copy edi side-data frame: %s.\n"), get_err_mes(err));
         return err;
     }
     copyFramePropWithoutRes(&sharedFrame->frame, frame);
-    auto frameData = std::make_shared<RGYFrameDataRtgmcEdi>(sharedFrame);
+    auto frameData = std::make_shared<RGYFrameDataRtgmcEdi>(sharedFrame, frame->ptr[0]);
     frame->dataList.push_back(frameData);
     storeEdiReference(frame, frameData, event ? *event : RGYOpenCLEvent());
     return RGY_ERR_NONE;
@@ -534,6 +565,8 @@ RGY_ERR RGYFilterRtgmc::updateCompReferenceStore(const RGYFrameInfo *frame, RGYO
     std::array<RGYDegrainCompensateInlineParams, 3> forwardParams = {};
     bool backwardReady = false;
     bool forwardReady = false;
+    bool backwardChroma = false;
+    bool forwardChroma = false;
     RGYFrameInfo backwardIdentity = {};
     RGYFrameInfo forwardIdentity = {};
 
@@ -555,8 +588,9 @@ RGY_ERR RGYFilterRtgmc::updateCompReferenceStore(const RGYFrameInfo *frame, RGYO
         auto &params = (i == 0) ? backwardParams : forwardParams;
         auto &identity = (i == 0) ? backwardIdentity : forwardIdentity;
         auto &ready = (i == 0) ? backwardReady : forwardReady;
+        auto &chroma = (i == 0) ? backwardChroma : forwardChroma;
 
-        sts = filter->buildCompensateInlineParams(params, &identity, queue);
+        sts = filter->buildCompensateInlineParams(params, &identity, queue, &chroma);
         if (sts == RGY_ERR_NONE) {
             ready = true;
         } else if (sts != RGY_ERR_MORE_DATA) {
@@ -573,6 +607,7 @@ RGY_ERR RGYFilterRtgmc::updateCompReferenceStore(const RGYFrameInfo *frame, RGYO
         }
         if (compRef) {
             compRef->hasInlineParams = true;
+            compRef->inlineParamsChroma = (!backwardReady || backwardChroma) && (!forwardReady || forwardChroma);
             compRef->backwardInlineParams = backwardParams;
             compRef->forwardInlineParams = forwardParams;
         }
@@ -602,6 +637,8 @@ RGY_ERR RGYFilterRtgmc::drainCompReferenceStore(RGYOpenCLQueue &queue) {
         std::array<RGYDegrainCompensateInlineParams, 3> forwardParams = {};
         bool backwardReady = false;
         bool forwardReady = false;
+        bool backwardChroma = false;
+        bool forwardChroma = false;
         RGYFrameInfo backwardIdentity = {};
         RGYFrameInfo forwardIdentity = {};
 
@@ -619,8 +656,9 @@ RGY_ERR RGYFilterRtgmc::drainCompReferenceStore(RGYOpenCLQueue &queue) {
             auto &params = (i == 0) ? backwardParams : forwardParams;
             auto &identity = (i == 0) ? backwardIdentity : forwardIdentity;
             auto &ready = (i == 0) ? backwardReady : forwardReady;
+            auto &chroma = (i == 0) ? backwardChroma : forwardChroma;
 
-            auto sts = filter->drainBuildInlineParams(params, &identity, queue);
+            auto sts = filter->drainBuildInlineParams(params, &identity, queue, &chroma);
             if (sts == RGY_ERR_NONE) {
                 ready = true;
                 progress = true;
@@ -638,6 +676,7 @@ RGY_ERR RGYFilterRtgmc::drainCompReferenceStore(RGYOpenCLQueue &queue) {
             }
             if (compRef) {
                 compRef->hasInlineParams = true;
+                compRef->inlineParamsChroma = (!backwardReady || backwardChroma) && (!forwardReady || forwardChroma);
                 compRef->backwardInlineParams = backwardParams;
                 compRef->forwardInlineParams = forwardParams;
             }
@@ -683,6 +722,11 @@ RGY_ERR RGYFilterRtgmc::cacheSourceFrame(const RGYFrameInfo *frame, RGYOpenCLQue
     if (m_sharedAnalysisMode) {
         return RGY_ERR_NONE;
     }
+    const auto capacity = sourceCacheCapacity();
+    if (capacity <= 0) {
+        return RGY_ERR_NONE;
+    }
+    m_sourceCacheNext %= (int)capacity;
     auto &entry = m_sourceCache[m_sourceCacheNext];
     if (!entry.frame || cmpFrameInfoCspResolution(&entry.frame->frame, frame)) {
         entry.frame = m_cl->createFrameBuffer(*frame);
@@ -700,19 +744,65 @@ RGY_ERR RGYFilterRtgmc::cacheSourceFrame(const RGYFrameInfo *frame, RGYOpenCLQue
     copyFramePropWithoutRes(&entry.frame->frame, frame);
     entry.key = RtgmcFrameKey(frame);
     entry.event = copyEvent;
-    m_sourceCacheNext = (m_sourceCacheNext + 1) % (int)m_sourceCache.size();
+    m_sourceCacheNext = (m_sourceCacheNext + 1) % (int)capacity;
     return RGY_ERR_NONE;
 }
 
-const RGYFrameInfo *RGYFilterRtgmc::findCachedSourceFrame(const RGYFrameInfo *frame, std::vector<RGYOpenCLEvent> *wait_events) {
+const RGYFilterRtgmc::RtgmcSourceCacheFrame *RGYFilterRtgmc::findCachedSourceEntry(const RGYFrameInfo *frame) const {
     if (!frame) {
         return nullptr;
     }
     const auto &cache = m_sharedAnalysisMode && m_sharedData.sourceCache ? *m_sharedData.sourceCache : m_sourceCache;
     auto cached = std::find_if(cache.begin(), cache.end(), [frame](const RtgmcSourceCacheFrame &entry) {
-        return entry.frame && entry.key.inputFrameId == frame->inputFrameId;
+        return entry.frame && entry.key.matches(frame);
     });
     if (cached == cache.end()) {
+        cached = std::find_if(cache.begin(), cache.end(), [frame](const RtgmcSourceCacheFrame &entry) {
+            return entry.frame && entry.key.matchesFrameIdentity(frame);
+        });
+    }
+    if (cached == cache.end()) {
+        const RtgmcSourceCacheFrame *best = nullptr;
+        for (const auto &entry : cache) {
+            if (!entry.frame || entry.key.inputFrameId != frame->inputFrameId || entry.key.duration <= 0) {
+                continue;
+            }
+            const auto start = entry.key.timestamp;
+            const auto end = start + entry.key.duration;
+            if (start <= frame->timestamp && frame->timestamp < end
+                && (!best || best->key.timestamp < entry.key.timestamp)) {
+                best = &entry;
+            }
+        }
+        if (best) {
+            return best;
+        }
+    }
+    if (cached == cache.end()) {
+        const RtgmcSourceCacheFrame *best = nullptr;
+        for (const auto &entry : cache) {
+            if (!entry.frame || entry.key.inputFrameId != frame->inputFrameId || entry.key.timestamp > frame->timestamp) {
+                continue;
+            }
+            if (!best || best->key.timestamp < entry.key.timestamp) {
+                best = &entry;
+            }
+        }
+        if (best) {
+            return best;
+        }
+    }
+    if (cached == cache.end()) {
+        cached = std::find_if(cache.begin(), cache.end(), [frame](const RtgmcSourceCacheFrame &entry) {
+            return entry.frame && entry.key.inputFrameId == frame->inputFrameId;
+        });
+    }
+    return (cached != cache.end()) ? &(*cached) : nullptr;
+}
+
+const RGYFrameInfo *RGYFilterRtgmc::findCachedSourceFrame(const RGYFrameInfo *frame, std::vector<RGYOpenCLEvent> *wait_events) {
+    const auto cached = findCachedSourceEntry(frame);
+    if (!cached) {
         return nullptr;
     }
     if (wait_events && cached->event() != nullptr) {
@@ -726,29 +816,31 @@ int RGYFilterRtgmc::sourceFieldForFrame(const RGYFrameInfo *frame) const {
         return 0;
     }
     const auto rtgmcParam = std::dynamic_pointer_cast<RGYFilterParamRtgmc>(m_param);
-    const auto &cache = (m_sharedAnalysisMode && m_sharedData.sourceCache) ? *m_sharedData.sourceCache : m_sourceCache;
-    auto cached = std::find_if(cache.begin(), cache.end(), [frame](const RtgmcSourceCacheFrame &entry) {
-        return entry.frame && entry.key.inputFrameId == frame->inputFrameId;
-    });
+    const auto cached = findCachedSourceEntry(frame);
     bool tff = true;
     if (rtgmcParam) {
         if (rtgmcParam->rtgmc.bob.order == VppRtgmcBobOrder::BFF) {
             tff = false;
         } else if (rtgmcParam->rtgmc.bob.order == VppRtgmcBobOrder::TFF) {
             tff = true;
-        } else if (cached != cache.end() && cached->frame) {
+        } else if (cached && cached->frame) {
             tff = (cached->frame->frame.picstruct & RGY_PICSTRUCT_BFF) == 0;
         } else {
             tff = (frame->picstruct & RGY_PICSTRUCT_BFF) == 0;
         }
     }
-    if (cached == cache.end() || cached->key.duration <= 0) {
+    if (!cached || cached->key.duration <= 0) {
         return tff ? 0 : 1;
     }
     const auto halfDuration = (cached->key.duration + 1) / 2;
     return (frame->timestamp >= cached->key.timestamp + halfDuration)
         ? (tff ? 1 : 0)
         : (tff ? 0 : 1);
+}
+
+size_t RGYFilterRtgmc::sourceCacheCapacity() const {
+    const auto requiredFrames = requiredPrimingSourceFrames() + RGY_RTGMC_MAX_OUT_FRAMES + RGY_RTGMC_MAX_RETURN_FRAMES;
+    return std::min(m_sourceCache.size(), (size_t)std::max(8, requiredFrames));
 }
 
 void RGYFilterRtgmc::storeEdiReference(const RGYFrameInfo *frame, const std::shared_ptr<RGYFrameDataRtgmcEdi> &edi, const RGYOpenCLEvent &event) {
@@ -1188,9 +1280,9 @@ RGY_ERR RGYFilterRtgmc::initFilters(const std::shared_ptr<RGYFilterParamRtgmc> &
         return RGY_ERR_NONE;
     };
     auto rtgDegrainRuntimeParam = [&](VppDegrain degrain, const TCHAR *stage) {
-        if (degrain.overlap != 0 && degrain.overlap * 2 != degrain.blksize) {
+        if (!rtgmcDegrainOverlapSupported(degrain)) {
             AddMessage(RGY_LOG_WARN,
-                _T("%s overlap=%d is adjusted to %d because the current Degrain backend supports overlap=0 or blksize/2.\n"),
+                _T("%s overlap=%d is adjusted to %d because the current Degrain backend supports overlap=0, blksize/4 or blksize/2.\n"),
                 stage, degrain.overlap, degrain.blksize / 2);
             degrain.overlap = degrain.blksize / 2;
         }
@@ -1239,6 +1331,8 @@ RGY_ERR RGYFilterRtgmc::initFilters(const std::shared_ptr<RGYFilterParamRtgmc> &
         // cannot identify the frame being emitted by those filters. Keep the
         // analysis payload internal to the nested chain and erase it at final output.
         param->attachAnalysisData = true;
+        // search-prefilter出力に添付された内容同一の入力キャッシュをアンカーに使う。
+        param->zeroCopyCache = true;
         auto sts = initOne(std::move(filter), param);
         if (sts != RGY_ERR_NONE) return sts;
     }
@@ -1320,6 +1414,7 @@ RGY_ERR RGYFilterRtgmc::initFilters(const std::shared_ptr<RGYFilterParamRtgmc> &
         param->nnsize = prm->rtgmc.edi.nnsize;
         param->nneurons = prm->rtgmc.edi.nneurons;
         param->ediqual = prm->rtgmc.edi.ediqual;
+        param->order = prm->rtgmc.bob.order;
         param->sourceFrameIn = currentFrame;
         param->sourceBaseFps = prm->baseFps;
         param->sourceTimebase = prm->timebase;
@@ -1355,18 +1450,27 @@ RGY_ERR RGYFilterRtgmc::initFilters(const std::shared_ptr<RGYFilterParamRtgmc> &
         param->degrain = rtgDegrainRuntimeParam(prm->rtgmc.tr1, _T("tr1"));
         param->degrain.mode = VppDegrainMode::Degrain;
         param->degrain.stage = VppDegrainStage::TR1;
+        // TR1の入力はEDI出力で、attachEdiReferenceが作った内容同一のプールコピー
+        // (rtgmc.edi_ref)が添付されている。それをアンカーにキャッシュコピーを省略する。
+        param->zeroCopyCache = true;
         auto sts = initOne(std::move(filter), param);
         if (sts != RGY_ERR_NONE) return sts;
     }
     {
-        auto filter = std::make_unique<RGYFilterRtgmcShimmerRepair>(m_cl);
-        auto param = std::make_shared<RGYFilterParamRtgmcShimmerRepair>();
-        param->stage = RGYRtgmcShimmerRepairStage::PreRetouch;
-        param->repairThin = prm->rtgmc.rep1.repThin;
-        param->repairPad = prm->rtgmc.rep1.repPad;
-        param->processChroma = prm->rtgmc.rep1.repChroma;
-        auto sts = initOne(std::move(filter), param);
-        if (sts != RGY_ERR_NONE) return sts;
+        if (prm->rtgmc.rep1.repThin == 0) {
+            auto sts = initBypass();
+            if (sts != RGY_ERR_NONE) return sts;
+            AddMessage(RGY_LOG_DEBUG, _T("rep1 shimmer repair stage is skipped because rep-thin=0.\n"));
+        } else {
+            auto filter = std::make_unique<RGYFilterRtgmcShimmerRepair>(m_cl);
+            auto param = std::make_shared<RGYFilterParamRtgmcShimmerRepair>();
+            param->stage = RGYRtgmcShimmerRepairStage::PreRetouch;
+            param->repairThin = prm->rtgmc.rep1.repThin;
+            param->repairPad = prm->rtgmc.rep1.repPad;
+            param->processChroma = prm->rtgmc.rep1.repChroma;
+            auto sts = initOne(std::move(filter), param);
+            if (sts != RGY_ERR_NONE) return sts;
+        }
     }
     {
         auto filter = std::make_unique<RGYFilterRtgmcLossless>(m_cl);
@@ -1418,14 +1522,20 @@ RGY_ERR RGYFilterRtgmc::initFilters(const std::shared_ptr<RGYFilterParamRtgmc> &
         }
     }
     {
-        auto filter = std::make_unique<RGYFilterRtgmcShimmerRepair>(m_cl);
-        auto param = std::make_shared<RGYFilterParamRtgmcShimmerRepair>();
-        param->stage = RGYRtgmcShimmerRepairStage::PostTR2;
-        param->repairThin = prm->rtgmc.rep2.repThin;
-        param->repairPad = prm->rtgmc.rep2.repPad;
-        param->processChroma = prm->rtgmc.rep2.repChroma;
-        auto sts = initOne(std::move(filter), param);
-        if (sts != RGY_ERR_NONE) return sts;
+        if (prm->rtgmc.rep2.repThin == 0) {
+            auto sts = initBypass();
+            if (sts != RGY_ERR_NONE) return sts;
+            AddMessage(RGY_LOG_DEBUG, _T("rep2 shimmer repair stage is skipped because rep-thin=0.\n"));
+        } else {
+            auto filter = std::make_unique<RGYFilterRtgmcShimmerRepair>(m_cl);
+            auto param = std::make_shared<RGYFilterParamRtgmcShimmerRepair>();
+            param->stage = RGYRtgmcShimmerRepairStage::PostTR2;
+            param->repairThin = prm->rtgmc.rep2.repThin;
+            param->repairPad = prm->rtgmc.rep2.repPad;
+            param->processChroma = prm->rtgmc.rep2.repChroma;
+            auto sts = initOne(std::move(filter), param);
+            if (sts != RGY_ERR_NONE) return sts;
+        }
     }
     {
         auto filter = std::make_unique<RGYFilterRtgmcRetouch>(m_cl);
@@ -1976,7 +2086,8 @@ RGY_ERR RGYFilterRtgmc::runNestedFilter(size_t filterIdx, RGYFrameInfo *pInputFr
                         combinedParams[p].refForw = compRef->forwardInlineParams[p].refBack;
                         combinedParams[p].refDirForw = compRef->forwardInlineParams[p].refDirBack;
                     }
-                    retouch->setTemporalLimitInlineComp(edi->frame(), combinedParams);
+                    const bool inlineCompChroma = (rtgmcParam ? rtgmcParam->rtgmc.tr1.chroma : true) && compRef->inlineParamsChroma;
+                    retouch->setTemporalLimitInlineComp(edi->frame(), combinedParams, inlineCompChroma);
                     usedInlineComp = true;
                 }
             }
@@ -2431,6 +2542,9 @@ void RGYFilterRtgmc::resetTemporalState() {
     m_pendingNoiseRefs.clear();
     m_pendingOutputFrames.clear();
     m_pendingSourceMatchFrameProps.clear();
+    if (m_ediSideDataFramePool) {
+        m_ediSideDataFramePool->clear();
+    }
     for (auto &frame : m_sourceCache) {
         frame.key = RtgmcFrameKey();
         frame.event.reset();
@@ -2464,6 +2578,9 @@ void RGYFilterRtgmc::close() {
     m_pendingSourceMatchFrameProps.clear();
     if (m_sharedFramePool) {
         m_sharedFramePool->clear();
+    }
+    if (m_ediSideDataFramePool) {
+        m_ediSideDataFramePool->clear();
     }
     for (auto &frame : m_sourceCache) {
         frame.key = RtgmcFrameKey();

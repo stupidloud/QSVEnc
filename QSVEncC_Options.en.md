@@ -68,6 +68,7 @@
   - [--vcm \<int\> (VCM, Video Conference Mode)](#--vcm-int-vcm-video-conference-mode)
   - [--qvbr \<int\>, --qvbr-q \<int\> (QVBR, Quality based VBR mode)](#--qvbr-int---qvbr-q-int-qvbr-quality-based-vbr-mode)
   - [--fallback-rc](#--fallback-rc)
+  - [--workaround-hevc10bit-enctools / --no-workaround-hevc10bit-enctools](#--workaround-hevc10bit-enctools----no-workaround-hevc10bit-enctools)
 - [Options for Frame Buffer](#options-for-frame-buffer)
   - [--disable-d3d (Win)](#--disable-d3d-win)
   - [--disable-va (Linux)](#--disable-va-linux)
@@ -206,6 +207,7 @@
   - [--tcfile-in \<string\>](#--tcfile-in-string)
   - [--timebase \<int\>/\<int\>](#--timebase-intint)
   - [--input-hevc-bsf \<string\>](#--input-hevc-bsf-string)
+  - [--adapt-resolution \<int\>x\<int\>](#--adapt-resolution-intxint)
   - [--input-pixel-format \<string\>](#--input-pixel-format-string)
   - [--offset-video-dts-advance](#--offset-video-dts-advance)
   - [--allow-other-negative-pts](#--allow-other-negative-pts)
@@ -244,12 +246,12 @@
   - [--vpp-nlmeans \[\<param1\>=\<value1\>\[,\<param2\>=\<value2\>\]...\]](#--vpp-nlmeans-param1value1param2value2)
   - [--vpp-pmd \[\<param1\>=\<value1\>\[,\<param2\>=\<value2\>\]...\]](#--vpp-pmd-param1value1param2value2)
   - [--vpp-hqdn3d \[\<param1\>=\<value1\>\[,\<param2\>=\<value2\>\]...\]](#--vpp-hqdn3d-param1value1param2value2)
-  - [--vpp-descale \[\<param1\>=\<value1\>\[,\<param2\>=\<value2\>\]...\]](#--vpp-descale-param1value1param2value2)
   - [--vpp-denoise \<int\> or \[\<param1\>=\<value1\>\[,\<param2\>=\<value2\>\]...\]](#--vpp-denoise-int-or-param1value1param2value2)
   - [--vpp-image-stab \<string\>](#--vpp-image-stab-string)
   - [--vpp-mctf \["auto" or \<int\>\]](#--vpp-mctf-auto-or-int)
   - [--vpp-subburn \[\<param1\>=\<value1\>\[,\<param2\>=\<value2\>\]...\]](#--vpp-subburn-param1value1param2value2)
   - [--vpp-libplacebo-shader \[\<param1\>=\<value1\>\]\[,\<param2\>=\<value2\>\],...](#--vpp-libplacebo-shader-param1value1param2value2)
+  - [--vpp-descale \[\<param1\>=\<value1\>\[,\<param2\>=\<value2\>\]...\]](#--vpp-descale-param1value1param2value2)
   - [--vpp-resize \<string\>](#--vpp-resize-string)
   - [--vpp-resize-mode \<string\>](#--vpp-resize-mode-string)
   - [--vpp-unsharp \[\<param1\>=\<value1\>\[,\<param2\>=\<value2\>\]...\]](#--vpp-unsharp-param1value1param2value2)
@@ -280,10 +282,16 @@
   - [--vpp-overlay \[\<param1\>=\<value1\>\]\[,\<param2\>=\<value2\>\],...](#--vpp-overlay-param1value1param2value2)
   - [--vpp-perc-pre-enc](#--vpp-perc-pre-enc)
   - [--vpp-mfx-insert-clcopy \[\<int\>\]](#--vpp-mfx-insert-clcopy-int)
+  - [--vpp-anime4k-shader \[\<param1\>=\<value1\>\]\[,\<param2\>=\<value2\>\],...](#--vpp-anime4k-shader-param1value1param2value2)
+  - [--vpp-onnx \[\<param1\>=\<value1\>\]\[,\<param2\>=\<value2\>\],...](#--vpp-onnx-param1value1param2value2)
+  - [--vpp-onnx-deint \[\<param1\>=\<value1\>\]\[,\<param2\>=\<value2\>\],...](#--vpp-onnx-deint-param1value1param2value2)
+  - [--vpp-onnx-model-dir \<string\>](#--vpp-onnx-model-dir-string)
+  - [--vpp-onnx-cache-dir \<string\>](#--vpp-onnx-cache-dir-string)
   - [--vpp-ai-frameinterp \[\<param1\>=\<value1\>\]\[,\<param2\>=\<value2\>\],...](#--vpp-ai-frameinterp-param1value1param2value2)
   - [--vpp-perf-monitor](#--vpp-perf-monitor)
 - [Other Options](#other-options)
   - [--parallel \[\<int\>\] or \[\<string\>\]](#--parallel-int-or-string)
+  - [--parallel-force-large-memory-filters](#--parallel-force-large-memory-filters)
   - [--async-depth \<int\>](#--async-depth-int)
   - [--input-buf \<int\>](#--input-buf-int)
   - [--output-buf \<int\>](#--output-buf-int)
@@ -313,6 +321,7 @@
   - [--vpy-assume-script-dir](#--vpy-assume-script-dir)
   - [--process-codepage \<string\> \[Windows OS only\]](#--process-codepage-string-windows-os-only)
   - [--task-perf-monitor](#--task-perf-monitor)
+  - [--opencl-task-threads \<auto|int\>](#--opencl-task-threads-autoint)
   - [--cl-perf-dump \<dir\>](#--cl-perf-dump-dir)
   - [--cl-perf-timeline \[\<float\>\]](#--cl-perf-timeline-float)
   - [--ocloc-path \<path\>](#--ocloc-path-path)
@@ -648,6 +657,12 @@ Encode in bitrate specified with "--qvbr", based on quality specified by "--qvbr
 ### --fallback-rc
 Enable fallback of ratecontrol mode, when platform does not support new ratecontrol modes.
 
+### --workaround-hevc10bit-enctools / --no-workaround-hevc10bit-enctools
+
+Workaround for image corruption when using EncTools related options (--scenario-info, --extbrc, --tune) with 10bit HEVC FF encoding on iGPUs older than or equal to AlderLake.
+
+When enabled, automatically disables the above options with a warning on affected GPU generations. Enabled by default.
+
 **Selecting Encode modes**  
 CBR, VBR, AVBR are rather basic encoding modes, and although they are fast, the quality tends to be poor.
 Using more complex encoding modes, such as ICQ, LA-ICQ, QVBR, LA modes, will result in higher quality.
@@ -795,6 +810,12 @@ Change the rate control mode and rate control params within the specified range 
 ### --la-depth &lt;int&gt;
 Specify lookahead depth in frames. (10 - 100)  
 When encoding in interlace mode, the upper limit will be halved to 50.
+
+For AV1 lookahead, use `--la-depth` as the EncTools LookAheadDepth option on top of bitrate control modes such as `--vbr` / `--cbr` / `--icq`, instead of the legacy `--la` / `--la-icq` / `--la-hrd` rate control modes. Intel's FFmpeg QSV examples enable it with ExtBRC, so use `--extbrc` together with this option. A typical AV1 quality-oriented example is:
+
+```
+--codec av1 --icq 24 --la-depth 40 --extbrc --i-adapt --b-adapt
+```
 
 ### --la-window-size &lt;int&gt; 0(auto)
 Set bitrate calculation window length in frames.
@@ -1027,8 +1048,7 @@ Set parameters for ```--dolby-vision-rpu```.
 
 - **parameters**
   
-  - crop=&lt;bool&gt;
-
+  - crop=&lt;bool&gt;  
     Set active area offsets to 0 (no letterbox bars).
 
 - Examples
@@ -1224,6 +1244,7 @@ Copy audio track into output file. Available only when avhw / avsw reader is use
 If it does not work well, try encoding with [--audio-codec](#--audio-codec-intstring), which is more stable.
 
 You can also specify the audio track (1, 2, ...) to extract with [&lt;int&gt;], or select audio track to copy by language with [&lt;string&gt;].
+Prefix languages with `!` to select all tracks except those languages (for example, `!eng,!jpn`).
 
 - Examples
   ```
@@ -1241,6 +1262,7 @@ You can also specify the audio track (1, 2, ...) to extract with [&lt;int&gt;], 
 Encode audio track with the codec specified. If codec is not set, most suitable codec will be selected automatically. Codecs available could be checked with [--check-encoders](#--check-codecs---check-decoders---check-encoders).
 
 You can select audio track (1, 2, ...) to encode with [&lt;int&gt;], or select audio track to encode by language with [&lt;string&gt;].
+Prefix languages with `!` to select all tracks except those languages (for example, `--audio-codec !eng,!jpn?copy`).
 
 Also, after ":" you can specify params for audio encoder,  after "#" you can specify params for audio decoder.
 
@@ -1471,7 +1493,6 @@ Mux an external audio file specified.
 - **file params**
   - format=&lt;string&gt;  
     Specify input format for the file.
-
   - input_opt=&lt;string&gt;  
     Specify input options for the file.
 
@@ -1596,7 +1617,6 @@ Read subtitle from the specified file and mux into the output file.
 - **file params**
   - format=&lt;string&gt;  
     Specify input format for the file.
-
   - input_opt=&lt;string&gt;  
     Specify input options for the file.
 
@@ -1619,6 +1639,7 @@ Read subtitle from the specified file and mux into the output file.
 ### --sub-copy [&lt;int/string&gt;;[,&lt;int/string&gt;]...]
 Copy subtitle tracks from input file. Available only when avhw / avsw reader is used.
 It is also possible to specify subtitle tracks (1, 2, ...) to extract with [&lt;int&gt;], or select subtitle tracks to copy by language with [&lt;string&gt;].
+Prefix languages with `!` to select all tracks except those languages (for example, `!eng,!jpn`).
 
 Supported subtitles are PGS / srt / txt / ttxt.
 
@@ -1770,6 +1791,12 @@ switch hevc bitstream filter used for hw decoder input. (for debug purpose)
   - libavcodec  
     use hevc_mp4toannexb bitstream filter.
 
+### --adapt-resolution &lt;int&gt;x&lt;int&gt;
+
+Preallocates input surfaces at the specified maximum resolution to handle resolution changes in the input stream.
+Frames after a resolution change are resized to the initial output resolution, so the output resolution does not change.
+When omitted, the initial input resolution is used as the maximum. The specified resolution must not be smaller than the initial input resolution.
+
 ### --input-pixel-format &lt;string&gt;
 Set "pixel_format" for input avdevice. (not intended on other situations)
 
@@ -1853,6 +1880,11 @@ Vpp filters will be applied in fixed order, regardless of the order in the comma
   - [--vpp-overlay](#--vpp-overlay-param1value1param2value2)
   - [--vpp-perc-pre-enc](#--vpp-perc-pre-enc)
   - [--vpp-mfx-insert-clcopy](#--vpp-mfx-insert-clcopy-int)
+  - [--vpp-anime4k-shader](#--vpp-anime4k-shader-param1value1param2value2)
+  - [--vpp-onnx](#--vpp-onnx-param1value1param2value2)
+  - [--vpp-onnx-deint](#--vpp-onnx-deint-param1value1param2value2)
+  - [--vpp-onnx-model-dir](#--vpp-onnx-model-dir-string)
+  - [--vpp-onnx-cache-dir](#--vpp-onnx-cache-dir-string)
   - [--vpp-ai-frameinterp](#--vpp-ai-frameinterp-param1value1param2value2)
 
 ### --vpp-colorspace [&lt;param1&gt;=&lt;value1&gt;[,&lt;param2&gt;=&lt;value2&gt;]...]  
@@ -1975,34 +2007,24 @@ Performs tone mapping using [libplacebo](https://code.videolan.org/videolan/libp
 
   - src_max=&lt;float&gt;  
     Input maximum luminance (nits). (Default: auto, tries to get info from input file if possible, otherwise 1000.0 (HDR) / 203.0 (SDR))
-
   - src_min=&lt;float&gt;  
     Input minimum luminance (nits). (Default: auto, tries to get info from input file if possible, otherwise 0.005 (HDR) / 0.2023 (SDR))
-
   - dst_max=&lt;float&gt;  
     Output maximum luminance (nits). (Default: auto, tries to get info from parameters if possible, otherwise 1000.0 (HDR) / 203.0 (SDR))
-
   - dst_min=&lt;float&gt;  
     Output minimum luminance (nits). (Default: auto, tries to get info from parameters if possible, otherwise 0.005 (HDR) / 0.2023 (SDR))
-
   - dynamic_peak_detection=&lt;bool&gt;  
     Enables computation of signal stats to optimize HDR tone mapping quality. Default: true
-
   - smooth_period=&lt;float&gt;  
     Smoothing coefficient for detected values. Default: 20.0
-
   - scene_threshold_low=&lt;float&gt;  
     Lower threshold for scene change detection (dB). Default: 1.0
-
   - scene_threshold_high=&lt;float&gt;  
     Upper threshold for scene change detection (dB). Default: 3.0
-
   - percentile=&lt;float&gt;  
     Percentile to consider for luminance histogram. Default: 99.995
-
   - black_cutoff=&lt;float&gt;  
     Black level cutoff intensity (PQ%). Default: 1.0
-
   - gamut_mapping=&lt;string&gt;  
     Gamut mapping mode. (Default: perceptual)
     ```
@@ -2060,7 +2082,6 @@ Performs tone mapping using [libplacebo](https://code.videolan.org/videolan/libp
 
     - exposure=&lt;float&gt;   (0.0 - 10.0, default: 1.0)  
       Linear exposure/gain applied.
-
   - metadata=&lt;int&gt;  
     Data source to use for tone mapping.
     ```
@@ -2069,22 +2090,16 @@ Performs tone mapping using [libplacebo](https://code.videolan.org/videolan/libp
 
   - contrast_recovery=&lt;float&gt;  
     Contrast recovery strength. Default: 0.3
-
   - contrast_smoothness=&lt;float&gt;  
     Contrast recovery lowpass kernel size. Default: 3.5
-
   - inverse_tone_mapping=&lt;bool&gt;  
     Inverse tone mapping. Default: false
-
   - visualize_lut=&lt;bool&gt;  
     Visualize tone mapping curve/LUT. Default: false
-
   - show_clipping=&lt;bool&gt;  
     Graphically highlight hard-clipped pixels. Default: false
-
   - use_dovi=&lt;bool&gt;  
     Whether to use Dolby Vision RPU as ST2086 metadata. Default: auto (enabled when tone mapping from Dolby Vision)
-
   - dst_pl_transfer=&lt;string&gt;  
     Output transfer function. Must be used with ```dst_pl_colorprim```.
     ```
@@ -2170,7 +2185,7 @@ Activate Auto Field Shift (AFS) deinterlacer.
   - top=&lt;int&gt;
   - bottom=&lt;int&gt;
   - left=&lt;int&gt;
-  - right=&lt;int&gt;
+  - right=&lt;int&gt;  
     clip out the range to decide field shift.
   
   - method_switch=&lt;int&gt;  (0 - 256)  
@@ -2224,7 +2239,7 @@ Activate Auto Field Shift (AFS) deinterlacer.
     | grey | stripe was detected|
     | light blue | motion & stripe was detected |
   
-  - rff=&lt;bool&gt;   
+  - rff=&lt;bool&gt;  
     When this options is set true, rff flag from input will be checked, and when there is progressive frame coded with rff, then deinterlacing will not be applied.
   
   - log=&lt;bool&gt;  
@@ -2303,30 +2318,24 @@ nnedi deinterlacer.
 
 - **parameters**
 
+  - planes=&lt;string&gt;  
+    Target planes. `all`, or `:`-separated list of `y`, `u`, `v`. Default: `all`.
   - field=&lt;string&gt;  
     Target field selector. `bob`, `auto` (default), `top`, `bottom`, `bob_tff`, `bob_bff`.
-
   - nsize=&lt;string&gt;  
     Neighborhood size. `8x6`, `16x6`, `32x6`, `48x6`, `8x4`, `16x4`, `32x4` (default).
-
   - nns=&lt;int&gt;  
     Neuron count. `16`, `32` (default), `64`, `128`, `256`.
-
   - quality=&lt;string&gt;  
     Quality mode. `fast` (default) or `slow`.
-
   - prescreen=&lt;int&gt;  
     Supported values: `2/3/4`. `0/1` are not implemented. Default: `2`.
-
   - errortype=&lt;string&gt;  
     Error type. `abs` (default) or `square`.
-
   - clamp=&lt;int&gt;  
     Clamp range mode. `0-4`. Default: `1`.
-
   - double_height=&lt;bool&gt;  
     Double output height. Supported only with `field=auto/top/bottom`. Default: off.
-
   - weightfile=&lt;path&gt;  
     Path to `nnedi3_weights.bin`. If omitted, Windows builds search for `nnedi3_weights.bin`, and Linux builds use embedded weights.
 
@@ -2341,23 +2350,22 @@ High quality QTGMC deinterlacer with relaxed implementation for GPU.
   - preset=&lt;string&gt;  
     `slower`, `slow`, `medium`, `fast`, `faster` (default), `veryfast`, `superfast`, `ultrafast`, `draft`.
     This refers the original values.
-
   - tuning=&lt;string&gt;  
     `none` (default), `dv-sd`, `dv-hd`.
 
   - preset expansion table (implementation values)
 
-    | preset | tr0 | tr1 | tr2 | rep0-thin | rep2-thin | edi | nnsize | nneurons | search_refine | search | searchparam | pelsearch | chroma_motion | precise | prog_sad_mask |
-    |:--|--:|--:|--:|--:|--:|:--|--:|--:|--:|--:|--:|--:|:--|:--|--:|
-    | slower | 2 | 2 | 1 | 4 | 4 | nnedi3 | 1 | 1 | 3 | 4 | 2 | 2 | on | off | 10.0 |
-    | slow | 2 | 1 | 1 | 4 | 4 | nnedi3 | 1 | 1 | 3 | 4 | 2 | 2 | off | off | 10.0 |
-    | medium | 2 | 1 | 1 | 3 | 4 | nnedi3 | 5 | 1 | 3 | 4 | 2 | 1 | off | off | 10.0 |
-    | fast | 2 | 1 | 0 | 3 | 4 | nnedi3 | 5 | 0 | 2 | 4 | 2 | 1 | off | off | 0.0 |
-    | faster | 1 | 1 | 0 | 0 | 4 | nnedi3 | 4 | 0 | 2 | 4 | 2 | 1 | off | off | 0.0 |
-    | veryfast | 1 | 1 | 0 | 0 | 4 | nnedi3 | 4 | 0 | 2 | 4 | 1 | 1 | off | off | 0.0 |
-    | superfast | 1 | 1 | 0 | 0 | 3 | nnedi3 | 4 | 0 | 1 | 0 | 1 | 1 | off | off | 0.0 |
-    | ultrafast | 1 | 1 | 0 | 0 | 3 | repyadif | 4 | 0 | 1 | 0 | 1 | 1 | off | off | 0.0 |
-    | draft | 0 | 1 | 0 | 0 | 0 | bob | 4 | 0 | 0 | 0 | 1 | 1 | off | off | 0.0 |
+    | preset | tr0 | tr1 | tr2 | rep0-thin | rep2-thin | edi | nnsize | nneurons | search_refine | search | searchparam | pelsearch | search_early_sad | chroma_motion | precise | prog_sad_mask |
+    |:--|--:|--:|--:|--:|--:|:--|--:|--:|--:|--:|--:|--:|--:|:--|:--|--:|
+    | slower | 2 | 2 | 1 | 4 | 4 | nnedi3 | 1 | 1 | 3 | 4 | 2 | 2 | 0 | on | off | 10.0 |
+    | slow | 2 | 1 | 1 | 4 | 4 | nnedi3 | 1 | 1 | 3 | 4 | 2 | 2 | 0 | off | off | 10.0 |
+    | medium | 2 | 1 | 1 | 3 | 4 | nnedi3 | 5 | 1 | 3 | 4 | 2 | 1 | 8 | off | off | 10.0 |
+    | fast | 2 | 1 | 0 | 3 | 4 | nnedi3 | 5 | 0 | 2 | 4 | 2 | 1 | 8 | off | off | 0.0 |
+    | faster | 1 | 1 | 0 | 0 | 4 | nnedi3 | 4 | 0 | 2 | 4 | 2 | 1 | 16 | off | off | 0.0 |
+    | veryfast | 1 | 1 | 0 | 0 | 4 | nnedi3 | 4 | 0 | 2 | 4 | 1 | 1 | 16 | off | off | 0.0 |
+    | superfast | 1 | 1 | 0 | 0 | 3 | nnedi3 | 4 | 0 | 1 | 0 | 1 | 1 | 16 | off | off | 0.0 |
+    | ultrafast | 1 | 1 | 0 | 0 | 3 | repyadif | 4 | 0 | 1 | 0 | 1 | 1 | 16 | off | off | 0.0 |
+    | draft | 0 | 1 | 0 | 0 | 0 | bob | 4 | 0 | 0 | 0 | 1 | 1 | 16 | off | off | 0.0 |
 
     - `blksize` is tuning-dependent (`dv-hd=32`, otherwise `16`) for `slower..fast`, and fixed to `32` for `faster..draft`.
     - `overlap` is `blksize/2` for `slower..faster`, and `blksize/4` for `veryfast..draft`.
@@ -2369,11 +2377,10 @@ High quality QTGMC deinterlacer with relaxed implementation for GPU.
   - edi/match_edi=&lt;string&gt;  
     `bob`, `yadif`, `cyadif`, `repyadif`, `repcyadif`, `nnedi3`, `passthrough`.
     For `source_match>0`, `match_edi` is limited to `bob/yadif/cyadif/repyadif/repcyadif/nnedi3`.
-
   - tr0/rep0-thin/rep0-pad/search_refine
     `tr0=-1..2`, `rep0-thin=0-7`, `rep0-pad=0-3`, `search_refine=0-3`.
 
-  - mv_spatial_refine=&lt;int|auto&gt;
+  - mv_spatial_refine=&lt;int|auto&gt;  
     Motion-vector spatial refinement count. Motion estimation proceeds through a coarse-to-fine pyramid of analysis levels; this option controls how many spatial refinement passes (which **consult neighboring block motion vectors to further improve precision**) are run at each level.
     Default is `auto` (`-1`): **perform spatial refinement only at the coarsest (lowest-resolution) level, where the block count is smallest, and skip it at all finer levels**. This concentrates spatial-neighbor based refinement on the level where its serial-dependency cost is negligible, while letting the finer levels (with many blocks) run with maximum GPU parallelism.
     `0` disables spatial refinement at every level; `1` runs one pass at every level, `2` runs two passes at every level, and so on.
@@ -2401,6 +2408,10 @@ High quality QTGMC deinterlacer with relaxed implementation for GPU.
     This stage controls motion-vector search behavior and temporal reference direction.
     - `searchparam` / `pelsearch`  
       Search preset factors. `1` is lighter/faster, `2` is more exhaustive.
+    - `search_early_sad=<int|off>`  
+      Skip the level0 full search when the predictor SAD is below this threshold. The value is in 8x8-block, 8-bit SAD units (`0-65535`) and is scaled automatically for blksize and bit depth; `off` (`-1`) disables it. Preset defaults are listed above.
+    - `spatial_early_sad=<int|off>`
+      Skip spatial refinement for a block when the SAD selected by the level1 search is below this threshold. The value is in 8x8-block, 8-bit SAD units (`0-65535`) and is scaled automatically for blksize and bit depth. Default: `off` (`-1`).
     - `useflag`  
       Temporal direction limit. `0` uses both directions, `1` backward-only, `2` forward-only.
     - `pel` / `levels` / `lambda` / `lsad` / `pnew` / `plevel` / `globalmotion`  
@@ -2460,26 +2471,30 @@ For debug. Parameters: `op`, `ref`, `mode`, `weight`, `chroma`.
 Motion compensated degrain debug filter.
 
 - **parameters**
-  - preset=&lt;string&gt;
+  - preset=&lt;string&gt;  
     Surface preset. `custom` (default), `auto`.
     This refers the original values.
-  - mode=&lt;string&gt;
+  - mode=&lt;string&gt;  
     Output mode. `source` (default), `analyze`, `compb`, `compf`, `compb2`, `compf2`, `degrain`, `mv`, `sad`.
-  - stage=&lt;string&gt;
+  - stage=&lt;string&gt;  
     Step2 stage marker. `auto` (default), `tr1`, `tr2`.
-  - tr=&lt;int&gt;
+  - tr=&lt;int&gt;  
     Auto preset temporal radius. `1` or `2`. Sets `mode=degrain`, `stage`, and `delta`.
-  - blksize/search/overlap/delta/levels/pel
+  - blksize/search/overlap/delta/levels/pel  
     Block matching geometry and temporal radius parameters.
-  - thsad/thsadc/thscd1/thscd2
+  - thsad/thsadc/thscd1/thscd2  
     Degrain and scene-change thresholds.
-  - tr0/rep0/search_refine
+  - tr0/rep0/search_refine  
     Search reference prefilter parameters.
-  - searchparam/pelsearch/truemotion/lambda/lsad/pnew/plevel/globalmotion/dct/useflag
+  - searchparam/pelsearch/truemotion/lambda/lsad/pnew/plevel/globalmotion/dct/useflag  
     Motion search tuning parameters.
-  - mv_spatial_refine=&lt;int|auto&gt;
+  - search_early_sad=&lt;int|off&gt;  
+    Skip the level0 full search when the predictor SAD is below this threshold. The value is in 8x8-block, 8-bit SAD units (`0-65535`) and is scaled automatically for blksize and bit depth. Default: `off` (`-1`).
+  - spatial_early_sad=&lt;int|off&gt;  
+    Skip spatial refinement for a block when the SAD selected by the level1 search is below this threshold. The value is in 8x8-block, 8-bit SAD units (`0-65535`) and is scaled automatically for blksize and bit depth. Default: `off` (`-1`).
+  - mv_spatial_refine=&lt;int|auto&gt;  
     Motion-vector spatial refinement count. Default is `auto` (`-1`): run spatial refinement (which consults neighboring block motion vectors) only at the coarsest (lowest-resolution) analysis level, and skip it at all finer levels. This concentrates spatial-neighbor refinement on the level where serial-dependency cost is small, and lets the finer levels run with maximum GPU parallelism. `0` disables it entirely; `1` runs one pass at every level, `2` runs two passes at every level, and so on.
-  - chroma/binomial/tv_range
+  - chroma/binomial/tv_range  
     Chroma analysis and prefilter/range controls.
 
 
@@ -2499,35 +2514,31 @@ Please note that this filter is slow, recommended to be used on dGPUs.
 
   - mode=&lt;string&gt;  
     Output mode. `vfr` (default), `60`, `24`.
-
   - preset=&lt;string&gt;  
     Reserved nested preset. `slower`, `slow`, `medium`, `fast`, `faster` (default), `veryfast`, `superfast`, `ultrafast`, `draft`.
-
+  - search_early_sad=&lt;int|auto|off&gt;  
+    SAD threshold for skipping the level0 full search, in 8x8-block, 8-bit SAD units (`0-65535`), scaled automatically for blksize and bit depth. `auto` (default) uses the preset value; `off` (`-1`) disables it.
+  - spatial_early_sad=&lt;int|auto|off&gt;  
+    Skip spatial refinement for a block when the SAD selected by the level1 search is below this threshold. The value is in 8x8-block, 8-bit SAD units (`0-65535`) and is scaled automatically for blksize and bit depth. `auto` (default) uses the preset value (`slower`/`slow`: 0, `medium`: 16, `fast`: 32, `faster` through `draft`: 64); `off` (`-1`) disables it.
   - timing=&lt;string&gt;  
     Timing analysis mode. `realtime`, `realtime+` (default), `strict`.
-
   - past_cycles=&lt;int&gt;  
     Commit delay cycles for `realtime+`. Default: 30.
-
   - thswitch=&lt;float&gt;  
     60p switch threshold. Default: 0.5.
-
   - ucf=&lt;bool&gt;  
     Enable the UCF stage. Default: off.
-
   - nr=&lt;bool&gt;  
     Apply `SMDegrain` on the final KFM output stream. Default: off.
-
   - is120=&lt;bool&gt;  
     Reserve 120fps duration correction flag. Default: on.
-
+  - rff=&lt;bool&gt;  
+    Preserve progressive RFF input frames without deinterlacing them. The input timestamps are used as the timing anchor. Default: on.
   - debug=&lt;bool&gt;  
     Write `.result.dat` and `.frameinfo.tsv` dumps when `timecode` is specified. Default: off.
-
   - debug_stage=&lt;string&gt;  
     `none`, `switch-flag` (`switch-flag-min`), `contains-combe`, `combe-mask` (`combe-mask-min`).
     Used for 24p debug output selection.
-
   - timecode=&lt;path&gt;  
     Timecode v2 dump path. In `mode=24/vfr`, `*.duration.txt` is also emitted.
 
@@ -2567,14 +2578,11 @@ Decomb deinterlaer.
   
   - full=&lt;bool&gt;  
     deinterlace all frames. default on.
-
   - threshold=&lt;int&gt;  
     threshold for combed frame detection. default 20 (0 - 255).
-
-  - dthreshold=&lt;int&gt;
+  - dthreshold=&lt;int&gt;  
     threshold for deinterlacing frames detected as combed. default 7 (0 - 255).
-
-  - blend=&lt;bool&gt;   
+  - blend=&lt;bool&gt;  
     blend rather than interpolate. default off.
 
 ### --vpp-ivtc [&lt;param1&gt;=&lt;value1&gt;[,&lt;param2&gt;=&lt;value2&gt;]...]
@@ -2587,14 +2595,12 @@ Inverse telecine for soft-telecine / hard-telecine sources.
       Select the candidate with the minimum match-quality from C/P/N. Note: if C is fully progressive (zero combing), it is always kept to avoid introducing combing from mixing fields of different time origins.
     - 1  
       Prefer C when it is clean enough, otherwise choose from P/N.
-
   - post=&lt;int&gt;  (default: 2)  
     Post process for residual combing.
     - 0  
       No post process.
     - 2  
       Per-pixel adaptive bob-deinterlace on second-field rows. Only pixels detected as combed are replaced with the vertical average of adjacent first-field rows. First-field rows are always passed through untouched.
-
   - cycle=&lt;auto|int&gt;  (default: auto)  
     Decimation cycle.
     - auto  
@@ -2605,16 +2611,20 @@ Inverse telecine for soft-telecine / hard-telecine sources.
       3:2 pulldown decimation from 30fps to 24fps.
     - 2..16  
       Custom cycle length.
-
   - drop=&lt;int&gt;  (default: 1)  
     Number of frames to drop in each cycle. Currently only `1` is supported.
-
   - combthresh=&lt;float&gt;  (default: 0.12)  
     Per-pixel combing threshold. `0.0 - 1.0`.
-
   - cleanfrac=&lt;float&gt;  (default: 0.01)  
     Block-level clean threshold for `guide=1` and `post=2`. Specifies the fraction of pixels within a block allowed to be combed before the block is considered dirty.
-
+  - nt=&lt;int&gt;  (default: 10)  
+    Match-metric noise tolerance in 8-bit scale.
+  - cthresh=&lt;int&gt;  (default: 4)  
+    Per-pixel comb threshold used in match scoring in 8-bit scale.
+  - combpel=&lt;int&gt;  (default: 8)  
+    Number of combed pixels per block before the block is counted as combed.
+  - scthresh=&lt;float&gt;  (default: 0.0)  
+    Scene-change threshold as a fraction of the maximum SAD. `0.0` uses the adaptive threshold.
   - mixed=&lt;bool&gt;  (default: off)  
     Mixed mode for TS streams containing both RFF/progressive sections and true interlaced sections. Requires `--avsw` or `--avhw` input.
     RFF sections are not decimated; when a repeat-field pending state exists, the current copy candidate and field-reconstructed candidate are compared, and the less-combed candidate is direct-emitted on the 24000/1001fps CFR timeline.
@@ -2623,7 +2633,6 @@ Inverse telecine for soft-telecine / hard-telecine sources.
 
   - tff=&lt;auto|on|off&gt;  (default: auto)  
     Field order. `auto` checks each input frame's `picstruct`, and falls back to the input setting when unavailable.
-
   - log=&lt;path|bool&gt;  
     Write per-frame match logs. `log=true` uses the output filename base and creates `*.ivtc.log.txt`.
 
@@ -2633,7 +2642,6 @@ Drop duplicated frame in cycles set.
 - **parameters**
   - cycle=&lt;int&gt;  (default: 5)  
     num of frame to select frame(s) to be droppped.
-
   - drop=&lt;int&gt;  (default: 1)  
     num of frame(s) to drop within a cycle.
   
@@ -2669,6 +2677,8 @@ Please note that [--avsync](./NVEncC_Options.en.md#--avsync-string) vfr is autom
   - max=&lt;int&gt;  (default: 0)  
     Max consecutive frames which can be dropped (if positive).  
     Min interval between dropped frames (if negative).
+  - keep=&lt;int&gt;  (default: 0)  
+    Number of similar consecutive frames to keep before starting to drop.
     
   - log=&lt;bool&gt;  
     output log file. (default: off)
@@ -2720,7 +2730,7 @@ Please note that [--avsync](./NVEncC_Options.en.md#--avsync-string) vfr is autom
   - quality=&lt;int&gt;  (default=3, 1-6)  
     Quality of the filter. Larger value should result in higher quality but with lower speed.
   
-  - qp=&lt;int&gt;  (default=12, 1 - 63)    
+  - qp=&lt;int&gt;  (default=12, 1 - 63)  
     Strength of the filter. Larger value will result stronger denoise but with blurring.
     
   - prec  
@@ -2746,7 +2756,7 @@ Please note that [--avsync](./NVEncC_Options.en.md#--avsync-string) vfr is autom
     - 4
     - 8 (fast)
   
-  - sigma=&lt;float&gt;  (default=4.0)    
+  - sigma=&lt;float&gt;  (default=4.0)  
     Strength of the filter. Larger value will result stronger denoise but with blurring.
     
   - block_size=&lt;int&gt;  (default=8)  
@@ -2760,8 +2770,10 @@ Please note that [--avsync](./NVEncC_Options.en.md#--avsync-string) vfr is autom
 - **parameters**
   - sigma=&lt;float&gt;  
     Strength of filter. (default=1.0, 0.0 - 100.0)
+  - sigma2=&lt;float&gt; / sigma3=&lt;float&gt; / sigma4=&lt;float&gt;  
+    Filter strength for mid-high / mid-low / low frequencies. 0.0 uses the same value as sigma. (default=0.0, 0.0 - 100.0)
   
-  - amount=&lt;float&gt;  (default=1.0, 0.0 - 1.0)    
+  - amount=&lt;float&gt;  (default=1.0, 0.0 - 1.0)  
     Amount of denoising.
     
   - block_size=&lt;int&gt;  (default=32)  
@@ -2770,7 +2782,7 @@ Please note that [--avsync](./NVEncC_Options.en.md#--avsync-string) vfr is autom
     - 32
     - 64
 
-  - overlap=&lt;float&gt;  (default=0.5, 0.2 - 0.8)    
+  - overlap=&lt;float&gt;  (default=0.5, 0.2 - 0.8)  
     Block overlap, value 0.5 or larger is recomended.
   
   - method=&lt;int&gt; (default = 0)
@@ -2781,6 +2793,26 @@ Please note that [--avsync](./NVEncC_Options.en.md#--avsync-string) vfr is autom
     - 0 ... spatial filtering only
     - 1 ... enable temporal filtering
 
+  - bt=&lt;int&gt; (default = 0)
+    - 0 ... follow temporal
+    - 1 ... spatial only
+    - 2 ... previous + current frame
+    - 3 ... previous + current + next frame
+    - 4 ... 2 previous + previous + current + next frame
+    - -1 ... sharpen/degrid only
+
+  - sharpen=&lt;float&gt;  
+    Frequency-domain sharpening strength. 0.0 disables it. (default=0.0, -10.0 - 10.0)
+  - scutoff=&lt;float&gt;  
+    Sharpen cutoff frequency. (default=0.30, 0.0 - 1.0)
+  - svr=&lt;float&gt;  
+    Sharpen vertical ratio. 0.0 disables vertical sharpening. (default=1.00, 0.0 - 10.0)
+  - smin=&lt;float&gt; / smax=&lt;float&gt;  
+    Minimum / maximum sharpening limits. (default=10.0/100.0)
+  - degrid=&lt;float&gt;  
+    Block grid compensation strength. 0.0 disables it, 1.0 applies the standard compensation. (default=0.0, 0.0 - 2.0)
+  - signorm=&lt;bool&gt;  
+    Interpret sigma/smin/smax as real noise-power units. false keeps the legacy-compatible scale. (default=false)
   - prec=&lt;string&gt; (default = auto)
     - auto ... use fp16 if possible (faster)
     - fp32 ... always use fp32
@@ -2794,7 +2826,6 @@ Detail-preserving smoothing filter. Detects edges to create a mask, then applies
   
   - threshold=&lt;float&gt;  (default=15.0, 0.0 - 255.0)  
     Edge detection threshold.
-
   - threshold_c=&lt;float&gt;  (default=-1.0, -1.0 / 0.0 - 255.0)  
     Edge detection threshold for chroma planes. -1.0 uses the same value as threshold.
   
@@ -2817,10 +2848,12 @@ Detail-preserving smoothing filter. Detects edges to create a mask, then applies
 Strong noise reduction filter.
 
 - **Parameters**
-  - radius=&lt;int&gt;  (default=3, 1-5)   
+  - radius=&lt;int&gt;  (default=3, 1-5)  
     radius of filter. Larger value will result stronger denosing, but will require more calculation.
+  - d=&lt;int&gt;  (default=0, 0 - 2)  
+    Temporal radius. Previous/next frames are included in the weighting window.
   
-  - strength=&lt;float&gt;  (default=0.08, 0.0 - 1.0)   
+  - strength=&lt;float&gt;  (default=0.08, 0.0 - 1.0)  
     Strength of the filter. Larger value will result stronger denosing.
   
   - lerp=&lt;float&gt;   (default=0.2, 0.0 - 1.0)  
@@ -2839,10 +2872,10 @@ Strong noise reduction filter.
 Non local means noise reduction filter.
 
 - **Parameters**
-  - sigma=&lt;float&gt;  (default=0.005, 0.0 -)   
+  - sigma=&lt;float&gt;  (default=0.005, 0.0 -)  
     Noise variance. Larger value will result stronger denosing.
   
-  - h=&lt;float&gt;  (default=0.05, 0.0 <)   
+  - h=&lt;float&gt;  (default=0.05, 0.0 <)  
     Parameter. Larger value will result the weight to be more flat.
   
   - patch=&lt;int&gt;  (default=5, 3 - )  
@@ -2850,10 +2883,8 @@ Non local means noise reduction filter.
   
   - search=&lt;int&gt;  (default=11, 3 - )  
     Set search size. Must be odd number.
-
   - d=&lt;int&gt;  (default=0, 0 - 5)  
     Temporal radius. `0` uses spatial NLMeans only.
-
   - search_t=&lt;int&gt;  (default=11, 3 - )  
     Set temporal search size. Must be odd number.
   
@@ -2888,7 +2919,9 @@ Rather weak noise reduction by modified pmd method, aimed to preserve edge while
   
   - threshold=&lt;float&gt;  (default=100, 0-255)  
     Threshold for edge detection. The smaller the value is, more will be detected as edge, which will be preserved.
-  
+  - useexp=&lt;bool&gt;  (default=true)  
+    Use exp function for coefficient calculation. If set to false, a simplified formula will be used.
+
 - Examples
   ```
   Example: Slightly weak than default
@@ -2918,10 +2951,14 @@ HQDN3D spatial and temporal denoise filter. Scratch buffers use FP16 automatical
 
 ### --vpp-denoise &lt;int&gt; or [&lt;param1&gt;=&lt;value1&gt;[,&lt;param2&gt;=&lt;value2&gt;]...]
 Enable vpp denoise, short form will set strength only.
+When mode is omitted, legacy mode is used.
 
 - **Parameters**
   - mode=&lt;string&gt;  
-    - auto (デフォルト)  
+    - legacy (default)
+      use the legacy denoise implementation. This can also be explicitly selected with `mode=legacy`.
+
+    - auto
       library will select the most appropriate denoise mode. 
   
     - auto_bdrate  
@@ -2941,6 +2978,13 @@ Enable vpp denoise, short form will set strength only.
   
   - strength=&lt;int&gt;  
     set strength (0 - 100). Please note when mode is set to auto_bdrate, auto_subjective or auto_adjust, strength will be ignored, as it will be decided automatically by the filter.
+
+- **Examples**
+  ```
+  --vpp-denoise strength=5
+  --vpp-denoise mode=legacy,strength=5
+  ```
+  Both examples use legacy mode.
 
 ### --vpp-image-stab &lt;string&gt;
 Set image stabilizer mode.
@@ -2993,7 +3037,6 @@ Enable Motion Compensate Temporal Filter (MCTF), if no param specified, then str
   
   - fontsdir=&lt;string&gt;  
     directory with fonts used.  
-
   - forced_subs_only=&lt;bool&gt;  
     render forced subs only (default: off).
   
@@ -3016,10 +3059,12 @@ Apply custom shaders in the specified path using [libplacebo](https://code.video
 - **Parameters**
     - shader=&lt;string&gt;  
       Target shader file path. (glsl file)
-
+    - &lt;name&gt;=&lt;value&gt;  
+      Replace the value of `#define &lt;name&gt; ...` in the shader before it is parsed. This is a shader-source (compile-time) parameter and may be specified multiple times. It is separate from `custom=` parameters.
+    - custom=&lt;name&gt;=&lt;value&gt;  
+      Set a runtime parameter declared with `//!PARAM` in the shader. libplacebo checks the parameter type and range. This parameter may be specified multiple times.
     - res=&lt;int&gt;x&lt;int&gt;  
       Output resolution of the filter.
-
     - csp=&lt;string&gt;  
       Input CSP passed to libplacebo.
       `yuv444` (default) keeps the current behavior and upsamples to 4:4:4 before shader processing.
@@ -3031,7 +3076,7 @@ Apply custom shaders in the specified path using [libplacebo](https://code.video
     - colorsystem=&lt;string&gt;  
       Color system to use. Default: auto detect.
       ```
-      auto, unknown, bt601, bt709, smpte240m, bt2020nc, bt2020c, bt2100pq, bt2100hlg, dolbyvision, ycgco, rgb, xyz
+      auto, unknown, bt601, bt709, smpte240m, bt2020nc, bt2020c, bt2100pq, bt2100hlg, dolbyvision, ycgco, rgb, xyz, ycgco-re, ycgco-ro
       ```
 
     - transfer=&lt;string&gt;  
@@ -3057,30 +3102,23 @@ Apply custom shaders in the specified path using [libplacebo](https://code.video
 
     - radius=&lt;float&gt;  
       Adjust the function's radius. Default: auto. Must be between 0.0 and 16.0.
-
     - clamp=&lt;float&gt;  
       Clamping coefficient for negative weights. Default: 0.0. Must be between 0.0 and 1.0.
-
     - taper=&lt;float&gt;  
       Additional taper coefficient. Default: 0.0. Must be between 0.0 and 1.0.
-
     - blur=&lt;float&gt;  
       Additional blur coefficient. Default: 0.0. Must be between 0.0 and 100.0.
-
     - antiring=&lt;float&gt;  
       Antiringing strength. Default: 0.0. Must be between 0.0 and 1.0.
     
     - linear=&lt;bool&gt;  
       Linearize the image before scaling. Default: false.
-
     - sigmoid=&lt;bool&gt;  
       Enable sigmoidization during scaling. Default: false.
       Requires `linear=true` and is primarily effective on upscaling paths.
-
     - sigmoid_center=&lt;float&gt;  
       Sigmoid center parameter. Must be between 0.0 and 1.0.
       If omitted, libplacebo default (0.75) is used.
-
     - sigmoid_slope=&lt;float&gt;  
       Sigmoid slope parameter. Must be between 1.0 and 20.0.
       If omitted, libplacebo default (6.5) is used.
@@ -3089,43 +3127,45 @@ Apply custom shaders in the specified path using [libplacebo](https://code.video
     ``` 
     Example: Apply a custom shader (1280x720 -> 2560x1440)
     --vpp-libplacebo-shader shader=default-shader-pack-2.1.0\Anime4K_Upscale_CNN_x2_L.glsl,res=2560x1440
+
+    Example: Set a shader //!PARAM.
+    --vpp-libplacebo-shader shader=example.glsl,custom=GAIN=1.5
+
+    Example: Set a shader #define.
+    --vpp-libplacebo-shader shader=example.glsl,GAIN=1.5
     ```
 
 ### --vpp-descale [&lt;param1&gt;=&lt;value1&gt;[,&lt;param2&gt;=&lt;value2&gt;]...]
 Undo upscaling by solving the inverse system for a known upscaler kernel and output a lower native resolution.
 
 - **Parameters**
-    - kernel=&lt;string&gt;
+    - kernel=&lt;string&gt;  
       Upscaler kernel to invert. Default: bicubic.
       ```
       bilinear, bicubic, spline16, spline36, spline64, lanczos2, lanczos3, lanczos4, auto
       ```
 
-    - width=&lt;int&gt; / height=&lt;int&gt;
+    - width=&lt;int&gt; / height=&lt;int&gt;  
       Target native resolution. Specify both for an explicit kernel.
-
-    - b=&lt;float&gt;, c=&lt;float&gt;
+    - b=&lt;float&gt;, c=&lt;float&gt;  
       Bicubic parameters. Default: b=0.0, c=0.5.
-
-    - src_left=&lt;float&gt;, src_top=&lt;float&gt;
+    - src_left=&lt;float&gt;, src_top=&lt;float&gt;  
       Source sub-pixel offsets. Default: 0.0.
-
-    - border_handling=&lt;string&gt;
+    - src_width=&lt;float&gt;, src_height=&lt;float&gt;  
+      Fractional active source width/height for sources whose native size is not integer. Default: 0.0 (off).
+    - border_handling=&lt;string&gt;  
       Border extension mode. Default: mirror.
       ```
       mirror, zero, repeat
       ```
 
-    - auto=&lt;bool&gt;
+    - auto=&lt;bool&gt;  
       Enable `kernel=auto` and native resolution search. This opens the input separately and analyzes `detect_frames` frames, so stdin and pipes are unsupported.
-
-    - search_min=&lt;int&gt;, search_max=&lt;int&gt;, search_step=&lt;int&gt;
+    - search_min=&lt;int&gt;, search_max=&lt;int&gt;, search_step=&lt;int&gt;  
       Search range and fine step for `auto=true`. Default search_step: 1.
-
-    - detect_frames=&lt;int&gt;
+    - detect_frames=&lt;int&gt;  
       Number of frames averaged by auto detection. Default: 10.
-
-    - show_scores=&lt;bool&gt;
+    - show_scores=&lt;bool&gt;  
       Log per-candidate auto-detection scores. Default: false.
 
 - **Examples**
@@ -3221,24 +3261,19 @@ Specify the resizing algorithm.
 
       - Additional parameters
       
-        - pl-radius=&lt;float&gt;
-
+        - pl-radius=&lt;float&gt;  
           Radius used for resizable algorithm in libplacebo-resample. (0.0 - 16.0, default = auto)
       
-        - pl-clamp=&lt;float&gt;
-
+        - pl-clamp=&lt;float&gt;  
           Clamp coefficient for negative weights used in libplacebo-resample, 1.0 will make weight 0 for negative weights. (0.0 - 1.0, default = 0.0)
       
-        - pl-taper=&lt;float&gt;
-
+        - pl-taper=&lt;float&gt;  
           Taper will flatten weight function in the center for libplacebo-resample. (0.0 - 1.0, default = 0.0)
       
-        - pl-blur=&lt;float&gt;
-
+        - pl-blur=&lt;float&gt;  
           Additional blur coefficient for libplacebo-resample. (0.0 - 100.0, default = 0.0)
       
-        - pl-antiring=&lt;float&gt;
-
+        - pl-antiring=&lt;float&gt;  
           Antiringing strength for libplacebo-resample. (0.0 - 1.0, default = 0.0)
 
 - **Examples**
@@ -3292,22 +3327,17 @@ unsharp filter, for edge and detail enhancement.
 Removes residual combing left after deinterlace.
 
 - **Parameters**
-  - mode=&lt;vinverse|vinverse2&gt; (default=vinverse)
+  - mode=&lt;vinverse|vinverse2&gt; (default=vinverse)  
     Filter mode.
-
-  - sstr=&lt;float&gt; (default=2.7, 0.0 - 8.0)
+  - sstr=&lt;float&gt; (default=2.7, 0.0 - 8.0)  
     Strength of the contra reference.
-
-  - amnt=&lt;float&gt; (default=255.0, 0.0 - 255.0)
+  - amnt=&lt;float&gt; (default=255.0, 0.0 - 255.0)  
     Maximum per-pixel delta in 8-bit scale. 255.0 disables the cap.
-
-  - scl=&lt;float&gt; (default=0.25, 0.0 - 4.0)
+  - scl=&lt;float&gt; (default=0.25, 0.0 - 4.0)  
     Soft clip scale used when residual and reference difference have opposite signs.
-
-  - thr=&lt;float&gt; (default=0.0, 0.0 - 255.0)
+  - thr=&lt;float&gt; (default=0.0, 0.0 - 255.0)  
     Residual threshold in 8-bit scale. Pixels below this threshold are left unchanged.
-
-  - chroma=&lt;bool&gt; (default=true)
+  - chroma=&lt;bool&gt; (default=true)  
     Process chroma planes.
 
 - examples
@@ -3320,22 +3350,17 @@ Removes residual combing left after deinterlace.
 Shift chroma planes to correct chroma/luma alignment.
 
 - **Parameters**
-  - x=&lt;float&gt; (default=0.0, -4.0 - 4.0)
+  - x=&lt;float&gt; (default=0.0, -4.0 - 4.0)  
     Horizontal shift in luma pixels.
-
-  - y=&lt;float&gt; (default=0.0, -4.0 - 4.0)
+  - y=&lt;float&gt; (default=0.0, -4.0 - 4.0)  
     Vertical shift in luma pixels.
-
-  - show=&lt;normal|laplacian&gt; (default=normal)
+  - show=&lt;normal|laplacian&gt; (default=normal)  
     Output diagnostic laplacian image.
-
-  - auto=&lt;bool&gt; (default=false)
+  - auto=&lt;bool&gt; (default=false)  
     Detect shift from early frames.
-
-  - auto_frames=&lt;int&gt; (default=5, 1-100)
+  - auto_frames=&lt;int&gt; (default=5, 1-100)  
     Number of accepted analysis frames for auto detection.
-
-  - auto_min_pairs=&lt;int&gt; (default=200, 10-10000)
+  - auto_min_pairs=&lt;int&gt; (default=200, 10-10000)  
     Minimum zero-crossing pairs per analysis frame.
 
 - examples
@@ -3349,16 +3374,13 @@ Shift chroma planes to correct chroma/luma alignment.
 H.264 non-strong style spatial deblocking filter. This is a VPP filter applied to the input image, and is separate from the encoder-side `--no-deblock` option.
 
 - **Parameters**
-  - qp=&lt;int&gt; (default=24, 0-51)
+  - qp=&lt;int&gt; (default=24, 0-51)  
     QP used for filter strength.
-
-  - alpha=&lt;int&gt; (default=0, -6 - 6)
+  - alpha=&lt;int&gt; (default=0, -6 - 6)  
     Alpha offset.
-
-  - beta=&lt;int&gt; (default=0, -6 - 6)
+  - beta=&lt;int&gt; (default=0, -6 - 6)  
     Beta offset.
-
-  - chroma=&lt;bool&gt; (default=false)
+  - chroma=&lt;bool&gt; (default=false)  
     Apply to planar chroma planes as well. Disabled for semi-planar chroma such as NV12/P010.
 
 - examples
@@ -3371,22 +3393,17 @@ H.264 non-strong style spatial deblocking filter. This is a VPP filter applied t
 Temporal filter to stabilize frame-to-frame brightness flicker statistically.
 
 - **Parameters**
-  - strength=&lt;float&gt; (default=1.0, 0.0-1.0)
+  - strength=&lt;float&gt; (default=1.0, 0.0-1.0)  
     Blend strength of the correction.
-
-  - damping=&lt;float&gt; (default=0.8, 0.0-1.0)
+  - damping=&lt;float&gt; (default=0.8, 0.0-1.0)  
     Temporal damping using the previous frame's correction.
-
-  - scene_threshold=&lt;float&gt; (default=2.0, 0.5-5.0)
+  - scene_threshold=&lt;float&gt; (default=2.0, 0.5-5.0)  
     Scene change detection threshold. Detected frames pass through without correction.
-
-  - frames=&lt;int&gt; (default=30, 5-300)
+  - frames=&lt;int&gt; (default=30, 5-300)  
     Rolling frame count used for reference statistics.
-
-  - predictor=&lt;bool&gt; (default=true)
+  - predictor=&lt;bool&gt; (default=true)  
     Use a two-pass predictor-corrector refinement.
-
-  - chroma=&lt;bool&gt; (default=false)
+  - chroma=&lt;bool&gt; (default=false)  
     Apply correction to chroma planes as well.
 
 - examples
@@ -3400,19 +3417,15 @@ OpenCL camera-shake stabilizer that estimates frame-to-frame translation from th
 This is separate from the MFX `--vpp-image-stab` filter.
 
 - **Parameters**
-  - strength=&lt;float&gt; (default=1.0, 0.0-1.0)
+  - strength=&lt;float&gt; (default=1.0, 0.0-1.0)  
     Correction strength. 0.0 disables compensation, 1.0 applies the estimated shift fully.
-
-  - damping=&lt;float&gt; (default=0.9, 0.0-1.0)
+  - damping=&lt;float&gt; (default=0.9, 0.0-1.0)  
     Temporal smoothing of the detected shift. Higher values make the trajectory more gradual.
-
-  - trust=&lt;float&gt; (default=0.3, 0.0-1.0)
+  - trust=&lt;float&gt; (default=0.3, 0.0-1.0)  
     Trust threshold for the correlation peak. Frames below the threshold keep the previous trusted correction.
-
-  - max_shift=&lt;float&gt; (default=32.0, 1.0-256.0)
+  - max_shift=&lt;float&gt; (default=32.0, 1.0-256.0)  
     Maximum per-frame correction in luma pixels.
-
-  - border=&lt;black|clamp|mirror&gt; (default=black)
+  - border=&lt;black|clamp|mirror&gt; (default=black)  
     Border fill mode for pixels sampled from outside the source frame.
 
 - examples
@@ -3425,28 +3438,21 @@ This is separate from the MFX `--vpp-image-stab` filter.
 Corrects color cast and white balance.
 
 - **Parameters**
-  - mode=&lt;manual|auto|gray&gt; (default=manual)
+  - mode=&lt;manual|auto|gray&gt; (default=manual)  
     Correction mode. manual uses the specified white/black points, auto analyzes chroma averages, and gray uses a grayworld assumption.
-
-  - space=&lt;auto|rgb|yuv&gt; (default=auto)
+  - space=&lt;auto|rgb|yuv&gt; (default=auto)  
     Working color space. auto selects a space from the mode.
-
-  - matrix=&lt;auto|bt601|bt709|bt2020&gt; (default=auto)
+  - matrix=&lt;auto|bt601|bt709|bt2020&gt; (default=auto)  
     RGB/YUV conversion matrix. auto uses input VUI and resolution fallback.
-
-  - white=&lt;rrggbb&gt; (default=ffffff)
+  - white=&lt;rrggbb&gt; (default=ffffff)  
     White point for manual mode.
-
-  - black=&lt;rrggbb&gt; (default=000000)
+  - black=&lt;rrggbb&gt; (default=000000)  
     Black point for manual mode.
-
-  - frames=&lt;int&gt; (default=30, 10-5000)
+  - frames=&lt;int&gt; (default=30, 10-5000)  
     Number of analysis frames for auto/gray modes.
-
-  - strength=&lt;float&gt; (default=1.0, 0.0-1.0)
+  - strength=&lt;float&gt; (default=1.0, 0.0-1.0)  
     Correction strength for auto/gray modes.
-
-  - variance_threshold=&lt;float&gt; (default=2.0, &gt;0)
+  - variance_threshold=&lt;float&gt; (default=2.0, &gt;0)  
     Variance threshold to exclude flash/fade frames from analysis.
 
 - examples
@@ -3460,74 +3466,72 @@ Corrects color cast and white balance.
 Halo removal filter. Applies correction to luma and copies chroma unchanged.
 
 - **Parameters**
+  - mode=&lt;string&gt; (default=legacy, legacy|alpha)  
+    Filter mode. `legacy` keeps the previous implementation, `alpha` uses the high-precision halo detection path.
   - rx=&lt;float&gt; (default=2.0, 0.5 - 10.0)  
     Horizontal halo radius.
-
   - ry=&lt;float&gt; (default=2.0, 0.5 - 10.0)  
     Vertical halo radius.
-
   - darkstr=&lt;float&gt; (default=1.0, 0.0 - 1.0)  
     Strength for darkening bright halos.
-
   - brightstr=&lt;float&gt; (default=0.0, 0.0 - 1.0)  
     Strength for brightening dark halos.
-
   - lowsens=&lt;int&gt; (default=50, 0 - 100)  
     Lower anchor of the sensitivity ramp.
-
   - highsens=&lt;int&gt; (default=50, 0 - 100)  
     Upper anchor of the sensitivity ramp.
-
   - ss=&lt;float&gt; (default=1.5, 1.0 - 4.0)  
     Supersampling ratio.
+  - search_rade=&lt;int&gt; (default=auto, 1 - 10)  
+    Expand-side search radius for mask generation in `mode=alpha`. If omitted, uses `max(round(max(rx,ry)),3)`.
+  - search_radi=&lt;int&gt; (default=search_rade, 1 - 10)  
+    Inpand-side search radius for mask generation in `mode=alpha`. If omitted, uses `search_rade`.
 
 - examples
   ```
   --vpp-dehalo
-  --vpp-dehalo rx=2.4,ry=2.0,darkstr=0.8,brightstr=0.1,lowsens=40,highsens=70,ss=1.5
+  --vpp-dehalo mode=alpha,rx=2.4,ry=2.0,darkstr=0.8,brightstr=0.1,lowsens=40,highsens=70,ss=1.5,search_rade=3
   ```
 
 ### --vpp-finedehalo [&lt;param1&gt;=&lt;value1&gt;[,&lt;param2&gt;=&lt;value2&gt;]...]
 Halo removal filter with a fine-line protection mask. Applies correction to luma and copies chroma unchanged.
 
 - **Parameters**
-  - rx=&lt;float&gt; (default=2.0, 0.5 - 10.0)
+  - mode=&lt;string&gt; (default=alpha, legacy|alpha)  
+    Internal dehalo mode.
+  - rx=&lt;float&gt; (default=2.0, 0.5 - 10.0)  
     Horizontal halo radius.
-
-  - ry=&lt;float&gt; (default=2.0, 0.5 - 10.0)
+  - ry=&lt;float&gt; (default=2.0, 0.5 - 10.0)  
     Vertical halo radius.
-
-  - darkstr=&lt;float&gt; (default=1.0, 0.0 - 1.0)
+  - darkstr=&lt;float&gt; (default=1.0, 0.0 - 1.0)  
     Strength for darkening bright halos.
-
-  - brightstr=&lt;float&gt; (default=0.0, 0.0 - 1.0)
+  - brightstr=&lt;float&gt; (default=1.0, 0.0 - 1.0)  
     Strength for brightening dark halos.
-
-  - lowsens=&lt;int&gt; (default=50, 0 - 100)
+  - lowsens=&lt;int&gt; (default=50, 0 - 100)  
     Lower anchor of the dehalo sensitivity ramp.
-
-  - highsens=&lt;int&gt; (default=50, 0 - 100)
+  - highsens=&lt;int&gt; (default=50, 0 - 100)  
     Upper anchor of the dehalo sensitivity ramp.
-
-  - ss=&lt;float&gt; (default=1.5, 1.0 - 4.0)
+  - ss=&lt;float&gt; (default=1.5, 1.0 - 4.0)  
     Supersampling ratio.
-
-  - thmi=&lt;int&gt; (default=80, 0 - 255)
+  - search_rade=&lt;int&gt; (default=1, 1 - 10)  
+    Expand-side search radius for the internal dehalo in `mode=alpha`.
+  - search_radi=&lt;int&gt; (default=search_rade, 1 - 10)  
+    Inpand-side search radius for the internal dehalo in `mode=alpha`. If omitted, uses `search_rade`.
+  - thmi=&lt;int&gt; (default=80, 0 - 255)  
     Lower threshold of the edge mask.
-
-  - thma=&lt;int&gt; (default=128, 0 - 255)
+  - thma=&lt;int&gt; (default=128, 0 - 255)  
     Upper threshold of the edge mask.
-
-  - thlimi=&lt;int&gt; (default=50, 0 - 255)
-    Lower threshold of the limit mask.
-
-  - thlima=&lt;int&gt; (default=100, 0 - 255)
-    Upper threshold of the limit mask.
-
-  - showmask=&lt;int&gt; (default=0, 0 - 4)
-    Debug mask output.
-
-  - edge=&lt;string&gt; (default=prewitt)
+  - thlimi=&lt;int&gt; (default=50, 0 - 255)  
+    Lower threshold of the light edge mask.
+  - thlima=&lt;int&gt; (default=100, 0 - 255)  
+    Upper threshold of the light edge mask.
+  - showmask=&lt;int&gt; (default=0, 0 - 4)  
+    Debug mask output. 1=outside, 2=shrink, 3=edges, 4=strong.
+  - excl=&lt;bool&gt; (default=true)  
+    Enable the exclusion zone around strong and nearby light edges.
+  - edgeproc=&lt;float&gt; (default=0.0, 0.0 - 1.0)  
+    Adds the strong edge mask to the outside mask.
+  - edge=&lt;string&gt; (default=prewitt)  
     Edge detector, one of prewitt, sobel, scharr, kirsch, laplacian.
 
 - examples
@@ -3537,26 +3541,37 @@ Halo removal filter with a fine-line protection mask. Applies correction to luma
   ```
 
 ### --vpp-hqdering [&lt;param1&gt;=&lt;value1&gt;[,&lt;param2&gt;=&lt;value2&gt;]...]
-DCT ringing reduction filter. Applies correction to luma and copies chroma unchanged.
+DCT ringing reduction filter. Applies correction to luma by default.
 
 - **Parameters**
-  - mrad=&lt;int&gt; (default=1, 1 - 3)
+  - mrad=&lt;int&gt; (default=1, 1 - 3)  
     Ring mask expansion radius.
-
-  - mthr=&lt;int&gt; (default=10, 0 - 255)
+  - mthr=&lt;int&gt; (default=10, 0 - 255)  
     Edge mask threshold.
-
-  - sigma=&lt;float&gt; (default=1.5, 0.5 - 5.0)
+  - sigma=&lt;float&gt; (default=1.5, 0.5 - 5.0)  
     Gaussian blur sigma.
-
-  - showmask=&lt;bool&gt; (default=false)
+  - showmask=&lt;bool&gt; (default=false)  
     Output the effective mask only.
-
-  - protect=&lt;bool&gt; (default=true)
+  - protect=&lt;bool&gt; (default=true)  
     Protect original edge pixels.
-
-  - edge=&lt;string&gt; (default=log)
+  - edge=&lt;string&gt; (default=log)  
     Edge detector, one of log, sobel, prewitt, scharr, kirsch, laplacian.
+  - thr=&lt;int&gt; (default=0)  
+    Limit for the change per pixel in 8-bit scale. `0` disables the limit.
+  - elast=&lt;float&gt; (default=2.0, 1.0 - 3.0)  
+    Elastic falloff for `thr`.
+  - darkthr=&lt;int&gt; (default=-1)  
+    Separate limit for darkening. `-1` follows `thr`.
+  - minp=&lt;int&gt; (default=0, 0 - 3)  
+    Edge-core inpand iterations excluded from the ring mask.
+  - msmooth=&lt;int&gt; (default=0, 0 - 3)  
+    Ring mask smoothing iterations.
+  - drrep=&lt;int&gt; (default=0)  
+    Repair blurred clip. `0`=off, `1`=clamp to the source 3x3 min/max.
+  - sharp=&lt;int&gt; (default=0, 0 - 3)  
+    Contra-sharpening level. Restores line strength lost to blur without reintroducing ringing.
+  - planes=&lt;string&gt; (default=y)  
+    Target planes. `all`, or `:`-separated list of `y`, `u`, `v`.
 
 - examples
   ```
@@ -3598,14 +3613,11 @@ Edge-selective sharpening filter.
   
   - threshold=&lt;float&gt;  (default=15.0, 0.0 - 255.0)  
     Edge detection threshold.
-
-  - slope=&lt;float&gt; (default=0.0, 0.0 -)
+  - slope=&lt;float&gt; (default=0.0, 0.0 -)  
     Slope of the sigmoid soft mask. 0.0 keeps the legacy binary mask.
-
-  - luma_limit=&lt;float&gt; (default=0.0, 0.0 - 255.0)
+  - luma_limit=&lt;float&gt; (default=0.0, 0.0 - 255.0)  
     Reduces sharpening in luma areas darker than this value. 0.0 disables it.
-
-  - block_protect=&lt;float&gt; (default=0.0, 0.0 - 1.0)
+  - block_protect=&lt;float&gt; (default=0.0, 0.0 - 1.0)  
     Reduces sharpening near detected DCT block boundaries. 0.0 disables it.
   
   - highq=&lt;bool&gt;  (default=true)  
@@ -3627,14 +3639,15 @@ Edge-selective sharpening filter.
   ```
 
 ### --vpp-cas [&lt;param1&gt;=&lt;value1&gt;[,&lt;param2&gt;=&lt;value2&gt;]...]
-Luma-only Contrast Adaptive Sharpening filter. Applies CAS to luma and copies chroma unchanged.
+Contrast Adaptive Sharpening filter. Applies CAS to luma by default.
 
 - **Parameters**
-  - sharpness=&lt;float&gt; (default=0.4, 0.0 - 1.0)
+  - sharpness=&lt;float&gt; (default=0.4, 0.0 - 1.0)  
     Sharpening strength. Internally maps to the CAS peak value.
-
-  - hdr=&lt;bool&gt; (default=false)
+  - hdr=&lt;bool&gt; (default=false)  
     Skips the SDR gamma 2.0 luma approximation. Enable this for HDR sources such as PQ or HLG.
+  - chroma=&lt;bool&gt; (default=false)  
+    Also sharpen chroma planes.
 
 - examples
   ```
@@ -3670,16 +3683,13 @@ Edge warping (sharpening) filter.
     - 0 ... Use luma based mask to process hcroma channels.
     - 1 ... Create individual mask for each chroma channels.
 
-  - depth_min=&lt;float&gt;  (default=same as depth, -128.0 - 128.0)
+  - depth_min=&lt;float&gt;  (default=same as depth, -128.0 - 128.0)  
     Warp depth used on weak edge mask pixels. This may be larger than `depth_max` to reduce warp on strong edges.
-
-  - depth_max=&lt;float&gt;  (default=same as depth, -128.0 - 128.0)
+  - depth_max=&lt;float&gt;  (default=same as depth, -128.0 - 128.0)  
     Warp depth used on strong edge mask pixels.
-
-  - edge_thr=&lt;float&gt;  (default=192.0, 1.0 - 255.0)
+  - edge_thr=&lt;float&gt;  (default=192.0, 1.0 - 255.0)  
     Edge mask value, in 8-bit scale, where adaptive depth reaches `depth_max`.
-
-  - gamma=&lt;float&gt;  (default=1.0, 0.01 - 8.0)
+  - gamma=&lt;float&gt;  (default=1.0, 0.01 - 8.0)  
     Response curve for adaptive depth. Values below 1.0 increase the effect on weak edges, values above 1.0 focus the effect on strong edges.
 
 - examples
@@ -3697,19 +3707,14 @@ Sharpening filter for fine detail enhancement. It boosts texture and low-amplitu
 - **Parameters**
   - z=&lt;float&gt;  (default=4.0, 0.001 - 64.0)  
     Zero point. Larger values treat smaller luminance differences more weakly.
-
   - sstr=&lt;float&gt;  (default=1.5, 0.0 - 16.0)  
     Strength of enhancement. Larger values boost details more strongly.
-
   - power=&lt;float&gt;  (default=4.0, 1.0 - 16.0)  
     Exponent for nonlinear enhancement. Larger values prioritize mid-amplitude detail.
-
   - ldmp=&lt;float&gt;  (default=1.0, 0.0 - 1000.0)  
     Low-amplitude damping. Larger values suppress tiny changes close to noise.
-
   - mode=&lt;int&gt;  (default=1, 0 - 1)  
     Blur type. 0 uses 3x3 Gauss, and 1 uses 3x3 Box.
-
   - med=&lt;bool&gt;  (default=false)  
     Apply an additional 3x3 median to the blurred image.
 
@@ -3746,8 +3751,7 @@ Masked anti-aliasing for animated content (anime, cel-shaded). This combines dir
   
   - show=&lt;int&gt; (default=0)  
     Debug overlay mode. 0=normal, 1=mask only, 2=mask+AA.
-
-  - edge=&lt;string&gt; (default=sobel)
+  - edge=&lt;string&gt; (default=sobel)  
     Edge operator. Select from sobel, prewitt, sobel_full, scharr, kirsch, laplacian.
 
 - examples
@@ -3796,7 +3800,7 @@ Neutralize color casts, normalize lightness, or boost contrast/saturation using 
     - illusionshu
     - w3c
 
-  - skipblack=&lt;bool&gt; (default=false)
+  - skipblack=&lt;bool&gt; (default=false)  
     Exclude pure black pixels from the average, useful for sources with letterbox areas.
 
 - examples
@@ -3827,7 +3831,6 @@ Apply color adjustments using curves.
   
   - m=&lt;string&gt;  
     Set master curve points, post process for luminance.
-
   - r=&lt;string&gt;  
     Set curve points for red. Will override preset settings.
   
@@ -3839,6 +3842,8 @@ Apply color adjustments using curves.
   
   - all=&lt;string&gt;  
     Set curve points for r,g,b when not specified. Will override preset settings.
+  - interp=&lt;string&gt; (default=spline)  
+    Interpolation method. `spline` uses natural cubic spline, `pchip` uses monotone cubic interpolation that avoids overshoot between points.
 
 - Examples
   ```
@@ -3859,6 +3864,11 @@ Apply color adjustments using curves.
   
   - hue=&lt;float&gt; (default=0.0, -180 - 180)  
   
+  - coring=&lt;bool&gt;  (default=false)
+
+  - start_hue=&lt;float&gt; (default=0.0, 0.0 - 360.0)
+  - end_hue=&lt;float&gt; (default=360.0, 0.0 - 360.0)  
+    Limit hue/saturation adjustment to the hue angle range.
   - swapuv=&lt;bool&gt;  (default=false)
 
   - y_offset=&lt;float&gt; (default=0.0, -1.0 - 1.0)  
@@ -3924,6 +3934,8 @@ Apply color adjustments using curves.
   
   - rand_each_frame (default=off)  
     Change the random number used by the filter every frame.
+  - keep_tv_range=&lt;bool&gt; (default=off)  
+    Clamp output to TV range, scaled by bit depth (`Y: 16-235`, `Cb/Cr: 16-240`).
   
 - examples
   ```
@@ -3938,19 +3950,14 @@ Apply color adjustments using curves.
 - **Parameters**
   - iterations=&lt;int&gt;  
     iterations (default=1, 0-)
-
   - threshold=&lt;float&gt;  
     cut-off threshold (default=4.0, 0-)
-
   - radius=&lt;float&gt;  
     initial radius (default=16.0, 0-)
-
   - grain_y=&lt;float&gt;  
     extra noise for luma (default=6.0, 0-)
-
   - grain_c=&lt;float&gt;  
     extra noise for chroma (default=grain_y, 0-)
-
   - dither=&lt;string&gt;  
     dither mode, only for 8bit.
     - none
@@ -4023,6 +4030,244 @@ If the last VPP group built by `InitFilters` ends with an MFX block, insert an O
 - `2`  
   Enable even when `ENABLE_D3D11!=0`.
 
+### --vpp-anime4k-shader [&lt;param1&gt;=&lt;value1&gt;][,&lt;param2&gt;=&lt;value2&gt;],...
+Enable GLSL luma enhancement / 2x upscale chain, based on bloc97 Anime4K.
+The CNN models is not included, which can be used from --vpp-onnx.
+
+A complete chain in one pass: optional pre-filter denoise → main GLSL mode → optional line darken / thin / denoise → optional highlight clamp and anti-ring → chroma handling → end-of-chain resize.
+
+- **Parameters**
+  - mode=&lt;string&gt; (default: ani4k_original)  
+    Select the GLSL variant.
+    - ani4k_original ... edge-refine 2x upscale (strength 0.5)
+    - ani4k_deblur ... edge-refine 2x upscale, stronger (strength 1.0)
+    - ani4k_darken_hq ... line-darkening 2x upscale
+    - ani4k_thin_hq ... line-thinning 2x upscale
+    - ani4k_dog_sharpen ... 1x Difference-of-Gaussians sharpen
+    - ani4k_dog ... 2x DoG upscale
+    - ani4k_dtd ... 2x composite darken-thin-deblur upscale
+
+  - scale=&lt;int&gt; (default: 2)  
+    1 = refine at source resolution, 2 = 2x upscale + refine.  
+    Some modes imply scale (dog_sharpen=1, dog/dtd=2).
+  - strength=&lt;float&gt; (default: 0.50, range: 0.00 - 6.00)  
+    Refine strength multiplier. Promoted to 1.0 for mode=ani4k_deblur with no explicit value.
+  - prefilter_denoise=&lt;string&gt; (default: off)  
+    Denoise the luma before the main pass.  
+    off / mean / median / mode (bilateral)
+  - darken=&lt;string&gt; (default: off)  
+    Line-darkening pass after the main pass.  
+    off / hq / fast / veryfast
+  - thin=&lt;string&gt; (default: off)  
+    Line-thinning pass after the main pass.  
+    off / hq / fast / veryfast
+  - denoise=&lt;string&gt; (default: off)  
+    Denoise pass after the main pass.  
+    off / mean / median / mode (bilateral)
+  - denoise_intensity, denoise_spatial, denoise_curve, denoise_hist_reg=&lt;float&gt;  
+    Fine-tune the denoise passes (advanced, optional).
+  - clamp_highlights=&lt;bool&gt; (default: false)  
+    Clamp output highlights to the local source max (Anime4K Clamp_Highlights).
+  - antiring=&lt;float&gt; (default: 0, range: 0.0 - 1.0)  
+    Anti-ringing strength. Clamps each upscaled luma pixel to its 2x2 source min/max envelope, removing overshoot ringing.
+  - chroma_resize=&lt;string&gt; (default: spline36)  
+    U/V resize kernel when scale=2.  
+    spline36 / bilinear / bicubic / lanczos3 / joint  
+    joint = luma-guided joint-bilateral chroma rebuild.
+  - chroma=&lt;bool&gt; (default: true)  
+    When scale=2, resize chroma (true) or pass it through unchanged (false). scale=1 always passes through.
+  - out_res=&lt;WxH&gt;  
+    End-of-chain resize to an arbitrary final size, applied after the upscale stage.  
+    A negative value on one axis keeps the source aspect (e.g. out_res=-2x1080).
+  - resize=&lt;string&gt; (default: spline16)  
+    Resampler for out_res.  
+    lanczos4 / spline16 / spline36 / jinc144 / nis / bicubic / ...
+
+- Example:
+  ```
+  --vpp-anime4k-shader mode=ani4k_original,scale=2
+  --vpp-anime4k-shader mode=ani4k_deblur,antiring=0.8,chroma_resize=joint
+  --vpp-anime4k-shader mode=ani4k_dog_sharpen,strength=0.6,out_res=1920x1080
+  ```
+
+### --vpp-lenscorrection [&lt;param1&gt;=&lt;value1&gt;][,&lt;param2&gt;=&lt;value2&gt;],...
+
+Correct radial lens distortion using Brown-Conrady coefficients.
+
+- k1=&lt;float&gt;, k2=&lt;float&gt;: radial distortion coefficients.
+- cx=&lt;float&gt;, cy=&lt;float&gt;: correction centre in normalized image coordinates (default: 0.5).
+
+```
+--vpp-lenscorrection k1=-0.20,k2=0.04
+```
+
+### --vpp-v360 [&lt;param1&gt;=&lt;value1&gt;][,&lt;param2&gt;=&lt;value2&gt;],...
+
+Convert between equirect, flat, and cubemap projections.
+
+- in=&lt;string&gt;, out=&lt;string&gt;: input/output projection: equirect / flat / cubemap.
+- yaw=&lt;float&gt;, pitch=&lt;float&gt;, roll=&lt;float&gt;: view rotation in degrees.
+- h_fov=&lt;float&gt;: horizontal field of view for flat output.
+- w=&lt;int&gt;, h=&lt;int&gt;: output resolution.
+
+```
+--vpp-v360 in=equirect,out=flat,yaw=30,pitch=0,h_fov=90,w=1920,h=1080
+```
+
+### --vpp-onnx [&lt;param1&gt;=&lt;value1&gt;][,&lt;param2&gt;=&lt;value2&gt;],...
+OpenVINO-backed CNN filter, loads an ONNX/IR model directly and runs it on the GPU.  
+
+Models can be downloaded from [https://github.com/rigaya/HWEnc-onnx-models/releases](https://github.com/rigaya/HWEnc-onnx-models/releases), and the extracted directory should be specified by [`--vpp-onnx-model-dir`](#--vpp-onnx-model-dir-string).
+
+On Linux, OpenVINO Runtime must be installed separately. For Ubuntu installation instructions, see [Additional Tools in the installation guide](./Install.en.md#4-addtional-tools).
+
+Pre/post processing is inferred from the model channel count: 1ch=luma SR, 3ch=RGB, 4ch=RGB+noise, 2ch=gray+noise, 3→2ch=chroma.
+
+- **Parameters**
+  - model=&lt;string&gt;  
+    Path to the .onnx / .xml model file (required).
+  - device=&lt;string&gt; (default: GPU.0)  
+    OpenVINO device. GPU.0 / GPU / CPU / AUTO
+  - prec=&lt;string&gt; (default: auto)  
+    OpenVINO inference precision. auto / fp16 / fp32
+  - colormatrix=&lt;string&gt; (default: auto)  
+    Color matrix. Accepts the same names as [`--colormatrix`](#--colormatrix-string). `--vpp-onnx` supports auto / auto_res / smpte170m / bt470bg / bt709 / bt2020nc.
+  - colormatrix_out=&lt;string&gt; (default: auto)  
+    Output-side RGB to YUV color matrix. Accepts the same names as `colormatrix`. auto uses the same matrix as `colormatrix`. Use bt2020nc for SDR-to-HDR models that output BT.2020/PQ RGB.
+  - colorrange=&lt;string&gt; (default: auto)  
+    Color range. Accepts the same names as [`--colorrange`](#--colorrange-string). `--vpp-onnx` supports auto / tv / limited / pc / full.
+  - colorspace=&lt;string&gt; (default: rgb)  
+    Color space for 3ch models. rgb / ycbcr (for ArtCNN *_YCbCr models)
+  - noise=&lt;int&gt; (default: 15, range: 0 - 255)  
+    Noise sigma for noise models.
+  - frames=&lt;int&gt; (default: 1)  
+    Temporal window size for models with `T*3` RGB input channels and 3 output channels. Specify a positive odd number so that the output corresponds to the centre frame.
+    For registered models with `frames` set in `models.json`, the registry value takes precedence.
+  - mask=&lt;string&gt;  
+    Grayscale mask image for a two-input ONNX model. White pixels are processed and black pixels are retained. This is intended for static masks such as logo or watermark removal.
+  - out_res=&lt;WxH&gt;  
+    End-of-chain resize to an arbitrary final size, applied after the network so CNN upscale + fit runs in one pass.  
+    A negative value on one axis keeps the source aspect (e.g. out_res=-2x1080).
+  - resize=&lt;string&gt; (default: lanczos4)  
+    Resampler for out_res.
+
+- **Available model names**
+
+  Models registered in models.json can be specified without extension (e.g. `model=artcnn_c4f32`). [`--vpp-onnx-model-dir`](#--vpp-onnx-model-dir-string) must be specified to use this feature.
+  If a registered model has `"fp32": true` in models.json and `prec=auto`, QSVEnc automatically uses `prec=fp32`.
+  If a registered model has `"colormatrix_out": "bt2020nc"` in models.json and `colormatrix_out=auto`, QSVEnc automatically uses the registered output matrix.
+
+  | Family | Purpose | Model names |
+  |--------|---------|------------|
+  | ArtCNN | Super-resolution (dn: with denoise, ds: with descale-artifact removal) | artcnn_c4f16, artcnn_c4f16_dn, artcnn_c4f16_ds, artcnn_c4f32, artcnn_c4f32_dn, artcnn_c4f32_ds, artcnn_r4f32, artcnn_r4f32_dn, artcnn_r8f64, artcnn_r8f64_chroma, artcnn_r8f64_chroma_dn, artcnn_r8f64_chroma_dn_int8_perf, artcnn_r8f64_chroma_int8_perf, artcnn_r8f64_int8_perf, artcnn_r8f64_jpeg420, artcnn_r8f64_jpeg420_ycbcr, artcnn_r8f64_jpeg444, artcnn_r8f64_jpeg444_ycbcr, artcnn_r8f64_rgb, artcnn_r16f96, artcnn_r16f96_int8_perf, artcnn_r16f128, artcnn_r16f128_int8, artcnn_r16f128_int8_perf |
+  | ACNet | Super-resolution (luma 2x) | acnet_s, acnet_s_box, acnet_s_box_hdn, acnet_s_hdn, acnet_m, acnet_m_box, acnet_m_box_hdn, acnet_m_hdn, acnet_l, acnet_l_box, acnet_l_box_hdn, acnet_l_hdn |
+  | ARNet | Super-resolution (luma 2x, ACNet successor) | arnet_s, arnet_s_box, arnet_s_box_hdn, arnet_s_hdn, arnet_m, arnet_m_box, arnet_m_box_hdn, arnet_m_hdn, arnet_l, arnet_l_box, arnet_l_box_hdn, arnet_l_hdn, arnet_xl, arnet_xl_box, arnet_xl_box_hdn, arnet_xl_hdn |
+  | FSRCNNX | Super-resolution | fsrcnnx_s, fsrcnnx_s_dp, fsrcnnx_m, fsrcnnx_m_dp |
+  | Anime3D | Super-resolution (2x, for 3D/CG content) | anime3d_aa_x2, anime3d_x2 |
+  | Anime4K Restore | Restoration (same resolution, detail/block-noise recovery) | anime4k_restore_cnn_l, anime4k_restore_cnn_soft_l, anime4k_restore_cnn_soft_ul, anime4k_restore_cnn_soft_vl, anime4k_restore_cnn_ul, anime4k_restore_cnn_vl |
+  | Anime4K Upscale CNN | Super-resolution | anime4k_upscale_cnn_s, anime4k_upscale_cnn_s_dn, anime4k_upscale_cnn_m, anime4k_upscale_cnn_m_dn, anime4k_upscale_cnn_l, anime4k_upscale_cnn_l_dn, anime4k_upscale_cnn_ul, anime4k_upscale_cnn_ul_dn, anime4k_upscale_cnn_vl, anime4k_upscale_cnn_vl_dn |
+  | Anime4K GAN | Super-resolution (GAN) | anime4k_gan_s_x2, anime4k_gan_m_x2, anime4k_gan_l_x3, anime4k_gan_vl_x3, anime4k_gan_ul_x4, anime4k_gan_uul_x4 |
+  | HDRTVNet++ | SDR-to-HDR conversion (stable: fixed color mapping without temporal breathing) | hdrtvnetpp_agcm_dynamic, hdrtvnetpp_agcm_stable, hdrtvnetpp_ensemble_dynamic, hdrtvnetpp_ensemble_stable |
+  | FBCNN | JPEG block-artifact removal (flex uses noise= as the quality factor) | fbcnn_color_blind, fbcnn_gray_blind, fbcnn_color_flex, fbcnn_gray_flex |
+  | NAFNet | Motion deblur / denoise (same resolution) | nafnet_gopro_width32, nafnet_reds_width64, nafnet_sidd_width32, nafnet_sidd_width64 |
+  | super-image | Lightweight super-resolution (2x/3x/4x) | pan_2x/3x/4x, pan_bam_2x/3x/4x, carn_2x/3x/4x, carn_bam_2x/3x/4x, a2n_2x/3x/4x, awsrn_bam_2x/3x/4x, msrn_2x/3x/4x, msrn_bam_2x/3x/4x |
+  | WebSR | Super-resolution | websr_cnn2x_s_rl, websr_cnn2x_s_an, websr_cnn2x_s_3d, websr_cnn2x_m_rl, websr_cnn2x_m_an, websr_cnn2x_m_3d, websr_cnn2x_l_rl, websr_cnn2x_l_an, websr_cnn2x_l_3d |
+  | waifu2x CUNet | Super-resolution / denoise | waifu2x_cunet_scale2x, waifu2x_cunet_noise0, waifu2x_cunet_noise0_scale2x, waifu2x_cunet_noise1, waifu2x_cunet_noise1_scale2x, waifu2x_cunet_noise2, waifu2x_cunet_noise2_scale2x, waifu2x_cunet_noise3, waifu2x_cunet_noise3_scale2x |
+  | waifu2x UpConv7 | Super-resolution / denoise | waifu2x_upconv7_art_scale2x, waifu2x_upconv7_art_noise0_scale2x, waifu2x_upconv7_art_noise1_scale2x, waifu2x_upconv7_art_noise2_scale2x, waifu2x_upconv7_art_noise3_scale2x, waifu2x_upconv7_photo_scale2x, waifu2x_upconv7_photo_noise0_scale2x, waifu2x_upconv7_photo_noise1_scale2x, waifu2x_upconv7_photo_noise2_scale2x, waifu2x_upconv7_photo_noise3_scale2x |
+  | waifu2x VGG7 | Super-resolution / denoise | waifu2x_vgg7_art_scale2x, waifu2x_vgg7_art_noise0, waifu2x_vgg7_art_noise1, waifu2x_vgg7_art_noise2, waifu2x_vgg7_art_noise3, waifu2x_vgg7_art_y_scale2x, waifu2x_vgg7_art_y_noise1, waifu2x_vgg7_art_y_noise2, waifu2x_vgg7_art_y_noise3, waifu2x_vgg7_photo_scale2x, waifu2x_vgg7_photo_noise0, waifu2x_vgg7_photo_noise1, waifu2x_vgg7_photo_noise2, waifu2x_vgg7_photo_noise3, waifu2x_vgg7_ukbench_scale2x |
+  | Real-CUGAN | Super-resolution / denoise (for anime) | up2x_latest_no_denoise, up2x_latest_conservative, up2x_latest_denoise1x, up2x_latest_denoise2x, up2x_latest_denoise3x, up3x_latest_no_denoise, up3x_latest_conservative, up3x_latest_denoise3x, up4x_latest_no_denoise, up4x_latest_conservative, up4x_latest_denoise3x, upcunet2x_no_denoise, upcunet2x_no_denoise_int8, upcunet2x_no_denoise_int8_v2 |
+  | Real-ESRGAN | Super-resolution | realesr_animevideov3, realesr_general_x4v3, realesr_general_wdn_x4v3, realesrgan_anime_6b, realesrgan_anime_6b_int8, realesrgan_anime_6b_int8_v3, realesrgan_x2plus, realesrgan_x4plus, realesrgan_x4plus_anime_6b, realesrnet_x4plus |
+  | BSRGAN | Super-resolution (real-world photo restoration) | bsrgan, bsrganx2, bsrnet |
+  | RAVU | Super-resolution | ravu_lite_r2, ravu_lite_r3, ravu_lite_r4, ravu_r2, ravu_r3, ravu_r4, ravu_3x_r2, ravu_3x_r3, ravu_3x_r4, ravu_zoom_2x_r2, ravu_zoom_2x_r2_ar, ravu_zoom_3x_r2, ravu_zoom_3x_r2_ar, ravu_zoom_4x_r2, ravu_zoom_4x_r2_ar, ravu_zoom_2x_r3, ravu_zoom_2x_r3_ar, ravu_zoom_3x_r3, ravu_zoom_3x_r3_ar, ravu_zoom_4x_r3, ravu_zoom_4x_r3_ar |
+  | EDSR | Super-resolution | edsr_baseline_x2, edsr_baseline_x3, edsr_baseline_x4 |
+  | ESRGAN/FSSR/RealSR | Super-resolution | esrgan, fssr_dped, fssr_jpeg, realsr_dped, realsr_jpeg |
+  | NNEDI3 | Super-resolution (2x upscale) | nnedi3_nns16_win8x4, nnedi3_nns16_win8x6, nnedi3_nns32_win8x4, nnedi3_nns32_win8x6, nnedi3_nns64_win8x4, nnedi3_nns64_win8x6, nnedi3_nns128_win8x4, nnedi3_nns128_win8x6, nnedi3_nns256_win8x4, nnedi3_nns256_win8x6 |
+  | KAIR Denoise | Denoise | dncnn3, dncnn_15, dncnn_25, dncnn_50, dncnn_color_blind, dncnn_gray_blind, drunet_color, drunet_color_int8, drunet_gray, drunet_deblocking_color, drunet_deblocking_grayscale, fdncnn_color, fdncnn_color_clip, fdncnn_gray, fdncnn_gray_clip, ffdnet_color, ffdnet_color_clip, ffdnet_gray, ffdnet_gray_clip |
+  | KAIR SR | Super-resolution | dpsr_x2, dpsr_x2_int8, dpsr_x3, dpsr_x4, dpsr_x4_gan, srmd_x2, srmd_x3, srmd_x4, srmdnf_x2, srmdnf_x3, srmdnf_x4 |
+
+- Example:
+  ```
+  --vpp-onnx model=artcnn_c4f32
+  --vpp-onnx model=waifu2x_cunet_noise2_scale2x,noise=25
+  --vpp-onnx model=anime4k_restore_cnn_l,out_res=-2x1080
+  --vpp-onnx model=hdrtvnetpp_agcm_dynamic,colormatrix=bt709 --output-depth 10 --colormatrix bt2020nc --colorprim bt2020 --transfer smpte2084
+  --vpp-onnx model=hdrtvnetpp_agcm_stable,colormatrix=bt709 --output-depth 10 --colormatrix bt2020nc --colorprim bt2020 --transfer smpte2084
+  ```
+
+### --vpp-onnx-deint [&lt;param1&gt;=&lt;value1&gt;][,&lt;param2&gt;=&lt;value2&gt;],...
+OpenVINO ONNX model deinterlacing filter. The model is selected by its registered name in `onnx_deint_models.json`; direct ONNX/IR paths are not accepted. The `architecture` field in that manifest is internal metadata and cannot be selected as a command-line parameter (there is no `arch=` parameter).
+
+The `stdeint` and `stdeint_fast` registrations use ST-DeInt (3-channel input, 6-channel half-height output). The `DDD` registration uses DDD (three-field, transposed 9-channel input and 3-channel output). `mode=bob` outputs two progressive frames per input frame and doubles the frame rate; `mode=normal` outputs one frame using the first displayed field. TFF and BFF field order are preserved. Progressive input is passed through without neural deinterlacing.
+
+This filter accepts 8-bit YUV420 input only, with an even frame height (at least 4). ST-DeInt uses the selected OpenVINO device and normally uses the GPU; CPU is also available through `device=CPU`. DDD keeps tensor packing and output weaving on host memory, while inference still uses the selected device. OpenVINO Runtime is required on Linux.
+
+- **Parameters**
+  - enable=&lt;bool&gt; (default: true when this option is present)  
+    Enable or disable the filter.
+  - model=&lt;string&gt; (required)  
+    Registered name from `onnx_deint_models.json` under [`--vpp-onnx-model-dir`](#--vpp-onnx-model-dir-string). Names such as `stdeint`, `stdeint_fast`, and `DDD` are examples; a file path is rejected.
+  - device=&lt;string&gt; (default: GPU.0)  
+    OpenVINO device: GPU.0 / GPU / CPU / AUTO / NPU.
+  - precision=&lt;string&gt; (default: fp32)  
+    Inference precision: fp32 / auto.
+  - mode=&lt;string&gt; (default: bob)  
+    Output mode: bob / normal.
+  - colormatrix=&lt;string&gt; (default: auto)  
+    Input color matrix. Supported values are auto / auto_res / bt709 / smpte170m / bt470bg / bt2020nc.
+  - colorrange=&lt;string&gt; (default: auto)  
+    Input color range: auto / limited (tv) / full (pc).
+
+Neither QSVEnc nor the HWEnc-onnx-models release archives include ST-DeInt or DDD model files. ST-DeInt is excluded because its upstream license is Unknown; DDD's distribution source and license are unconfirmed. Generate ST-DeInt or place a separately obtained DDD model yourself after checking the applicable rights and licenses. Run `run_all.py` in the [HWEnc-onnx-models repository](https://github.com/rigaya/HWEnc-onnx-models) to generate `onnx_deint_models.json`; DDD is registered only when `ddd/DDD.onnx` has been supplied externally.
+
+```
+--vpp-onnx-model-dir C:\models\HWEnc-onnx-models
+--vpp-onnx-deint model=stdeint,mode=bob,device=GPU.0,precision=fp32
+--vpp-onnx-deint model=DDD,mode=normal,device=CPU,precision=auto
+```
+
+### --vpp-onnx-model-dir &lt;string&gt;
+Directory containing models.json and the model files for registered ONNX models.
+
+This option must be specified when using short model names with `--vpp-onnx model=<name>`.
+
+Model files can be downloaded from [https://github.com/rigaya/HWEnc-onnx-models/releases](https://github.com/rigaya/HWEnc-onnx-models/releases).
+Download the zip archive, extract it to an arbitrary directory, and specify that directory.
+
+The release archives do not contain ST-DeInt or DDD models, or the deinterlacer manifest. ST-DeInt's upstream license is Unknown, and DDD's distribution source and license are unconfirmed. Generate or place those files separately, verify their rights and licenses, and generate `onnx_deint_models.json` with `run_all.py` before using `--vpp-onnx-deint`.
+
+```
+--vpp-onnx-model-dir C:\models\HWEnc-onnx-models
+```
+
+### --vpp-onnx-cache-dir &lt;string&gt;
+Directory to cache compiled ONNX models.
+
+This can skip OpenVINO model recompilation on later runs.
+
+```
+--vpp-onnx-cache-dir C:\models\HWEnc-onnx-cache
+```
+
+### --vpp-rife-ov [&lt;param1&gt;=&lt;value1&gt;][,&lt;param2&gt;=&lt;value2&gt;],...
+OpenVINO RIFE v4.x frame interpolation filter. Input must be 8-bit YUV420 and its width and height must be multiples of 32.
+
+- **Parameters**
+  - model=&lt;string&gt;  
+    Registered RIFE v4.x model name or path to an ONNX/IR model (required). When `--vpp-onnx-model-dir` is specified, a name from `rife_ov_models.json` such as `rife_v4_6` can be used. Values containing `/`, `\\`, or `.` are treated as direct paths for compatibility.
+  - multi=&lt;int&gt; (default: 2, minimum: 2)  
+    Frame-rate multiplier.
+  - device=&lt;string&gt; (default: GPU.0)  
+    OpenVINO device: GPU.0 / GPU / CPU / AUTO / NPU.
+  - colormatrix=&lt;string&gt; (default: auto)  
+    auto / bt601 / bt709 / bt2020.
+  - colorrange=&lt;string&gt; (default: auto)  
+    auto / tv / pc.
+
+  ```
+  --vpp-onnx-model-dir C:\models\HWEnc-onnx-models --vpp-rife-ov model=rife_v4_6,multi=2
+  --vpp-rife-ov model=C:\models\rife_v4.6.onnx,multi=2
+  ```
+
 ### --vpp-ai-frameinterp [&lt;param1&gt;=&lt;value1&gt;][,&lt;param2&gt;=&lt;value2&gt;],...
 Enable AI Powered frame interpolation, which will double the framerate.
 
@@ -4076,6 +4321,11 @@ Enables parallel encoding by file splitting. Divides the input file into multipl
   Example: Run with 3 parallel threads
   --parallel 3
   ```
+
+### --parallel-force-large-memory-filters
+Disables an automatic --parallel count limit when one is applied for filters with high GPU memory usage.
+
+Use this only when enough GPU memory is available, as it can increase the risk of GPU memory allocation errors or performance drops.
 
 ### --async-depth &lt;int&gt;
 set async depth for QSV pipeline. default: 0 (=auto, 3frames)
@@ -4365,6 +4615,13 @@ When using the vpy reader, resolves relative paths in `.vpy` against the script 
 ### --task-perf-monitor
 
   Enable performance monitoring of each task and print time required for each task at the end of log.
+
+### --opencl-task-threads &lt;auto|int&gt;
+Set OpenCL task thread mode.
+
+  - auto ... selects 2 on IceLake or later GPUs, or GPUs supporting HEVC FF encoding; otherwise selects 0 (default)
+  - 0 ... legacy single-thread path
+  - 2 ... acquire + release workers
 
 ### --cl-perf-dump &lt;dir&gt;
 Write OpenCL kernel performance dumps to the specified directory and automatically generate `report.html` after encoding.

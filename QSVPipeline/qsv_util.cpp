@@ -360,7 +360,6 @@ void RGYBitstream::addFrameData(RGYFrameData *frameData) {
 }
 
 void RGYBitstream::clearFrameDataList() {
-    frameDataNum = 0;
     if (frameDataList) {
         for (int i = 0; i < frameDataNum; i++) {
             if (frameDataList[i]) {
@@ -370,6 +369,7 @@ void RGYBitstream::clearFrameDataList() {
         free(frameDataList);
         frameDataList = nullptr;
     }
+    frameDataNum = 0;
 }
 std::vector<RGYFrameData *> RGYBitstream::getFrameDataList() {
     return make_vector(frameDataList, frameDataNum);
@@ -394,7 +394,9 @@ mfxStatus mfxBitstreamCopy(mfxBitstream *pBitstreamCopy, const mfxBitstream *pBi
     pBitstreamCopy->MaxLength = 0;
     auto sts = mfxBitstreamInit(pBitstreamCopy, pBitstream->MaxLength);
     if (sts == MFX_ERR_NONE) {
-        memcpy(pBitstreamCopy->Data, pBitstream->Data, pBitstreamCopy->DataLength);
+        pBitstreamCopy->DataOffset = pBitstream->DataOffset;
+        pBitstreamCopy->DataLength = pBitstream->DataLength;
+        memcpy(pBitstreamCopy->Data + pBitstreamCopy->DataOffset, pBitstream->Data + pBitstream->DataOffset, pBitstream->DataLength);
     }
     return sts;
 }

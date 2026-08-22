@@ -515,9 +515,10 @@ RGY_ERR RGYFilterLibplacebo::initLibplacebo(const RGYFilterParam *param) {
         AddMessage(RGY_LOG_ERROR, _T("%s is required but not found.\n"), RGY_LIBPLACEBO_DLL_NAME);
         return RGY_ERR_UNKNOWN;
     }
+    AddMessage(RGY_LOG_DEBUG, _T("Loaded libplacebo API %d.\n"), m_pl->api_version());
     if (m_pl->p_log_create()) {
         const pl_log_params log_params = { libplacebo_log_func, m_pLog.get(), loglevel_rgy_to_libplacebo(m_pLog->getLogLevel(RGY_LOGT_LIBPLACEBO)) };
-        m_log = std::unique_ptr<std::remove_pointer<pl_log>::type, RGYLibplaceboDeleter<pl_log>>(m_pl->p_log_create()(0, &log_params), RGYLibplaceboDeleter<pl_log>(m_pl->p_log_destroy()));
+        m_log = std::unique_ptr<std::remove_pointer<pl_log>::type, RGYLibplaceboDeleter<pl_log>>(m_pl->p_log_create()(m_pl->api_version(), &log_params), RGYLibplaceboDeleter<pl_log>(m_pl->p_log_destroy()));
         if (!m_log) {
             AddMessage(RGY_LOG_ERROR, _T("Failed to create libplacebo log.\n"));
             return RGY_ERR_UNKNOWN;
@@ -533,7 +534,7 @@ RGY_ERR RGYFilterLibplacebo::initLibplacebo(const RGYFilterParam *param) {
     gpu_params.device = (ID3D11Device*)m_cl->platform()->d3d11dev();
 
     m_pldevice = std::unique_ptr<std::remove_pointer<pl_d3d11>::type, RGYLibplaceboDeleter<pl_d3d11>>(
-        m_pl->p_d3d11_create()(m_log.get(), &gpu_params), RGYLibplaceboDeleter<pl_d3d11>(m_pl->p_d3d11_destroy()));
+        m_pl->create_d3d11(m_log.get(), &gpu_params), RGYLibplaceboDeleter<pl_d3d11>(m_pl->p_d3d11_destroy()));
 #elif ENABLE_VULKAN
     if (ENCODER_QSV) {
         AddMessage(RGY_LOG_ERROR, _T("libplacebo via vulkan is not supported on QSV encoder, due to lack of OpenCL-Vulkan interop.\n"));
@@ -552,7 +553,7 @@ RGY_ERR RGYFilterLibplacebo::initLibplacebo(const RGYFilterParam *param) {
     gpu_params.device = m_device->GetPhysicalDevice();
 
     m_pldevice = std::unique_ptr<std::remove_pointer<pl_vulkan>::type, RGYLibplaceboDeleter<pl_vulkan>>(
-        m_pl->p_vulkan_create()(m_log.get(), &gpu_params), RGYLibplaceboDeleter<pl_vulkan>(m_pl->p_vulkan_destroy()));
+        m_pl->create_vulkan(m_log.get(), &gpu_params), RGYLibplaceboDeleter<pl_vulkan>(m_pl->p_vulkan_destroy()));
 #endif
     if (ENCODER_VCEENC) {
         m_pLog->setLogLevel(loglevel, RGY_LOGT_LIBPLACEBO);
@@ -843,6 +844,7 @@ RGY_ERR RGYFilterLibplacebo::run_filter(const RGYFrameInfo *pInputFrame, RGYFram
 #define COPY_DEBUG 0
     {
 #if ENABLE_D3D11
+        std::lock_guard<std::recursive_mutex> interopLock(m_cl->interopMutex());
         auto textInCL = m_textIn->getCLFrame(m_cl.get(), queue);
         auto err = textInCL->acquire(queue);
         if (err != RGY_ERR_NONE) {
@@ -997,6 +999,7 @@ RGY_ERR RGYFilterLibplacebo::run_filter(const RGYFrameInfo *pInputFrame, RGYFram
 #if ENABLE_D3D11
     // CL_CONTEXT_INTEROP_USER_SYNC=trueの場合、ここでlibplaceboの処理の終了を待つ必要がある
     m_pl->p_gpu_finish()(m_pldevice->gpu);
+    std::lock_guard<std::recursive_mutex> outputInteropLock(m_cl->interopMutex());
     // m_ngxFrameBufOut -> ppOutputFrames
     auto textOutCL = m_textOut->getCLFrame(m_cl.get(), queue);
     auto err = textOutCL->acquire(queue);
@@ -1040,6 +1043,10 @@ RGY_ERR RGYFilterLibplacebo::run_filter(const RGYFrameInfo *pInputFrame, RGYFram
     }
 #if ENABLE_D3D11
     textOutCL->release();
+    if ((sts = queue.finish()) != RGY_ERR_NONE) {
+        AddMessage(RGY_LOG_ERROR, _T("Failed to finish OpenCL interop queue: %s.\n"), get_err_mes(sts));
+        return sts;
+    }
 #elif ENABLE_VULKAN
     if (!m_semOutVKStart.front()->getCL()) {
         // CL_KHR_EXTERNAL_SEMAPHORE_EXTENSION_NAMEが有効でない場合、semaphoreを使わずOpenCLの処理を終了させる
@@ -1167,7 +1174,7 @@ RGY_ERR RGYFilterLibplaceboResample::setLibplaceboParam(const RGYFilterParam *pa
     m_filter_params->filter.taper = prm->resample.taper;
     if (prm->resample.radius >= 0.0) {
         if (!m_filter_params->filter.kernel->resizable) {
-            AddMessage(RGY_LOG_WARN, _T("radius %.1f ignored for non-resizable filter: %s.\n"), char_to_tstring(resample_filter_name).c_str());
+            AddMessage(RGY_LOG_WARN, _T("radius %.1f ignored for non-resizable filter: %s.\n"), prm->resample.radius, char_to_tstring(resample_filter_name).c_str());
         } else {
             m_filter_params->filter.radius = prm->resample.radius;
         }
@@ -1390,7 +1397,7 @@ RGY_ERR RGYFilterLibplaceboDeband::setLibplaceboParam(const RGYFilterParam *para
     m_filter_params->grain = prm->deband.grainY;
     if (prm->deband.grainC >= 0.0f && prm->deband.grainY != prm->deband.grainC) {
         m_filter_params_c = std::make_unique<pl_deband_params>(*m_filter_params.get());
-        m_filter_params->grain = prm->deband.grainC;
+        m_filter_params_c->grain = prm->deband.grainC;
     }
     return RGY_ERR_NONE;
 }
@@ -2082,7 +2089,7 @@ RGY_ERR RGYFilterLibplaceboToneMapping::procFrame(pl_tex texOut[RGY_MAX_PLANES],
         frameOut.planes[iplane].component_mapping[0] = iplane;
     }
 
-    if (!m_pl->p_render_image()(m_renderer.get(), &frameIn, &frameOut, m_tonemap.renderParams.get())) {
+    if (!m_pl->render_image(m_renderer.get(), &frameIn, &frameOut, m_tonemap.renderParams.get())) {
         AddMessage(RGY_LOG_ERROR, _T("Failed to render image.\n"));
         return RGY_ERR_UNKNOWN;
     }
@@ -2293,6 +2300,52 @@ RGY_ERR RGYFilterLibplaceboShader::setLibplaceboParam(const RGYFilterParam *para
         AddMessage(RGY_LOG_ERROR, _T("Failed to parse shader.\n"));
         return RGY_ERR_UNKNOWN;
     }
+    for (const auto& cp : prm->shader.custom_params) {
+        const auto cname = tchar_to_string(cp.first);
+        const auto cvalS = tchar_to_string(cp.second);
+        const struct pl_hook_par *par = nullptr;
+        for (int k = 0; k < m_shader->num_parameters; k++) {
+            if (cname == m_shader->parameters[k].name) { par = &m_shader->parameters[k]; break; }
+        }
+        if (par == nullptr) {
+            AddMessage(RGY_LOG_ERROR, _T("libplacebo shader has no tunable parameter \"%s\".\n"), cp.first.c_str());
+            return RGY_ERR_INVALID_PARAM;
+        }
+        try {
+            switch (par->type) {
+            case PL_VAR_FLOAT: {
+                float v = std::stof(cvalS);
+                if (par->maximum.f > par->minimum.f && (v < par->minimum.f || v > par->maximum.f)) {
+                    AddMessage(RGY_LOG_ERROR, _T("libplacebo custom=%s: value out of range.\n"), cp.first.c_str());
+                    return RGY_ERR_INVALID_PARAM;
+                }
+                par->data->f = v; break;
+            }
+            case PL_VAR_SINT: {
+                int v = std::stoi(cvalS);
+                if (par->maximum.i > par->minimum.i && (v < par->minimum.i || v > par->maximum.i)) {
+                    AddMessage(RGY_LOG_ERROR, _T("libplacebo custom=%s: value out of range.\n"), cp.first.c_str());
+                    return RGY_ERR_INVALID_PARAM;
+                }
+                par->data->i = v; break;
+            }
+            case PL_VAR_UINT: {
+                unsigned v = (unsigned)std::stoul(cvalS);
+                if (par->maximum.u > par->minimum.u && (v < par->minimum.u || v > par->maximum.u)) {
+                    AddMessage(RGY_LOG_ERROR, _T("libplacebo custom=%s: value out of range.\n"), cp.first.c_str());
+                    return RGY_ERR_INVALID_PARAM;
+                }
+                par->data->u = v; break;
+            }
+            default:
+                AddMessage(RGY_LOG_ERROR, _T("libplacebo custom=%s: unsupported parameter type.\n"), cp.first.c_str());
+                return RGY_ERR_UNSUPPORTED;
+            }
+        } catch (...) {
+            AddMessage(RGY_LOG_ERROR, _T("libplacebo custom=%s: cannot parse value.\n"), cp.first.c_str());
+            return RGY_ERR_INVALID_PARAM;
+        }
+    }
     if (prm->shader.width <= 0 || prm->shader.height <= 0) {
         warnResolutionDependentWhenWithoutRes(prm->shader.shader, shader_data);
     }
@@ -2306,7 +2359,13 @@ RGY_ERR RGYFilterLibplaceboShader::setLibplaceboParam(const RGYFilterParam *para
     }
     vui.apply_auto(VideoVUIInfo(), param->frameIn.height);
 
-    m_colorsystem = (pl_color_system)prm->shader.colorsystem;
+    const auto colorsystem = colorsystem_rgy_to_libplacebo(prm->shader.colorsystem, m_pl->api_version());
+    if (!colorsystem) {
+        AddMessage(RGY_LOG_ERROR, _T("Unsupported libplacebo color system for API %d: %s.\n"),
+            m_pl->api_version(), get_cx_desc(list_vpp_libplacebo_colorsystem, (int)prm->shader.colorsystem));
+        return RGY_ERR_UNSUPPORTED;
+    }
+    m_colorsystem = *colorsystem;
     if (m_colorsystem == PL_COLOR_SYSTEM_UNKNOWN) {
         switch (vui.matrix) {
         case RGY_MATRIX_RGB: m_colorsystem = PL_COLOR_SYSTEM_RGB; break;
@@ -2369,7 +2428,7 @@ RGY_ERR RGYFilterLibplaceboShader::setLibplaceboParam(const RGYFilterParam *para
     m_sample_params->filter.taper = prm->shader.taper;
     if (prm->shader.radius >= 0.0) {
         if (!m_sample_params->filter.kernel->resizable) {
-            AddMessage(RGY_LOG_WARN, _T("radius %.1f ignored for non-resizable filter: %s.\n"), char_to_tstring(resample_filter_name).c_str());
+            AddMessage(RGY_LOG_WARN, _T("radius %.1f ignored for non-resizable filter: %s.\n"), prm->shader.radius, char_to_tstring(resample_filter_name).c_str());
         } else {
             m_sample_params->filter.radius = prm->shader.radius;
         }
@@ -2399,7 +2458,7 @@ RGY_ERR RGYFilterLibplaceboShader::procFrame(pl_tex texOut[RGY_MAX_PLANES], cons
     }
 
     if (RGY_CSP_CHROMA_FORMAT[pSrcFrame->csp] == RGY_CHROMAFMT_YUV420) {
-        m_pl->p_frame_set_chroma_location()(&img, m_chromaloc);
+        m_pl->frame_set_chroma_location(&img, m_chromaloc);
     }
 
     pl_frame out = { 0 };
@@ -2424,7 +2483,7 @@ RGY_ERR RGYFilterLibplaceboShader::procFrame(pl_tex texOut[RGY_MAX_PLANES], cons
     renderParams.downscaler = &m_sample_params->filter;
     renderParams.antiringing_strength = m_sample_params->antiring;
 
-    if (!m_pl->p_render_image()(m_renderer.get(), &img, &out, &renderParams)) {
+    if (!m_pl->render_image(m_renderer.get(), &img, &out, &renderParams)) {
         AddMessage(RGY_LOG_ERROR, _T("Failed to render image.\n"));
         return RGY_ERR_UNKNOWN;
     }
@@ -2437,7 +2496,7 @@ tstring RGYFilterLibplaceboShader::printParams(const RGYFilterParamLibplacebo *p
         return param->print();
     }
     RGYFilterParamLibplaceboShader current = *prm;
-    current.shader.colorsystem = (VppLibplaceboColorsystem)m_colorsystem;
+    current.shader.colorsystem = colorsystem_libplacebo_to_rgy(m_colorsystem);
     current.shader.transfer = (VppLibplaceboToneMappingTransfer)m_transfer;
     return current.print();
 }

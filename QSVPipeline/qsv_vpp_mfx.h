@@ -50,6 +50,11 @@ public:
     RGY_ERR Init();
     RGY_ERR Close();
     RGY_ERR Reset(const mfxFrameInfo& frameOut, const mfxFrameInfo& frameIn);
+    // 入力の論理解像度だけを更新し、vpp.Outと出力プールを維持したままVPPをリセットする。
+    RGY_ERR ResetInputResolution(const mfxFrameInfo& newInputInfo);
+    // 入力途中の解像度変更に備えて確保した、先頭VPP入力サーフェスの物理上限を設定する。
+    // vpp.Inの現在値を変える関数ではない。
+    void SetInputAllocationResolution(const int width, const int height);
 
     void clear();
 
@@ -59,6 +64,9 @@ public:
     mfxSession GetSession() { return m_mfxSession; }
     MFXVideoVPP *mfxvpp() { return m_mfxVPP.get(); }
     mfxVideoParam& mfxparams() { return m_mfxVppParams; }
+    // VPPが現在期待している入力解像度をcrop適用前に戻したもの。上流から流れてくるサーフェスのInfo.CropW/CropHはcrop適用前の値なので、解像度変更の検出はこれと比較する
+    int inputWidthBeforeCrop() const { return m_mfxVppParams.vpp.In.CropW + m_crop.e.left + m_crop.e.right; }
+    int inputHeightBeforeCrop() const { return m_mfxVppParams.vpp.In.CropH + m_crop.e.up + m_crop.e.bottom; }
     mfxVersion mfxver() const { return m_mfxVer; }
     int asyncDepth() const { return m_asyncDepth; }
     tstring print() const { return VppExtMes; }
@@ -89,6 +97,11 @@ protected:
     QSVDeviceNum m_deviceNum;
     int m_asyncDepth;
 
+    // 先頭VPP入力サーフェスの物理確保上限。SetParam時は初期入力寸法、
+    // --adapt-resolution指定時はSetInputAllocationResolutionによって先行確保寸法まで広げられる。
+    // ResetInputResolutionでこれを超える解像度は、Resetだけでは既存プールに収まらないため拒否する。
+    mfxU16 m_initialInputWidth;
+    mfxU16 m_initialInputHeight;
     sInputCrop m_crop;
     std::unique_ptr<MFXVideoVPP> m_mfxVPP;
     mfxVideoParam m_mfxVppParams;

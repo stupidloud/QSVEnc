@@ -74,6 +74,7 @@ tstring GetQSVEncVersion() {
     version += strsprintf(_T("  vulkan     : %s\n"), ENABLED_INFO[ENABLE_VULKAN]);
 #endif
     version += strsprintf(_T("  libplacebo : %s\n"), ENABLED_INFO[ENABLE_LIBPLACEBO]);
+    version += strsprintf(_T("  OpenVINO   : %s\n"), ENABLED_INFO[ENABLE_OPENVINO]);
     return version;
 }
 
@@ -330,6 +331,10 @@ tstring encoder_help() {
     str += strsprintf(_T("Other Encode Options:\n")
         _T("   --fallback-rc                enable fallback of ratecontrol mode, when\n")
         _T("                                 platform does not support new ratecontrol modes.\n")
+        _T("   --(no-)workaround-hevc10bit-enctools\n")
+        _T("                                disable enctools related features for 10bit\n")
+        _T("                                HEVC FF encoding on older GPUs to avoid\n")
+        _T("                                image corruption. enabled by default.\n")
         _T("-a,--async-depth                set async depth for QSV pipeline.\n")
         _T("                                 default: 0 (=auto, %d)\n")
         _T("   --max-bitrate <int>          set max bitrate(kbps)\n")
@@ -553,12 +558,26 @@ int parse_one_vppmfx_option(const TCHAR *option_name, const TCHAR *strInput[], i
         for (size_t ielem = 0; ielem < _countof(paramsResizeLibPlacebo); ielem++) {
             paramListResizeLibPlacebo.push_back(paramsResizeLibPlacebo[ielem]);
         }
+        std::vector<std::string> paramListResizeNis;
+        for (size_t ielem = 0; ielem < _countof(paramsResizeNis); ielem++) {
+            paramListResizeNis.push_back(paramsResizeNis[ielem]);
+        }
+        std::vector<std::string> paramListResizeBicubic;
+        for (size_t ielem = 0; ielem < _countof(paramsResizeBicubic); ielem++) {
+            paramListResizeBicubic.push_back(paramsResizeBicubic[ielem]);
+        }
         std::vector<std::string> paramList = paramListResizeLibPlacebo;
         for (size_t ielem = 0; ielem < _countof(paramsResizeQSVEnc); ielem++) {
             paramList.push_back(paramsResizeQSVEnc[ielem]);
         }
         for (size_t ielem = 0; ielem < _countof(paramsResizeFsr1); ielem++) {
             paramList.push_back(paramsResizeFsr1[ielem]);
+        }
+        for (size_t ielem = 0; ielem < _countof(paramsResizeNis); ielem++) {
+            paramList.push_back(paramsResizeNis[ielem]);
+        }
+        for (size_t ielem = 0; ielem < _countof(paramsResizeBicubic); ielem++) {
+            paramList.push_back(paramsResizeBicubic[ielem]);
         }
 
         for (const auto& param : split(strInput[i], _T(","))) {
@@ -609,6 +628,18 @@ int parse_one_vppmfx_option(const TCHAR *option_name, const TCHAR *strInput[], i
                 if (std::find_if(paramsResizeFsr1, paramsResizeFsr1 + _countof(paramsResizeFsr1), [param_arg](const char *str) {
                     return param_arg == char_to_tstring(str);
                     }) != paramsResizeFsr1 + _countof(paramsResizeFsr1)) {
+                    ret = -1; // rgy_cmd.cppで処理する
+                    continue;
+                }
+                if (std::find_if(paramListResizeNis.begin(), paramListResizeNis.end(), [param_arg](const std::string& str) {
+                    return param_arg == char_to_tstring(str);
+                    }) != paramListResizeNis.end()) {
+                    ret = -1; // rgy_cmd.cppで処理する
+                    continue;
+                }
+                if (std::find_if(paramListResizeBicubic.begin(), paramListResizeBicubic.end(), [param_arg](const std::string& str) {
+                    return param_arg == char_to_tstring(str);
+                    }) != paramListResizeBicubic.end()) {
                     ret = -1; // rgy_cmd.cppで処理する
                     continue;
                 }
@@ -1262,7 +1293,7 @@ int ParseOneOption(const TCHAR *option_name, const TCHAR* strInput[], int& i, in
                     continue;
                 }
                 if (param_arg == _T("cqp")) {
-                    int ret = rcPrm.qp.parse(strInput[i]);
+                    int ret = rcPrm.qp.parse(param_val.c_str());
                     if (ret != 0) {
                         print_cmd_error_invalid_value(tstring(option_name) + _T(" ") + param_arg + _T("="), param_val);
                         return 1;
@@ -1384,6 +1415,14 @@ int ParseOneOption(const TCHAR *option_name, const TCHAR* strInput[], int& i, in
         pParams->fallbackRC = false;
         return 0;
     }
+    if (0 == _tcscmp(option_name, _T("workaround-hevc10bit-enctools"))) {
+        pParams->workaroundHevc10bitEnctools = true;
+        return 0;
+    }
+    if (0 == _tcscmp(option_name, _T("no-workaround-hevc10bit-enctools"))) {
+        pParams->workaroundHevc10bitEnctools = false;
+        return 0;
+    }
     if (   0 == _tcscmp(option_name, _T("max-bitrate"))
         || 0 == _tcscmp(option_name, _T("maxbitrate"))) //互換性のため
     {
@@ -1464,7 +1503,7 @@ int ParseOneOption(const TCHAR *option_name, const TCHAR* strInput[], int& i, in
         i++;
         int v = 0;
         if ((v = get_value_from_chr(list_qsv_function_mode, strInput[i])) == PARSE_ERROR_FLAG) {
-            print_cmd_error_invalid_value(option_name, strInput[i]);
+            print_cmd_error_invalid_value(option_name, strInput[i], list_qsv_function_mode);
             return 1;
         }
         pParams->functionMode = (QSVFunctionMode)v;
@@ -1590,11 +1629,12 @@ int ParseOneOption(const TCHAR *option_name, const TCHAR* strInput[], int& i, in
         return 0;
     }
     if (0 == _tcscmp(option_name, _T("ai-enc-ctrl"))) {
-        i++;
+        pParams->aiEncCtrl.enable = true;
+        // 値の有無を判定してから i を進める (先に i を進めると値を読み飛ばしてしまう)
         if (i + 1 >= nArgNum || strInput[i + 1][0] == _T('-')) {
             return 0;
         }
-        pParams->aiEncCtrl.enable = true;
+        i++;
         const auto paramList = std::vector<std::string>{ "saliency", "adaptive" };
         for (const auto &param : split(strInput[i], _T(","))) {
             auto pos = param.find_first_of(_T("="));
@@ -1776,8 +1816,8 @@ int ParseOneOption(const TCHAR *option_name, const TCHAR* strInput[], int& i, in
         for (; iv < (int)values.size(); iv++) {
             TCHAR *eptr = nullptr;
             int v = _tcstol(values[iv].c_str(), &eptr, 0);
-            if (v == 0 && (eptr != nullptr || *eptr == ' ')) {
-                print_cmd_error_invalid_value(option_name, strInput[iv]);
+            if (eptr == values[iv].c_str() || (*eptr != _T('\0') && *eptr != _T(' '))) {
+                print_cmd_error_invalid_value(option_name, strInput[i]);
                 return 1;
             }
             if (v < -51 || v > 51) {
@@ -1813,7 +1853,7 @@ int ParseOneOption(const TCHAR *option_name, const TCHAR* strInput[], int& i, in
     if (0 == _tcscmp(option_name, _T("inter-pred"))) {
         i++;
         int v = 0;
-        if (1 != _stscanf_s(strInput[i], _T("%d"), &v) && 0 <= v && v < _countof(list_pred_block_size) - 1) {
+        if (1 != _stscanf_s(strInput[i], _T("%d"), &v) || v < 0 || v >= _countof(list_pred_block_size) - 1) {
             print_cmd_error_invalid_value(option_name, strInput[i], list_pred_block_size);
             return 1;
         }
@@ -1823,7 +1863,7 @@ int ParseOneOption(const TCHAR *option_name, const TCHAR* strInput[], int& i, in
     if (0 == _tcscmp(option_name, _T("intra-pred"))) {
         i++;
         int v = 0;
-        if (1 != _stscanf_s(strInput[i], _T("%d"), &v) && 0 <= v && v < _countof(list_pred_block_size) - 1) {
+        if (1 != _stscanf_s(strInput[i], _T("%d"), &v) || v < 0 || v >= _countof(list_pred_block_size) - 1) {
             print_cmd_error_invalid_value(option_name, strInput[i], list_pred_block_size);
             return 1;
         }
@@ -1833,7 +1873,7 @@ int ParseOneOption(const TCHAR *option_name, const TCHAR* strInput[], int& i, in
     if (0 == _tcscmp(option_name, _T("mv-precision"))) {
         i++;
         int v = 0;
-        if (1 != _stscanf_s(strInput[i], _T("%d"), &v) && 0 <= v && v < _countof(list_mv_presicion) - 1) {
+        if (1 != _stscanf_s(strInput[i], _T("%d"), &v) || v < 0 || v >= _countof(list_mv_presicion) - 1) {
             print_cmd_error_invalid_value(option_name, strInput[i], list_mv_presicion);
             return 1;
         }
@@ -2199,26 +2239,34 @@ int parse_cmd(sInputParams *pParams, const TCHAR *strInput[], int nArgNum, bool 
         }
     }
 
+    if (pParams->vpp.onnxListModels) {
+        return handle_vpp_onnx_list_models(&pParams->vpp);
+    }
+
     if (!FOR_AUO) {
         // check if all mandatory parameters were set
         if (pParams->common.inputFilename.length() == 0) {
-            _ftprintf(stderr, _T("Source file name not found.\n"));
+            print_cmd_error_msg(_T("Source file name not found."));
             return 1;
         }
 
         if (pParams->common.outputFilename.length() == 0) {
-            _ftprintf(stderr, _T("Destination file name not found.\n"));
+            print_cmd_error_msg(_T("Destination file name not found."));
             return 1;
         }
 
         if (pParams->common.chapterFile.length() > 0 && pParams->common.copyChapter) {
-            _ftprintf(stderr, _T("--chapter and --chapter-copy are both set.\nThese could not be set at the same time.\n"));
+            print_cmd_error_msg(_T("--chapter and --chapter-copy are both set.\nThese could not be set at the same time."));
             return 1;
         }
+        // 標準入力や Windows 名前付きパイプに rgy_path_is_same を呼ばない。
+        // equivalent() が待機中のパイプへ接続し、インスタンスを消費するため。
         if (pParams->common.inputFilename != _T("-")
             && pParams->common.outputFilename != _T("-")
+            && !rgy_path_is_windows_named_pipe(pParams->common.inputFilename)
+            && !rgy_path_is_windows_named_pipe(pParams->common.outputFilename)
             && rgy_path_is_same(pParams->common.inputFilename, pParams->common.outputFilename)) {
-            _ftprintf(stderr, _T("destination file is equal to source file!\n"));
+            print_cmd_error_msg(_T("destination file is equal to source file!"));
             return 1;
         }
     }
@@ -2512,7 +2560,7 @@ tstring gen_cmd(const sInputParams *pParams, bool save_disabled_prm, RGYDisableG
 #endif
 #if LIBVA_SUPPORT
         case SYSTEM_MEMORY: cmd << _T(" --disable-va"); break;
-        case D3D11_MEMORY: cmd << _T(" --va"); break;
+        case D3D9_MEMORY: cmd << _T(" --va"); break; // --va のパース時に設定される値に合わせる
 #endif
         default: break;
         }
@@ -2581,6 +2629,9 @@ tstring gen_cmd(const sInputParams *pParams, bool save_disabled_prm, RGYDisableG
         OPT_NUM(_T("--avbr-unitsize"), rcParam.avbrConvergence);
     }
     if (save_disabled_prm
+        || pParams->nLookaheadDepth > 0
+        || pParams->nWinBRCSize > 0
+        || pParams->nLookaheadDS != MFX_LOOKAHEAD_DS_UNKNOWN
         || pParams->rcParam.encMode == MFX_RATECONTROL_LA
         || pParams->rcParam.encMode == MFX_RATECONTROL_LA_HRD
         || pParams->rcParam.encMode == MFX_RATECONTROL_LA_ICQ) {
@@ -2593,6 +2644,7 @@ tstring gen_cmd(const sInputParams *pParams, bool save_disabled_prm, RGYDisableG
     }
     OPT_NUM(_T("--vbv-bufsize"), rcParam.vbvBufSize);
     OPT_BOOL(_T("--fallback-rc"), _T("--no-fallback-rc"), fallbackRC);
+    OPT_BOOL(_T("--workaround-hevc10bit-enctools"), _T("--no-workaround-hevc10bit-enctools"), workaroundHevc10bitEnctools);
     OPT_QP(_T("--qp-min"), qpMin, save_disabled_prm);
     OPT_QP(_T("--qp-max"), qpMax, save_disabled_prm);
     if (memcmp(pParams->pQPOffset, encPrmDefault.pQPOffset, sizeof(encPrmDefault.pQPOffset))) {
@@ -2664,12 +2716,17 @@ tstring gen_cmd(const sInputParams *pParams, bool save_disabled_prm, RGYDisableG
         }
         if (!tmp.str().empty()) {
             cmd << _T(" --ai-enc-ctrl ") << tmp.str().substr(1);
+        } else if (pParams->aiEncCtrl.enable) {
+            cmd << _T(" --ai-enc-ctrl");
         }
     }
     OPT_BOOL_OPT(_T("--adapt-ref"), _T("--no-adapt-ref"), adaptiveRef);
     OPT_BOOL_OPT(_T("--adapt-ltr"), _T("--no-adapt-ltr"), adaptiveLTR);
     OPT_BOOL_OPT(_T("--adapt-cqm"), _T("--no-adapt-cqm"), adaptiveCQM);
-    OPT_NUM(_T("--intra-refresh-cycle"), intraRefreshCycle);
+    // パース時に +1 した値を保持しているので、生成時は元の指定値に戻す
+    if ((pParams->intraRefreshCycle) != (encPrmDefault.intraRefreshCycle)) {
+        cmd << _T(" --intra-refresh-cycle ") << (int)(pParams->intraRefreshCycle) - 1;
+    }
     OPT_NUM(_T("--max-framesize"), maxFrameSize);
     OPT_NUM(_T("--max-framesize-i"), maxFrameSizeI);
     OPT_NUM(_T("--max-framesize-p"), maxFrameSizeP);
@@ -2683,6 +2740,7 @@ tstring gen_cmd(const sInputParams *pParams, bool save_disabled_prm, RGYDisableG
     OPT_LST(_T("--level"), CodecLevel, get_level_list(pParams->codec));
     OPT_LST(_T("--profile"), CodecProfile, get_profile_list(pParams->codec));
     if (save_disabled_prm || pParams->codec == RGY_CODEC_HEVC) {
+        OPT_LST(_T("--tier"), hevc_tier, list_hevc_tier);
         OPT_LST(_T("--ctu"), hevc_ctu, list_hevc_ctu);
         OPT_LST(_T("--sao"), hevc_sao, list_hevc_sao);
         OPT_BOOL_OPT(_T("--tskip"), _T("--no-tskip"), hevc_tskip);
@@ -2726,7 +2784,8 @@ tstring gen_cmd(const sInputParams *pParams, bool save_disabled_prm, RGYDisableG
         cmd << gen_cmd(&pParams->ctrl, &encPrmDefault.ctrl, save_disabled_prm, disable_flags);
     }
 
-    OPT_BOOL(_T("--timer-period-tuning"), _T("--no-timer-period-tuning"), bDisableTimerPeriodTuning);
+    // bDisableTimerPeriodTuning は「無効化する」フラグなので、trueのとき --no-timer-period-tuning を出力する
+    OPT_BOOL(_T("--no-timer-period-tuning"), _T("--timer-period-tuning"), bDisableTimerPeriodTuning);
     return cmd.str();
 }
 #pragma warning (pop)

@@ -35,15 +35,177 @@
 #include "rgy_filter_resize.h"
 #include "rgy_filter_libplacebo.h"
 #include "rgy_prm.h"
+#include "nis_coef_tables.h"
 
 static const int RESIZE_BLOCK_X = 32;
 static const int RESIZE_BLOCK_Y = 8;
 static_assert(RESIZE_BLOCK_Y <= RESIZE_BLOCK_X, "RESIZE_BLOCK_Y <= RESIZE_BLOCK_X");
 
+// NIS thread-group geometry. Keep the workgroup at 256 threads or below.
+static const int NIS_BLOCK_WIDTH       = 32;
+static const int NIS_BLOCK_HEIGHT      = 8;
+static const int NIS_THREAD_GROUP_SIZE = NIS_BLOCK_WIDTH * NIS_BLOCK_HEIGHT;
+static_assert(NIS_THREAD_GROUP_SIZE <= 256, "NIS workgroup size must be <= 256.");
+
+// Host mirror of the .cl NISConfigCL. Field order, types, and 256-byte
+// alignment MUST stay in lock-step with the kernel-side struct.
+struct alignas(256) NISConfigHost {
+    float kDetectRatio;
+    float kDetectThres;
+    float kMinContrastRatio;
+    float kRatioNorm;
+
+    float kContrastBoost;
+    float kEps;
+    float kSharpStartY;
+    float kSharpScaleY;
+
+    float kSharpStrengthMin;
+    float kSharpStrengthScale;
+    float kSharpLimitMin;
+    float kSharpLimitScale;
+
+    float kScaleX;
+    float kScaleY;
+    float kDstNormX;
+    float kDstNormY;
+
+    float kSrcNormX;
+    float kSrcNormY;
+
+    uint32_t kInputViewportOriginX;
+    uint32_t kInputViewportOriginY;
+    uint32_t kInputViewportWidth;
+    uint32_t kInputViewportHeight;
+
+    uint32_t kOutputViewportOriginX;
+    uint32_t kOutputViewportOriginY;
+    uint32_t kOutputViewportWidth;
+    uint32_t kOutputViewportHeight;
+
+    float reserved0;
+    float reserved1;
+};
+static_assert(sizeof(NISConfigHost) == 256, "NISConfigHost must be 256 bytes to match aligned NIS_Config.h NISConfig.");
+
+// Port of NIS_Config.h NVScalerUpdateConfig (lines 156..254). Pure math,
+// no NIS headers pulled in (the originals depend on <algorithm> which
+// is fine; the port keeps the same numerics). Returns true if the
+// requested scale lies in NIS's supported 0.5..1.0 source-step range
+// (i.e. 1.0x..2.0x upscale). >2x cases are handled by the cascade
+// orchestrator.
+static bool nisBuildConfig(NISConfigHost &config, float sharpness, int hdrMode,
+        uint32_t inputViewportWidth, uint32_t inputViewportHeight,
+        uint32_t inputTextureWidth, uint32_t inputTextureHeight,
+        uint32_t outputViewportWidth, uint32_t outputViewportHeight,
+        uint32_t outputTextureWidth, uint32_t outputTextureHeight) {
+    sharpness = std::max(0.0f, std::min(1.0f, sharpness));
+    const float sharpen_slider = sharpness - 0.5f;
+    const float MaxScale   = (sharpen_slider >= 0.0f) ? 1.25f : 1.75f;
+    const float MinScale   = (sharpen_slider >= 0.0f) ? 1.25f : 1.0f;
+    const float LimitScale = (sharpen_slider >= 0.0f) ? 1.25f : 1.0f;
+
+    float kDetectRatio = 2 * 1127.f / 1024.f;
+    float kDetectThres = 64.0f / 1024.0f;
+    float kMinContrastRatio = 2.0f;
+    float kMaxContrastRatio = 10.0f;
+
+    float kSharpStartY = 0.45f;
+    float kSharpEndY   = 0.9f;
+    float kSharpStrengthMin = std::max(0.0f, 0.4f + sharpen_slider * MinScale * 1.2f);
+    float kSharpStrengthMax = 1.6f + sharpen_slider * MaxScale * 1.8f;
+    float kSharpLimitMin    = std::max(0.1f,  0.14f + sharpen_slider * LimitScale * 0.32f);
+    float kSharpLimitMax    = 0.5f + sharpen_slider * LimitScale * 0.6f;
+
+    // hdrMode: 0=None, 1=Linear, 2=PQ (matches the .cl NIS_HDR_MODE define).
+    if (hdrMode == 1 || hdrMode == 2) {
+        kDetectThres = 32.0f / 1024.0f;
+        kMinContrastRatio = 1.5f;
+        kMaxContrastRatio = 5.0f;
+        kSharpStrengthMin = std::max(0.0f,  0.4f + sharpen_slider * MinScale * 1.1f);
+        kSharpStrengthMax = 2.2f + sharpen_slider * MaxScale * 1.8f;
+        kSharpLimitMin    = std::max(0.06f, 0.10f + sharpen_slider * LimitScale * 0.28f);
+        kSharpLimitMax    = 0.6f + sharpen_slider * LimitScale * 0.6f;
+        if (hdrMode == 2) {
+            kSharpStartY = 0.35f;  // PQ specular-protect band
+            kSharpEndY   = 0.55f;
+        } else {
+            kSharpStartY = 0.3f;
+            kSharpEndY   = 0.5f;
+        }
+    }
+
+    const float kRatioNorm = 1.0f / (kMaxContrastRatio - kMinContrastRatio);
+    const float kSharpScaleY = 1.0f / (kSharpEndY - kSharpStartY);
+    const float kSharpStrengthScale = kSharpStrengthMax - kSharpStrengthMin;
+    const float kSharpLimitScale    = kSharpLimitMax - kSharpLimitMin;
+
+    config.kInputViewportWidth   = inputViewportWidth  == 0 ? inputTextureWidth  : inputViewportWidth;
+    config.kInputViewportHeight  = inputViewportHeight == 0 ? inputTextureHeight : inputViewportHeight;
+    config.kOutputViewportWidth  = outputViewportWidth  == 0 ? outputTextureWidth  : outputViewportWidth;
+    config.kOutputViewportHeight = outputViewportHeight == 0 ? outputTextureHeight : outputViewportHeight;
+    if (config.kInputViewportWidth == 0 || config.kInputViewportHeight == 0
+        || config.kOutputViewportWidth == 0 || config.kOutputViewportHeight == 0) return false;
+
+    config.kInputViewportOriginX  = 0;
+    config.kInputViewportOriginY  = 0;
+    config.kOutputViewportOriginX = 0;
+    config.kOutputViewportOriginY = 0;
+
+    config.kSrcNormX = 1.f / inputTextureWidth;
+    config.kSrcNormY = 1.f / inputTextureHeight;
+    config.kDstNormX = 1.f / outputTextureWidth;
+    config.kDstNormY = 1.f / outputTextureHeight;
+    config.kScaleX = config.kInputViewportWidth  / (float)config.kOutputViewportWidth;
+    config.kScaleY = config.kInputViewportHeight / (float)config.kOutputViewportHeight;
+    config.kDetectRatio = kDetectRatio;
+    config.kDetectThres = kDetectThres;
+    config.kMinContrastRatio = kMinContrastRatio;
+    config.kRatioNorm = kRatioNorm;
+    config.kContrastBoost = 1.0f;
+    config.kEps = 1.0f / 255.0f;
+    config.kSharpStartY = kSharpStartY;
+    config.kSharpScaleY = kSharpScaleY;
+    config.kSharpStrengthMin   = kSharpStrengthMin;
+    config.kSharpStrengthScale = kSharpStrengthScale;
+    config.kSharpLimitMin      = kSharpLimitMin;
+    config.kSharpLimitScale    = kSharpLimitScale;
+    config.reserved0 = 0.0f;
+    config.reserved1 = 0.0f;
+
+    if (config.kScaleX < 0.5f || config.kScaleX > 1.f
+        || config.kScaleY < 0.5f || config.kScaleY > 1.f) return false;
+    return true;
+}
+
+// hdr=auto resolution. Maps the input's VUI transfer characteristic to
+// NIS's HDR mode enum (0=None, 1=Linear, 2=PQ -- matches the .cl
+// NIS_HDR_MODE define and NIS_Config.h NISHDRMode).
+//
+//   ST2084  (BT.2020 PQ)   -> 2  (PQ band 0.35..0.55, specular-protect)
+//   ARIB_B67 (BT.2020 HLG) -> 1  (linear HDR band 0.30..0.50)
+//   anything else           -> 0  (SDR band 0.45..0.90)
+//
+// Explicit hdr=sdr / hdr=pq from CLI always wins over auto.
+static int nisResolveHdrMode(const RGYFilterParamResize *param) {
+    switch (param->nis.hdrMode) {
+    case RGY_NIS_HDR_SDR: return 0;
+    case RGY_NIS_HDR_PQ:  return 2;
+    case RGY_NIS_HDR_AUTO:
+    default:
+        if (param->vui.transfer == RGY_TRANSFER_ST2084)   return 2;
+        if (param->vui.transfer == RGY_TRANSFER_ARIB_B67) return 1;
+        return 0;
+    }
+}
+
 static inline int get_radius(const RGY_VPP_RESIZE_ALGO interp) {
     int radius = 1;
     switch (interp) {
     case RGY_VPP_RESIZE_BICUBIC:
+    case RGY_VPP_RESIZE_MITCHELL:
+    case RGY_VPP_RESIZE_CATMULL_ROM:
+    case RGY_VPP_RESIZE_HERMITE:
     case RGY_VPP_RESIZE_LANCZOS2:
     case RGY_VPP_RESIZE_SPLINE16:
         radius = 2;
@@ -57,6 +219,14 @@ static inline int get_radius(const RGY_VPP_RESIZE_ALGO interp) {
     case RGY_VPP_RESIZE_GAUSS:
         radius = 4;
         break;
+    case RGY_VPP_RESIZE_LANCZOS5: radius = 5; break;
+    case RGY_VPP_RESIZE_LANCZOS6: radius = 6; break;
+    case RGY_VPP_RESIZE_LANCZOS7: radius = 7; break;
+    case RGY_VPP_RESIZE_LANCZOS8: radius = 8; break;
+    case RGY_VPP_RESIZE_JINC36:  radius = 3; break;
+    case RGY_VPP_RESIZE_JINC64:  radius = 4; break;
+    case RGY_VPP_RESIZE_JINC144: radius = 6; break;
+    case RGY_VPP_RESIZE_JINC256: radius = 8; break;
     case RGY_VPP_RESIZE_BILINEAR:
     default:
         break;
@@ -71,6 +241,7 @@ enum RESIZE_WEIGHT_TYPE {
     WEIGHT_LANCZOS,
     WEIGHT_SPLINE,
     WEIGHT_GAUSS,
+    WEIGHT_JINC,
 };
 
 static inline RESIZE_WEIGHT_TYPE get_weight_type(const RGY_VPP_RESIZE_ALGO interp) {
@@ -80,11 +251,18 @@ static inline RESIZE_WEIGHT_TYPE get_weight_type(const RGY_VPP_RESIZE_ALGO inter
         type = WEIGHT_BILINEAR;
         break;
     case RGY_VPP_RESIZE_BICUBIC:
+    case RGY_VPP_RESIZE_MITCHELL:
+    case RGY_VPP_RESIZE_CATMULL_ROM:
+    case RGY_VPP_RESIZE_HERMITE:
         type = WEIGHT_BICUBIC;
         break;
     case RGY_VPP_RESIZE_LANCZOS2:
     case RGY_VPP_RESIZE_LANCZOS3:
     case RGY_VPP_RESIZE_LANCZOS4:
+    case RGY_VPP_RESIZE_LANCZOS5:
+    case RGY_VPP_RESIZE_LANCZOS6:
+    case RGY_VPP_RESIZE_LANCZOS7:
+    case RGY_VPP_RESIZE_LANCZOS8:
         type = WEIGHT_LANCZOS;
         break;
     case RGY_VPP_RESIZE_SPLINE16:
@@ -95,11 +273,65 @@ static inline RESIZE_WEIGHT_TYPE get_weight_type(const RGY_VPP_RESIZE_ALGO inter
     case RGY_VPP_RESIZE_GAUSS:
         type = WEIGHT_GAUSS;
         break;
+    case RGY_VPP_RESIZE_JINC36:
+    case RGY_VPP_RESIZE_JINC64:
+    case RGY_VPP_RESIZE_JINC144:
+    case RGY_VPP_RESIZE_JINC256:
+        type = WEIGHT_JINC;
+        break;
     default:
         break;
     }
     return type;
 }
+
+namespace {
+constexpr int JINC_LUT_SIZE = 1024;
+constexpr double JINC_ZERO_SQR_D = 1.48759464366204680005356;
+
+static double rgy_bessel_j1(double x) {
+    const double ax = std::fabs(x);
+    if (ax < 8.0) {
+        const double y = x * x;
+        const double num = x * (72362614232.0 + y * (-7895059235.0 + y * (242396853.1
+            + y * (-2972611.439 + y * (15704.48260 + y * (-30.16036606))))));
+        const double den = 144725228442.0 + y * (2300535178.0 + y * (18583304.74
+            + y * (99447.43394 + y * (376.9991397 + y * 1.0))));
+        return num / den;
+    } else {
+        const double z = 8.0 / ax;
+        const double y = z * z;
+        const double p1 = 1.0 + y * (0.183105e-2 + y * (-0.3516396496e-4
+            + y * (0.2457520174e-5 + y * (-0.240337019e-6))));
+        const double p2 = 0.04687499995 + y * (-0.2002690873e-3 + y * (0.8449199096e-5
+            + y * (-0.88228987e-6 + y * 0.105787412e-6)));
+        const double ans = std::sqrt(0.636619772 / ax)
+            * (std::cos(ax - 2.356194491) * p1 - z * std::sin(ax - 2.356194491) * p2);
+        return (x < 0.0) ? -ans : ans;
+    }
+}
+
+static double rgy_jinc(double r) {
+    if (r == 0.0) {
+        return 1.0;
+    }
+    const double pix = M_PI * r;
+    return 2.0 * rgy_bessel_j1(pix) / pix;
+}
+
+static std::vector<float> buildJincLut(const int radius) {
+    const double tap2 = (double)radius * (double)radius;
+    const double winScale = std::sqrt(JINC_ZERO_SQR_D / tap2);
+    std::vector<float> lut(JINC_LUT_SIZE);
+    for (int i = 0; i < JINC_LUT_SIZE; i++) {
+        const double r2 = (double)i * tap2 / (double)(JINC_LUT_SIZE - 1);
+        const double r = std::sqrt(r2);
+        const double w = (r >= (double)radius) ? 0.0 : (rgy_jinc(r) * rgy_jinc(winScale * r));
+        lut[i] = (float)w;
+    }
+    return lut;
+}
+} // namespace
 
 static float getSrcWindow(const int radius, const int dst_size, const int src_size) {
     const float ratio = (float)(dst_size) / src_size;
@@ -163,6 +395,94 @@ RGY_ERR RGYFilterResize::resizePlaneFsr(RGYFrameInfo *pOutputPlane, const RGYFra
     return RGY_ERR_NONE;
 }
 
+RGY_ERR RGYFilterResize::resizePlaneNis(RGYFrameInfo *pOutputPlane, const RGYFrameInfo *pInputPlane,
+                                         cl_mem cfgMem, bool applyUsm, bool useSlm,
+                                         RGYOpenCLQueue &queue, const std::vector<RGYOpenCLEvent> &wait_events, RGYOpenCLEvent *event) {
+    if (!cfgMem || !m_nisCoefScale || !m_nisCoefUsm) {
+        AddMessage(RGY_LOG_ERROR, _T("NIS buffers not initialised.\n"));
+        return RGY_ERR_NULL_PTR;
+    }
+    RGYWorkSize local(NIS_BLOCK_WIDTH, NIS_BLOCK_HEIGHT);
+    RGYWorkSize global(pOutputPlane->width, pOutputPlane->height);
+    // 4 kernel variants: { SLM, non-SLM } x { with USM, no USM }.
+    const char *kernel_name =
+        useSlm ? (applyUsm ? "kernel_nis_scaler_slm"  : "kernel_nis_scaler_slm_no_usm")
+               : (applyUsm ? "kernel_nis_scaler"      : "kernel_nis_scaler_no_usm");
+    RGY_ERR err = RGY_ERR_NONE;
+    if (applyUsm) {
+        err = m_resize.get()->kernel(kernel_name).config(queue, local, global, wait_events, event).launch(
+            (cl_mem)pOutputPlane->ptr[0], pOutputPlane->pitch[0], pOutputPlane->width, pOutputPlane->height,
+            (cl_mem)pInputPlane->ptr[0],  pInputPlane->pitch[0],  pInputPlane->width,  pInputPlane->height,
+            cfgMem, m_nisCoefScale->mem(), m_nisCoefUsm->mem());
+    } else {
+        // K4-only variants drop the coefUsm arg.
+        err = m_resize.get()->kernel(kernel_name).config(queue, local, global, wait_events, event).launch(
+            (cl_mem)pOutputPlane->ptr[0], pOutputPlane->pitch[0], pOutputPlane->width, pOutputPlane->height,
+            (cl_mem)pInputPlane->ptr[0],  pInputPlane->pitch[0],  pInputPlane->width,  pInputPlane->height,
+            cfgMem, m_nisCoefScale->mem());
+    }
+    if (err != RGY_ERR_NONE) {
+        AddMessage(RGY_LOG_ERROR, _T("error at %s (resizePlaneNis(%s)): %s.\n"),
+            char_to_tstring(kernel_name).c_str(), RGY_CSP_NAMES[pInputPlane->csp], get_err_mes(err));
+        return err;
+    }
+    return RGY_ERR_NONE;
+}
+
+// NIS cascade orchestrator. For 1-stage (ratio <=2x or
+// auto disabled cascade) this collapses to one resizePlaneNis per
+// plane. For N>=2 stages, the orchestrator loops:
+//   stage 0:        original input -> intermediates[0]
+//   stage k (0<k<N-1): intermediates[k-1] -> intermediates[k]
+//   stage N-1:      intermediates[N-2] -> final output
+// Each stage uses its own m_nisCascadeCfgs[k] (different kScale; for
+// intermediates, USM strength is zeroed). Plane loop happens inside
+// each stage so the staging buffer can be re-used.
+RGY_ERR RGYFilterResize::resizeFrameNisCascade(RGYFrameInfo *pOutputFrame, const RGYFrameInfo *pInputFrame,
+                                                RGYOpenCLQueue &queue, const std::vector<RGYOpenCLEvent> &wait_events, RGYOpenCLEvent *event) {
+    const int N = (int)m_nisCascadeCfgs.size();
+    if (N <= 0) {
+        AddMessage(RGY_LOG_ERROR, _T("NIS cascade not initialised (stage count=0).\n"));
+        return RGY_ERR_NULL_PTR;
+    }
+    auto pResizeParam = std::dynamic_pointer_cast<RGYFilterParamResize>(m_param);
+    const int optMode = pResizeParam ? pResizeParam->nis.opt : RGY_NIS_OPT_DEFAULT;
+    // opt=skipusm (perf 1): on intermediate cascade stages, dispatch the
+    // K4-only kernel so the (zero-weighted) USM polyphase is not computed.
+    // opt=fast composes the two A/B winners: skipusm (skip K5 on cascade
+    // intermediates) + slm (cooperative SLM tile load). See
+    const bool optSkipUsm = (optMode == RGY_NIS_OPT_FAST);
+    const bool optSlm     = (optMode == RGY_NIS_OPT_FAST);
+    const int numPlanes = RGY_CSP_PLANES[pOutputFrame->csp];
+    const RGYFrameInfo *srcFrame = pInputFrame;
+    const std::vector<RGYOpenCLEvent> no_wait;
+    for (int stage = 0; stage < N; stage++) {
+        const bool finalStage = (stage == N - 1);
+        // USM applies on the final stage always. On intermediates, the
+        // default opt still runs the full kernel (zero-weighted USM,
+        // wasted work) so the A/B baseline is the conservative path.
+        // opt=skipusm switches intermediates to the no-USM kernel.
+        const bool applyUsm = finalStage || !optSkipUsm;
+        RGYFrameInfo *dstFrame = finalStage ? pOutputFrame : &m_nisCascadeIntermediates[stage]->frame;
+        cl_mem cfgMem = m_nisCascadeCfgs[stage]->mem();
+        for (int p = 0; p < numPlanes; p++) {
+            auto planeDst = getPlane(dstFrame, (RGY_PLANE)p);
+            auto planeSrc = getPlane(srcFrame, (RGY_PLANE)p);
+            const bool firstPlaneFirstStage = (stage == 0 && p == 0);
+            const bool lastPlaneLastStage   = (finalStage && p == numPlanes - 1);
+            const auto& plane_wait = firstPlaneFirstStage ? wait_events : no_wait;
+            RGYOpenCLEvent *plane_event = lastPlaneLastStage ? event : nullptr;
+            auto err = resizePlaneNis(&planeDst, &planeSrc, cfgMem, applyUsm, optSlm, queue, plane_wait, plane_event);
+            if (err != RGY_ERR_NONE) {
+                AddMessage(RGY_LOG_ERROR, _T("error in NIS cascade stage %d plane %d: %s.\n"), stage, p, get_err_mes(err));
+                return err;
+            }
+        }
+        srcFrame = dstFrame;  // chain into next stage
+    }
+    return RGY_ERR_NONE;
+}
+
 RGY_ERR RGYFilterResize::resizePlane(RGYFrameInfo *pOutputPlane, const RGYFrameInfo *pInputPlane, RGYOpenCLQueue &queue, const std::vector<RGYOpenCLEvent> &wait_events, RGYOpenCLEvent *event) {
     return resizePlane(pOutputPlane, pInputPlane, 0, queue, wait_events, event);
 }
@@ -176,6 +496,9 @@ RGY_ERR RGYFilterResize::resizePlane(RGYFrameInfo *pOutputPlane, const RGYFrameI
 
     if (pResizeParam->interp == RGY_VPP_RESIZE_GAUSS) {
         return resizePlaneGauss2Pass(pOutputPlane, pInputPlane, plane, queue, wait_events, event);
+    }
+    if (get_weight_type(pResizeParam->interp) == WEIGHT_JINC) {
+        return resizePlaneJinc(pOutputPlane, pInputPlane, queue, wait_events, event);
     }
 
     const float ratioX = (float)(pOutputPlane->width) / pInputPlane->width;
@@ -206,6 +529,36 @@ RGY_ERR RGYFilterResize::resizePlane(RGYFrameInfo *pOutputPlane, const RGYFrameI
                 char_to_tstring(kernel_name).c_str(), RGY_CSP_NAMES[pInputPlane->csp], get_err_mes(err));
             return err;
         }
+    }
+    return RGY_ERR_NONE;
+}
+
+RGY_ERR RGYFilterResize::resizePlaneJinc(RGYFrameInfo *pOutputPlane, const RGYFrameInfo *pInputPlane,
+    RGYOpenCLQueue &queue, const std::vector<RGYOpenCLEvent> &wait_events, RGYOpenCLEvent *event) {
+    auto pResizeParam = std::dynamic_pointer_cast<RGYFilterParamResize>(m_param);
+    if (!pResizeParam) {
+        AddMessage(RGY_LOG_ERROR, _T("Invalid parameter type.\n"));
+        return RGY_ERR_INVALID_PARAM;
+    }
+    if (!m_weightJinc) {
+        AddMessage(RGY_LOG_ERROR, _T("jinc LUT not allocated.\n"));
+        return RGY_ERR_NULL_PTR;
+    }
+    const float ratioX = (float)(pOutputPlane->width) / pInputPlane->width;
+    const float ratioY = (float)(pOutputPlane->height) / pInputPlane->height;
+    const char *kernelName = "kernel_resize_jinc";
+    auto err = m_resize.get()->kernel(kernelName).config(queue,
+        RGYWorkSize(RESIZE_BLOCK_X, RESIZE_BLOCK_Y),
+        RGYWorkSize(pOutputPlane->width, pOutputPlane->height),
+        wait_events, event).launch(
+            (cl_mem)pOutputPlane->ptr[0], pOutputPlane->pitch[0], pOutputPlane->width, pOutputPlane->height,
+            (cl_mem)pInputPlane->ptr[0], pInputPlane->pitch[0], pInputPlane->width, pInputPlane->height,
+            ratioX, ratioY,
+            (cl_mem)m_weightJinc->mem());
+    if (err != RGY_ERR_NONE) {
+        AddMessage(RGY_LOG_ERROR, _T("error at %s (resizePlaneJinc(%s)): %s.\n"),
+            char_to_tstring(kernelName).c_str(), RGY_CSP_NAMES[pInputPlane->csp], get_err_mes(err));
+        return err;
     }
     return RGY_ERR_NONE;
 }
@@ -275,6 +628,12 @@ RGY_ERR RGYFilterResize::resizeFrame(RGYFrameInfo *pOutputFrame, const RGYFrameI
     const bool useFsrInt = (pResizeParam->interp == RGY_VPP_RESIZE_FSR1) && !m_fp16Easu && m_easuOutput;
     const bool useFsrF16 = (pResizeParam->interp == RGY_VPP_RESIZE_FSR1) && m_fp16Easu && m_easuOutputF16[0];
     const bool useFsr = useFsrInt || useFsrF16;
+    const bool useNis = (pResizeParam->interp == RGY_VPP_RESIZE_NIS) && !m_nisCascadeCfgs.empty() && m_nisCoefScale && m_nisCoefUsm;
+    if (useNis) {
+        // Cascade orchestrator handles both single-stage (N=1) and
+        // multi-stage (N>=2) paths; plane loop happens inside.
+        return resizeFrameNisCascade(pOutputFrame, pInputPtr, queue, wait_events, event);
+    }
     for (int i = 0; i < RGY_CSP_PLANES[pOutputFrame->csp]; i++) {
         auto planeDst = getPlane(pOutputFrame, (RGY_PLANE)i);
         auto planeSrc = getPlane(pInputPtr,    (RGY_PLANE)i);
@@ -314,7 +673,7 @@ RGYFilterResize::RGYResizeGaussPlane::RGYResizeGaussPlane() :
     tmp() {
 }
 
-RGYFilterResize::RGYFilterResize(shared_ptr<RGYOpenCLContext> context) : RGYFilter(context), m_bInterlacedWarn(false), m_weightSpline(), m_gauss2pass(), m_libplaceboResample(), m_easuOutput(), m_easuOutputF16(), m_easuOutputF16Width{}, m_easuOutputF16Height{}, m_fp16Easu(false), m_resize(), m_srcImagePool() {
+RGYFilterResize::RGYFilterResize(shared_ptr<RGYOpenCLContext> context) : RGYFilter(context), m_bInterlacedWarn(false), m_weightSpline(), m_weightJinc(), m_gauss2pass(), m_libplaceboResample(), m_easuOutput(), m_easuOutputF16(), m_easuOutputF16Width{}, m_easuOutputF16Height{}, m_fp16Easu(false), m_nisCoefScale(), m_nisCoefUsm(), m_resize(), m_srcImagePool() {
     m_name = _T("resize");
 }
 
@@ -436,6 +795,135 @@ RGY_ERR RGYFilterResize::init(shared_ptr<RGYFilterParam> pParam, shared_ptr<RGYL
             m_easuOutput.reset();
             for (auto &b : m_easuOutputF16) b.reset();
         }
+
+        // NIS resource setup. Coefficient LUTs are
+        // small (2 KB each) and constant; upload once and re-use.
+        //
+        // Cascade: for ratios outside NIS's 1x..2x range
+        // (kScale < 0.5), split the work across N stages of <=2x each.
+        // cascade=auto picks N from log2(ratio); cascade=on forces
+        // N>=2 (test path); cascade=off rejects ratios > 2x.
+        if (pResizeParam->interp == RGY_VPP_RESIZE_NIS) {
+            if (!m_nisCoefScale) {
+                m_nisCoefScale = m_cl->copyDataToBuffer(
+                    nis::coef_scale, sizeof(nis::coef_scale), CL_MEM_READ_ONLY);
+                if (!m_nisCoefScale) {
+                    AddMessage(RGY_LOG_ERROR, _T("failed to upload NIS coef_scale LUT.\n"));
+                    return RGY_ERR_NULL_PTR;
+                }
+            }
+            if (!m_nisCoefUsm) {
+                m_nisCoefUsm = m_cl->copyDataToBuffer(
+                    nis::coef_usm, sizeof(nis::coef_usm), CL_MEM_READ_ONLY);
+                if (!m_nisCoefUsm) {
+                    AddMessage(RGY_LOG_ERROR, _T("failed to upload NIS coef_usm LUT.\n"));
+                    return RGY_ERR_NULL_PTR;
+                }
+            }
+
+            // Compute cascade stage count from the requested ratio.
+            const float inW  = (float)pResizeParam->frameIn.width;
+            const float inH  = (float)pResizeParam->frameIn.height;
+            const float outW = (float)pResizeParam->frameOut.width;
+            const float outH = (float)pResizeParam->frameOut.height;
+            const float ratioX = outW / inW;
+            const float ratioY = outH / inH;
+            const float maxRatio = std::max(ratioX, ratioY);
+            if (ratioX < 1.0f || ratioY < 1.0f) {
+                AddMessage(RGY_LOG_ERROR, _T("NIS only supports upscale. Requested %.2fx%.2f.\n"), ratioX, ratioY);
+                return RGY_ERR_UNSUPPORTED;
+            }
+
+            int stages = 1;
+            if (maxRatio > 2.0f) {
+                stages = (int)std::ceil(std::log2(maxRatio) - 1e-4f);
+                if (stages < 2) stages = 2;
+            }
+            if (pResizeParam->nis.cascade == RGY_NIS_CASCADE_OFF && stages > 1) {
+                AddMessage(RGY_LOG_ERROR, _T("NIS cascade=off cannot handle %.2fx > 2x. Use cascade=auto or pick a smaller output size.\n"), maxRatio);
+                return RGY_ERR_UNSUPPORTED;
+            }
+            if (pResizeParam->nis.cascade == RGY_NIS_CASCADE_ON && stages < 2 && maxRatio > 1.0f) {
+                stages = 2;  // unusual test path: force 2-stage even at <=2x
+            }
+
+            const int hdrMode = nisResolveHdrMode(pResizeParam.get());
+            // Per-stage scale factors (geometric distribution). For N=1
+            // these are just the full ratios; for N>=2 each axis reaches
+            // the requested output size without overscaling the smaller axis.
+            const float perStageRatioX = std::pow(ratioX, 1.0f / (float)stages);
+            const float perStageRatioY = std::pow(ratioY, 1.0f / (float)stages);
+
+            // (Re-)allocate cfg buffers and intermediate frames.
+            m_nisCascadeCfgs.clear();
+            m_nisCascadeIntermediates.clear();
+            m_nisCascadeCfgs.resize(stages);
+            if (stages > 1) m_nisCascadeIntermediates.resize(stages - 1);
+
+            int curW = pResizeParam->frameIn.width;
+            int curH = pResizeParam->frameIn.height;
+            for (int k = 0; k < stages; k++) {
+                const bool finalStage = (k == stages - 1);
+                int nextW, nextH;
+                if (finalStage) {
+                    nextW = pResizeParam->frameOut.width;
+                    nextH = pResizeParam->frameOut.height;
+                } else {
+                    nextW = std::max(curW, (int)std::round((float)pResizeParam->frameIn.width  * std::pow(perStageRatioX, (float)(k + 1))));
+                    nextH = std::max(curH, (int)std::round((float)pResizeParam->frameIn.height * std::pow(perStageRatioY, (float)(k + 1))));
+                }
+                NISConfigHost cfg{};
+                const bool ok = nisBuildConfig(cfg,
+                    pResizeParam->nis.sharpness, hdrMode,
+                    0, 0, (uint32_t)curW, (uint32_t)curH,
+                    0, 0, (uint32_t)nextW, (uint32_t)nextH);
+                if (!ok) {
+                    AddMessage(RGY_LOG_ERROR, _T("NIS stage %d scale is outside 1x-2x: %dx%d -> %dx%d.\n"), k, curW, curH, nextW, nextH);
+                    return RGY_ERR_UNSUPPORTED;
+                }
+                if (!finalStage) {
+                    // Intermediate stages: zero USM so only the final
+                    // pass applies sharpening (avoids chained
+                    // over-sharpen).
+                    cfg.kSharpStrengthMin   = 0.0f;
+                    cfg.kSharpStrengthScale = 0.0f;
+                    cfg.kSharpLimitMin      = 0.0f;
+                    cfg.kSharpLimitScale    = 0.0f;
+                }
+                m_nisCascadeCfgs[k] = m_cl->copyDataToBuffer(&cfg, sizeof(cfg), CL_MEM_READ_ONLY);
+                if (!m_nisCascadeCfgs[k]) {
+                    AddMessage(RGY_LOG_ERROR, _T("failed to upload NIS stage %d config.\n"), k);
+                    return RGY_ERR_NULL_PTR;
+                }
+                // Allocate intermediate frame buffer for non-final
+                // stages. Same csp + bitdepth as the user's output.
+                if (!finalStage) {
+                    RGYFrameInfo midInfo = pResizeParam->frameOut;
+                    midInfo.width  = nextW;
+                    midInfo.height = nextH;
+                    m_nisCascadeIntermediates[k] = m_cl->createFrameBuffer(midInfo, CL_MEM_READ_WRITE);
+                    if (!m_nisCascadeIntermediates[k]) {
+                        AddMessage(RGY_LOG_ERROR, _T("failed to allocate NIS stage %d intermediate frame %dx%d.\n"),
+                            k, nextW, nextH);
+                        return RGY_ERR_MEMORY_ALLOC;
+                    }
+                }
+                AddMessage(RGY_LOG_DEBUG, _T("NIS stage %d/%d: %dx%d -> %dx%d, kScale=%.4fx%.4f, USM=%s.\n"),
+                    k + 1, stages, curW, curH, nextW, nextH, cfg.kScaleX, cfg.kScaleY,
+                    finalStage ? _T("on") : _T("off"));
+                curW = nextW;
+                curH = nextH;
+            }
+            AddMessage(RGY_LOG_DEBUG, _T("NIS init: %d stage(s), sharpness=%.2f, hdrMode=%d, cascade=%s.\n"),
+                stages, pResizeParam->nis.sharpness, hdrMode,
+                pResizeParam->nis.cascade == RGY_NIS_CASCADE_AUTO ? _T("auto") :
+                pResizeParam->nis.cascade == RGY_NIS_CASCADE_ON   ? _T("on")   : _T("off"));
+        } else {
+            m_nisCoefScale.reset();
+            m_nisCoefUsm.reset();
+            m_nisCascadeCfgs.clear();
+            m_nisCascadeIntermediates.clear();
+        }
         auto prmPrev = std::dynamic_pointer_cast<RGYFilterParamResize>(m_param);
         if (!m_resize.get()
             || !prmPrev
@@ -447,7 +935,9 @@ RGY_ERR RGYFilterResize::init(shared_ptr<RGYFilterParam> pParam, shared_ptr<RGYL
             || prmPrev->frameIn.height != pResizeParam->frameIn.height
             || prmPrev->frameOut.width != pResizeParam->frameOut.width
             || prmPrev->frameOut.height != pResizeParam->frameOut.height
-            || (pResizeParam->interp == RGY_VPP_RESIZE_GAUSS && prmPrev->gaussP != pResizeParam->gaussP)) {
+            || (pResizeParam->interp == RGY_VPP_RESIZE_GAUSS && prmPrev->gaussP != pResizeParam->gaussP)
+            || (pResizeParam->interp == RGY_VPP_RESIZE_NIS && prmPrev->nis != pResizeParam->nis)
+            || (pResizeParam->interp == RGY_VPP_RESIZE_BICUBIC && prmPrev->bicubic != pResizeParam->bicubic)) {
             const int radius = get_radius(pResizeParam->interp);
             const auto algo = get_weight_type(pResizeParam->interp);
 
@@ -464,16 +954,34 @@ RGY_ERR RGYFilterResize::init(shared_ptr<RGYFilterParam> pParam, shared_ptr<RGYL
 
             const int use_local = (ENCODER_MPP) ? 0 : 1;
 
+            const int nisEnabled = (pResizeParam->interp == RGY_VPP_RESIZE_NIS) ? 1 : 0;
+            const int nisHdrMode = (pResizeParam->interp == RGY_VPP_RESIZE_NIS) ? nisResolveHdrMode(pResizeParam.get()) : 0;
+            float bicubic_b = pResizeParam->bicubic.b;
+            float bicubic_c = pResizeParam->bicubic.c;
+            switch (pResizeParam->interp) {
+            case RGY_VPP_RESIZE_MITCHELL:    bicubic_b = 1.0f / 3.0f; bicubic_c = 1.0f / 3.0f; break;
+            case RGY_VPP_RESIZE_CATMULL_ROM: bicubic_b = 0.0f;        bicubic_c = 0.5f;        break;
+            case RGY_VPP_RESIZE_HERMITE:     bicubic_b = 0.0f;        bicubic_c = 0.0f;        break;
+            default: break;
+            }
+            const int jincEnabled = (algo == WEIGHT_JINC) ? 1 : 0;
             const auto options = strsprintf("-D Type=%s -D bit_depth=%d -D radius=%d -D algo=%d"
                 " -D block_x=%d -D block_y=%d -D shared_weightXdim=%d -D shared_weightYdim=%d"
-                " -D WEIGHT_BILINEAR=%d -D WEIGHT_BICUBIC=%d -D WEIGHT_SPLINE=%d -D WEIGHT_LANCZOS=%d -D WEIGHT_GAUSS=%d"
-                " -D gauss_p=%.9ff -D USE_LOCAL=%d -D FSR1_FP16_SCRATCH=%d",
+                " -D WEIGHT_BILINEAR=%d -D WEIGHT_BICUBIC=%d -D WEIGHT_SPLINE=%d -D WEIGHT_LANCZOS=%d -D WEIGHT_GAUSS=%d -D WEIGHT_JINC=%d"
+                " -D gauss_p=%.9ff -D USE_LOCAL=%d -D FSR1_FP16_SCRATCH=%d"
+                "%s -D NIS_BLOCK_WIDTH=%d -D NIS_BLOCK_HEIGHT=%d -D NIS_HDR_MODE=%d"
+                " -D bicubic_b=%.9ff -D bicubic_c=%.9ff"
+                "%s",
                 RGY_CSP_BIT_DEPTH[pResizeParam->frameOut.csp] > 8 ? "ushort" : "uchar",
                 RGY_CSP_BIT_DEPTH[pResizeParam->frameOut.csp],
                 radius, algo,
                 RESIZE_BLOCK_X, RESIZE_BLOCK_Y, shared_weightXdim, shared_weightYdim,
-                WEIGHT_BILINEAR, WEIGHT_BICUBIC, WEIGHT_SPLINE, WEIGHT_LANCZOS, WEIGHT_GAUSS,
-                pResizeParam->gaussP, use_local, m_fp16Easu ? 1 : 0);
+                WEIGHT_BILINEAR, WEIGHT_BICUBIC, WEIGHT_SPLINE, WEIGHT_LANCZOS, WEIGHT_GAUSS, WEIGHT_JINC,
+                pResizeParam->gaussP, use_local, m_fp16Easu ? 1 : 0,
+                nisEnabled ? " -D NIS_KERNEL_ENABLED=1" : "",
+                NIS_BLOCK_WIDTH, NIS_BLOCK_HEIGHT, nisHdrMode,
+                bicubic_b, bicubic_c,
+                jincEnabled ? " -D JINC_KERNEL_ENABLED=1" : "");
             m_resize.set(m_cl->buildResourceAsync(_T("RGY_FILTER_RESIZE_CL"), _T("EXE_DATA"), options.c_str()));
             if (algo != WEIGHT_SPLINE) {
                 m_weightSpline.reset();
@@ -512,6 +1020,18 @@ RGY_ERR RGYFilterResize::init(shared_ptr<RGYFilterParam> pParam, shared_ptr<RGYL
                     return RGY_ERR_NULL_PTR;
                 }
             }
+            if (algo != WEIGHT_JINC) {
+                m_weightJinc.reset();
+            }
+            if ((!m_weightJinc || !prmPrev || prmPrev->interp != pResizeParam->interp)
+                && algo == WEIGHT_JINC) {
+                const auto lut = buildJincLut(radius);
+                m_weightJinc = m_cl->copyDataToBuffer(lut.data(), sizeof(lut[0]) * lut.size(), CL_MEM_READ_ONLY);
+                if (!m_weightJinc) {
+                    AddMessage(RGY_LOG_ERROR, _T("failed to send jinc LUT to gpu memory.\n"));
+                    return RGY_ERR_NULL_PTR;
+                }
+            }
         }
     }
 
@@ -542,6 +1062,15 @@ RGY_ERR RGYFilterResize::init(shared_ptr<RGYFilterParam> pParam, shared_ptr<RGYL
     }
     if (pResizeParam->interp == RGY_VPP_RESIZE_FSR1) {
         str += _T(", ") + pResizeParam->fsr1.print();
+    }
+    if (pResizeParam->interp == RGY_VPP_RESIZE_NIS) {
+        str += _T(", ") + pResizeParam->nis.print();
+        if (m_nisCascadeCfgs.size() > 1) {
+            str += strsprintf(_T(", stages=%d"), (int)m_nisCascadeCfgs.size());
+        }
+    }
+    if (pResizeParam->interp == RGY_VPP_RESIZE_BICUBIC) {
+        str += _T(", ") + pResizeParam->bicubic.print();
     }
     setFilterInfo(str);
 
@@ -582,9 +1111,12 @@ RGY_ERR RGYFilterResize::run_filter(const RGYFrameInfo *pInputFrame, RGYFrameInf
         return RGY_ERR_OPENCL_CRUSH;
     }
 
-    //if (interlaced(*pInputFrame)) {
-    //    return filter_as_interlaced_pair(pInputFrame, ppOutputFrames[0], cudaStreamDefault);
-    //}
+    //インタレを保持したままフレーム全体をresizeすると隣接するフィールドの画素が混ざって櫛状に破綻するため、
+    //フィールドごとに分離してresizeし、再度インターリーブして戻す。
+    //インタレ解除を使わない構成で、入力途中の解像度変更に伴う正規化resizeが挿入される場合にこの経路が必要となる。
+    if (interlaced(*pInputFrame)) {
+        return filter_as_interlaced_pair(pInputFrame, ppOutputFrames[0], queue);
+    }
     const auto memcpyKind = getMemcpyKind(pInputFrame->mem_type, ppOutputFrames[0]->mem_type);
     if (memcpyKind != RGYCLMemcpyD2D) {
         AddMessage(RGY_LOG_ERROR, _T("only supported on device memory.\n"));
@@ -618,12 +1150,17 @@ void RGYFilterResize::close() {
     m_frameBuf.clear();
     m_resize.clear();
     m_weightSpline.reset();
+    m_weightJinc.reset();
     clearGaussTmp();
     m_easuOutput.reset();
     for (auto &b : m_easuOutputF16) b.reset();
     m_easuOutputF16Width.fill(0);
     m_easuOutputF16Height.fill(0);
     m_fp16Easu = false;
+    m_nisCoefScale.reset();
+    m_nisCoefUsm.reset();
+    m_nisCascadeCfgs.clear();
+    m_nisCascadeIntermediates.clear();
     m_cl.reset();
     m_bInterlacedWarn = false;
 }

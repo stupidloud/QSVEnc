@@ -62,7 +62,8 @@ public:
     virtual void resetTemporalState() {}
 protected:
     virtual RGY_ERR AllocFrameBuf(const RGYFrameInfo &frame, int frames) override;
-    RGY_ERR filter_as_interlaced_pair(const RGYFrameInfo *pInputFrame, RGYFrameInfo *pOutputFrame);
+    //インタレフレームをフィールド単位に分離してrun_filter()を2回適用する。実装はrgy_filter_cl.cpp参照
+    RGY_ERR filter_as_interlaced_pair(const RGYFrameInfo *pInputFrame, RGYFrameInfo *pOutputFrame, RGYOpenCLQueue &queue);
     virtual RGY_ERR run_filter(const RGYFrameInfo *pInputFrame, RGYFrameInfo **ppOutputFrames, int *pOutputFrameNum, RGYOpenCLQueue &queue, const std::vector<RGYOpenCLEvent> &wait_events, RGYOpenCLEvent *event) = 0;
 
     std::shared_ptr<RGYOpenCLContext> m_cl;
@@ -85,8 +86,10 @@ class RGYFilterParamCrop : public RGYFilterParam {
 public:
     sInputCrop crop;
     CspMatrix matrix;
+    CspColorRange colorrange;
+    bool chroma420Interpolate;
 
-    RGYFilterParamCrop() : crop(initCrop()), matrix(RGY_MATRIX_ST170_M) {};
+    RGYFilterParamCrop() : crop(initCrop()), matrix(RGY_MATRIX_ST170_M), colorrange(RGY_COLORRANGE_LIMITED), chroma420Interpolate(true) {};
     virtual ~RGYFilterParamCrop() {};
 };
 
@@ -105,6 +108,7 @@ protected:
     RGY_ERR convertCspFromYUV444(RGYFrameInfo *pOutputFrame, const RGYFrameInfo *pInputFrame, RGYOpenCLQueue &queue, const std::vector<RGYOpenCLEvent> &wait_events, RGYOpenCLEvent *event);
     RGY_ERR convertCspFromAYUVPacked444(RGYFrameInfo *pOutputFrame, const RGYFrameInfo *pInputFrame, RGYOpenCLQueue &queue, const std::vector<RGYOpenCLEvent> &wait_events, RGYOpenCLEvent *event);
     virtual void close() override;
+    std::vector<std::unique_ptr<RGYFilterCspCrop>> m_cropChain;
 };
 
 class RGYFilterParamPad : public RGYFilterParam {

@@ -281,6 +281,7 @@ mfxStatus va_to_mfx_status(VAStatus va_res)
         break;
     case VA_STATUS_ERROR_INVALID_PARAMETER:
         mfxRes = MFX_ERR_INVALID_VIDEO_PARAM;
+        break;
     default:
         mfxRes = MFX_ERR_UNKNOWN;
         break;
@@ -451,7 +452,6 @@ void CLibVA::ReleaseVASurface(
         AcquireCtx* ctx = (AcquireCtx*)actx;
         if (ctx) {
             m_libva.vaDestroySurfaces(dpy2, &srf2, 1);
-            close(ctx->fd);
             m_libva.vaReleaseBufferHandle(dpy1, ctx->image.buf);
             m_libva.vaDestroyImage(dpy1, ctx->image.image_id);
             free(ctx);

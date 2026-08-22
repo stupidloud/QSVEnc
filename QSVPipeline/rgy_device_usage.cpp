@@ -141,8 +141,11 @@ RGY_ERR RGYDeviceUsage::open() {
 }
 
 std::unique_ptr<RGYDeviceUsageLockManager> RGYDeviceUsage::lock() {
-    if (!m_sharedMem) {
+    if (m_header == nullptr) {
         open();
+    }
+    if (m_header == nullptr) {
+        return nullptr;
     }
     return std::make_unique<RGYDeviceUsageLockManager>(m_header);
 }
@@ -169,6 +172,9 @@ void RGYDeviceUsage::check(const time_t now_time_from_epoch) {
             }
         }
         memcpy(m_entries, tmp.data(), sizeof(m_entries[0]) * tmp.size());
+        for (size_t i = tmp.size(); i < (size_t)RGY_DEVICE_USAGE_MAX_ENTRY; i++) {
+            m_entries[i].process_id = 0;
+        }
     }
 }
 
@@ -208,6 +214,9 @@ void RGYDeviceUsage::resetEntry() {
 std::vector<std::pair<int, int64_t>> RGYDeviceUsage::getUsage(const RGYDeviceUsageLockManager *lock) {
     std::vector<std::pair<int, int64_t>> usage;
     if (!lock) {
+        return usage;
+    }
+    if (m_header == nullptr || m_entries == nullptr) {
         return usage;
     }
     std::chrono::system_clock::time_point now = std::chrono::system_clock::now();

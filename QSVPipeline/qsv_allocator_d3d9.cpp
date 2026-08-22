@@ -107,15 +107,14 @@ mfxStatus QSVAllocatorD3D9::Init(mfxAllocatorParams *pParams, shared_ptr<RGYLog>
 mfxStatus QSVAllocatorD3D9::Close() {
     if (m_manager && m_hDecoder) {
         m_manager->CloseDeviceHandle(m_hDecoder);
-        m_manager = 0;
         m_hDecoder = 0;
     }
 
     if (m_manager && m_hProcessor) {
         m_manager->CloseDeviceHandle(m_hProcessor);
-        m_manager = 0;
         m_hProcessor = 0;
     }
+    m_manager = 0;
 
     return QSVAllocator::Close();
 }
@@ -392,7 +391,7 @@ mfxStatus QSVAllocatorD3D9::AllocImpl(mfxFrameAllocRequest *request, mfxFrameAll
                 //そのため、shared_handleを取得するのは、SandyBridgeでない、あるいはWin7でない環境に限るようにする
                 (m_getSharedHandle) ? &dxMids[i].second : nullptr))) {
                 ReleaseResponse(response);
-                rgy_free(dxMids);
+                if (i == 0) rgy_free(dxMids);
                 AddMessage(RGY_LOG_ERROR, _T("QSVAllocatorD3D9::AllocImpl failed to CreateSurface(external) #%d: %d.\n"), i, hr);
                 return MFX_ERR_MEMORY_ALLOC;
             }

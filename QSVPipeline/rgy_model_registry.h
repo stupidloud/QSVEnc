@@ -1,0 +1,66 @@
+﻿// -----------------------------------------------------------------------------------------
+//     QSVEnc/VCEEnc/rkmppenc by rigaya
+// -----------------------------------------------------------------------------------------
+// The MIT License
+//
+// Copyright (c) 2019-2021 rigaya
+//
+// Permission is hereby granted, free of charge, to any person obtaining a copy
+// of this software and associated documentation files (the "Software"), to deal
+// in the Software without restriction, including without limitation the rights
+// to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+// copies of the Software, and to permit persons to whom the Software is
+// furnished to do so, subject to the following conditions:
+//
+// The above copyright notice and this permission notice shall be included in
+// all copies or substantial portions of the Software.
+//
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+// AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+// OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+// THE SOFTWARE.
+//
+// ------------------------------------------------------------------------------------------
+
+#pragma once
+#ifndef __RGY_MODEL_REGISTRY_H__
+#define __RGY_MODEL_REGISTRY_H__
+
+#include "rgy_prm.h"
+
+#include "rgy_osdep.h"
+#include "rgy_err.h"
+#include "rgy_log.h"
+#include <map>
+#include <optional>
+#include <memory>
+
+struct OnnxModelEntry {
+    tstring path;
+    tstring colorspace;  // "rgb" or "ycbcr", default "rgb"
+    int noise;           // default 15
+    int frames;          // 時間窓のフレーム数。デフォルトは1。
+    bool fp32;           // fp32推論を強制する。デフォルトはfalse。
+    CspMatrix colormatrixOut; // 未指定時は RGY_MATRIX_UNSPECIFIED。colormatrix_out=auto の場合のみ適用。
+    // ONNXデインターレース用。未指定はnullopt、未知の文字列は値を保持する。
+    std::optional<tstring> onnxDeintArchitecture;
+    bool onnxDeintArchitecturePresent = false;
+    bool onnxDeintArchitectureTypeValid = true;
+};
+
+class RGYModelRegistry {
+public:
+    RGY_ERR load(const tstring& jsonPath, std::shared_ptr<RGYLog> log);
+    std::optional<OnnxModelEntry> find(const tstring& name) const;
+    const std::map<tstring, OnnxModelEntry>& models() const { return m_models; }
+    tstring baseDir() const { return m_baseDir; }
+    tstring resolveModelPath(const tstring& name) const;
+private:
+    tstring m_baseDir;
+    std::map<tstring, OnnxModelEntry> m_models;
+};
+
+#endif // __RGY_MODEL_REGISTRY_H__

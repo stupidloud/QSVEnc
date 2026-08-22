@@ -69,9 +69,6 @@ sudo apt install ./qsvencc_x.xx_Ubuntu24.04_amd64.deb
 
 # Ubuntu 22.04
 sudo apt install ./qsvencc_x.xx_Ubuntu22.04_amd64.deb
-
-# Ubuntu 20.04
-sudo apt install ./qsvencc_x.xx_Ubuntu20.04_amd64.deb
 ```
 
 ### 4. Addtional Tools
@@ -82,6 +79,26 @@ There are some features which require additional installations.
 |:--      |:--           |
 | avs reader       | [AvisynthPlus](https://github.com/AviSynth/AviSynthPlus) |
 | vpy reader       | [VapourSynth](https://www.vapoursynth.com/)              |
+| --vpp-onnx       | OpenVINO Runtime from the [Intel official APT repository](https://docs.openvino.ai/2026/get-started/install-openvino/install-openvino-apt.html) |
+
+To install OpenVINO Runtime from the APT repository:
+
+```Shell
+sudo apt-get install -y gnupg wget
+wget https://apt.repos.intel.com/intel-gpg-keys/GPG-PUB-KEY-INTEL-SW-PRODUCTS.PUB
+sudo gpg --output /etc/apt/trusted.gpg.d/intel.gpg --dearmor GPG-PUB-KEY-INTEL-SW-PRODUCTS.PUB
+
+# Run only one of the following lines, matching your Ubuntu version.
+
+# Ubuntu 24.04
+echo "deb https://apt.repos.intel.com/openvino ubuntu24 main" | sudo tee /etc/apt/sources.list.d/intel-openvino.list
+
+# Ubuntu 22.04
+echo "deb https://apt.repos.intel.com/openvino ubuntu22 main" | sudo tee /etc/apt/sources.list.d/intel-openvino.list
+
+sudo apt update
+sudo apt install openvino
+```
 
 ### 5. Others
 

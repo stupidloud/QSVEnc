@@ -105,6 +105,7 @@ protected:
         RGYOpenCLEvent backwardEvent;
         RGYOpenCLEvent forwardEvent;
         bool hasInlineParams;
+        bool inlineParamsChroma;
         std::array<RGYDegrainCompensateInlineParams, 3> backwardInlineParams;
         std::array<RGYDegrainCompensateInlineParams, 3> forwardInlineParams;
 
@@ -115,6 +116,7 @@ protected:
             backwardEvent(),
             forwardEvent(),
             hasInlineParams(false),
+            inlineParamsChroma(false),
             backwardInlineParams(),
             forwardInlineParams() {
         }
@@ -217,8 +219,10 @@ protected:
     RtgmcPendingFrameRef *findNoiseReference(const RGYFrameInfo *frame);
     void clearNoiseReference(const RGYFrameInfo *frame);
     RGY_ERR cacheSourceFrame(const RGYFrameInfo *frame, RGYOpenCLQueue &queue, const std::vector<RGYOpenCLEvent> &wait_events);
+    const RtgmcSourceCacheFrame *findCachedSourceEntry(const RGYFrameInfo *frame) const;
     const RGYFrameInfo *findCachedSourceFrame(const RGYFrameInfo *frame, std::vector<RGYOpenCLEvent> *wait_events);
     int sourceFieldForFrame(const RGYFrameInfo *frame) const;
+    size_t sourceCacheCapacity() const;
     RGY_ERR storePostLimitBaseReference(const RGYFrameInfo *frame, RGYOpenCLQueue &queue, const std::vector<RGYOpenCLEvent> &wait_events);
     RtgmcPendingFrameRef *findPostLimitBaseReference(const RGYFrameInfo *frame);
     void clearPostLimitBaseReference(const RGYFrameInfo *frame);
@@ -251,6 +255,7 @@ protected:
     std::deque<int> m_pendingOutputFrames;
     std::array<RtgmcSourceCacheFrame, 256> m_sourceCache;
     std::shared_ptr<RGYCLSharedFramePool> m_sharedFramePool;
+    std::shared_ptr<RGYCLSharedFramePool> m_ediSideDataFramePool;
     std::unique_ptr<RGYCLFrame> m_borderFrame;
     RGYOpenCLProgramAsync m_borderCopy;
     std::unique_ptr<RGYFilterRtgmcPrimitive> m_noiseDiffFilter;

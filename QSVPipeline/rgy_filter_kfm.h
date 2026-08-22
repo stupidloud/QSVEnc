@@ -114,6 +114,11 @@ protected:
         KFM_FRAME_30 = 2,
         KFM_FRAME_24 = 3,
         KFM_FRAME_UCF = 4,
+        KFM_FRAME_RFF_24 = 5,
+    };
+    enum KfmCleanSuperMode {
+        KFM_CLEAN_SUPER_24 = 24,
+        KFM_CLEAN_SUPER_30 = 30,
     };
     enum KfmUcf60Flag {
         KFM_UCF60_NONE = 0,
@@ -252,6 +257,11 @@ protected:
     const RGYFrameInfo *findSourceFrame(const RGYFrameInfo *frame, std::vector<RGYOpenCLEvent> *wait_events);
     const KfmCachedSource *findSourceByIndex(int sourceIndex) const;
     const KfmCachedSource *findSourceByIndexExact(int sourceIndex) const;
+    bool isRffProgressiveCandidate(const KfmCachedSource *source) const;
+    bool isRffProgressiveSource(int sourceIndex, bool drain) const;
+    bool isRffTimestampContinuous(const KfmCachedSource *prev, const KfmCachedSource *current) const;
+    int64_t rffFilmOffset(int64_t frameIndex) const;
+    void resetRffTiming();
     const KfmCachedDeint60 *findCachedDeint60Frame(const KfmRtgmcLane& lane, int n60, std::vector<RGYOpenCLEvent> *wait_events) const;
     const KfmUcfNoiseDumpRecord *findUcfNoiseResult(int sourceIndex) const;
     RGY_ERR runUcfNoiseAnalysisFromSource(const RGYFrameInfo *frame, RGYOpenCLQueue &queue, const std::vector<RGYOpenCLEvent> &wait_events);
@@ -270,6 +280,8 @@ protected:
     void finalizeAnalyzerResults(VppKfmTiming timing);
     std::vector<RGYKFM::KFMResult> analyzerResultsSnapshot(bool mark60p) const;
     void appendAnalyzerResults(size_t resultCount, bool dump, bool mark60p);
+    void logKfmProfileStats();
+    bool deriveSwitchTimingAt(KfmSwitchTiming& timing, int n60, int total60) const;
     std::vector<KfmSwitchTiming> deriveSwitchTimings(int total60) const;
     int64_t sourceFrameDuration(const KfmCachedSource *source) const;
     bool isSwitchSingleFrameN60(int n60) const;
@@ -326,7 +338,7 @@ protected:
     RGY_ERR runNrFilter(RGYFrameInfo *pInputFrame, RGYFrameInfo **ppOutputFrame,
         RGYOpenCLQueue &queue, const std::vector<RGYOpenCLEvent> &wait_events, RGYOpenCLEvent *event);
     RGY_ERR emitOutputFrame(RGYFrameInfo *pFrame, RGYFrameInfo **ppOutputFrames, int *pOutputFrameNum,
-        RGYOpenCLQueue &queue, const RGYOpenCLEvent &frameEvent, RGYOpenCLEvent *event);
+        RGYOpenCLQueue &queue, const RGYOpenCLEvent &frameEvent, RGYOpenCLEvent *event, RGYFrameInfo *reservedOutputFrame = nullptr);
     RGY_ERR queueVfrOutputFrame(const RGYFrameInfo *pFrame, RGYOpenCLQueue &queue, const RGYOpenCLEvent &frameEvent);
     RGY_ERR emitPendingVfrOutput(RGYFrameInfo **ppOutputFrames, int *pOutputFrameNum,
         RGYOpenCLQueue &queue, RGYOpenCLEvent *event);
@@ -343,11 +355,14 @@ protected:
     RGY_ERR renderCleanSuperFields(RGYFrameInfo *pOutputFrame, int firstSuperField, int lastSuperField, int propSourceIndex, int outputFrameId, bool drain, RGYOpenCLQueue &queue, const std::vector<RGYOpenCLEvent> &wait_events, RGYOpenCLEvent *event);
     RGY_ERR renderTelecineSuper24(RGYFrameInfo *pOutputFrame, int frame24Index, bool drain, RGYOpenCLQueue &queue, const std::vector<RGYOpenCLEvent> &wait_events, RGYOpenCLEvent *event);
     RGY_ERR renderSuper30(RGYFrameInfo *pOutputFrame, int frame30Index, bool drain, RGYOpenCLQueue &queue, const std::vector<RGYOpenCLEvent> &wait_events, RGYOpenCLEvent *event);
+    RGY_ERR getCachedCleanSuper(KfmCleanSuperMode mode, int frameIndex, RGYFrameInfo *pFallbackFrame, RGYFrameInfo **ppOutputFrame,
+        bool drain, RGYOpenCLQueue &queue, const std::vector<RGYOpenCLEvent> &wait_events, RGYOpenCLEvent *event);
     RGY_ERR removeCombeFields(RGYFrameInfo *pOutputFrame, const RGYFrameInfo *pDeintFrame, const RGYFrameInfo *pTelecineSuperFrame,
         int firstField, int fieldCount, int stageFrameIndex, const char *stageName, RGYOpenCLQueue &queue, const std::vector<RGYOpenCLEvent> &wait_events, RGYOpenCLEvent *event);
     RGY_ERR removeCombe24(RGYFrameInfo *pOutputFrame, const RGYFrameInfo *pDeint24Frame, const RGYFrameInfo *pTelecineSuperFrame, int frame24Index, RGYOpenCLQueue &queue, const std::vector<RGYOpenCLEvent> &wait_events, RGYOpenCLEvent *event);
     RGY_ERR ensureMaskBranchFrames(RGYFrameInfo **ppSwitchFlagFrame, RGYFrameInfo **ppContainsCombeFrame, RGYFrameInfo **ppCombeMaskFrame, const RGYFrameInfo *pTelecineSuperFrame, const TCHAR *stageLabel);
-    RGY_ERR renderMaskBranch(RGYFrameInfo *pSwitchFlagFrame, RGYFrameInfo *pContainsCombeFrame, RGYFrameInfo *pCombeMaskFrame, const RGYFrameInfo *pTelecineSuperPrevFrame, const RGYFrameInfo *pTelecineSuperFrame, const RGYFrameInfo *pTelecineSuperNextFrame, const char *switchFlagStage, const char *containsCombeStage, const char *combeMaskStage, RGYOpenCLQueue &queue, const std::vector<RGYOpenCLEvent> &wait_events, RGYOpenCLEvent *event, KfmContainsCombeReadback *containsCombeReadback = nullptr);
+    RGY_ERR renderMaskBranch(RGYFrameInfo *pSwitchFlagFrame, RGYFrameInfo *pContainsCombeFrame, RGYFrameInfo *pCombeMaskFrame, const RGYFrameInfo *pTelecineSuperPrevFrame, const RGYFrameInfo *pTelecineSuperFrame, const RGYFrameInfo *pTelecineSuperNextFrame, const char *switchFlagStage, const char *containsCombeStage, const char *combeMaskStage, bool generateCombeMask, RGYOpenCLQueue &queue, const std::vector<RGYOpenCLEvent> &wait_events, RGYOpenCLEvent *event, KfmContainsCombeReadback *containsCombeReadback = nullptr);
+    RGY_ERR renderCombeMask(RGYFrameInfo *pCombeMaskFrame, const RGYFrameInfo *pSwitchFlagFrame, const RGYFrameInfo *pTelecineSuperFrame, const char *combeMaskStage, RGYOpenCLQueue &queue, const std::vector<RGYOpenCLEvent> &wait_events, RGYOpenCLEvent *event);
     RGY_ERR resolveContainsCombeCount(KfmContainsCombeReadback& readback, cl_uint *containsCombeCount);
     RGY_ERR patchCombe(RGYFrameInfo *pOutputFrame, const RGYFrameInfo *pBaseFrame, const RGYFrameInfo *pPatchFrame, const RGYFrameInfo *pMaskFrame, int frameIndex, const char *stageName, RGYOpenCLQueue &queue, const std::vector<RGYOpenCLEvent> &wait_events, RGYOpenCLEvent *event);
     int telecine24FrameCount(bool drain) const;
@@ -439,8 +454,120 @@ protected:
     struct KfmPendingVfrOutput {
         std::shared_ptr<RGYCLFrame> frame;
         RGYOpenCLEvent event;
+        int outputFrameIndex;
 
-        KfmPendingVfrOutput() : frame(), event() {};
+        KfmPendingVfrOutput() : frame(), event(), outputFrameIndex(-1) {};
+    };
+
+    struct KfmCleanSuperCacheKey {
+        KfmCleanSuperMode mode;
+        int frameIndex;
+        int firstField;
+        int lastField;
+        int propSourceIndex;
+        int width;
+        int height;
+        RGY_CSP csp;
+
+        KfmCleanSuperCacheKey() : mode(KFM_CLEAN_SUPER_24), frameIndex(-1), firstField(-1), lastField(-1), propSourceIndex(-1), width(0), height(0), csp(RGY_CSP_NA) {};
+        bool operator==(const KfmCleanSuperCacheKey& other) const {
+            return mode == other.mode && frameIndex == other.frameIndex
+                && firstField == other.firstField && lastField == other.lastField
+                && propSourceIndex == other.propSourceIndex
+                && width == other.width && height == other.height && csp == other.csp;
+        }
+    };
+
+    struct KfmCleanSuperCacheEntry {
+        KfmCleanSuperCacheKey key;
+        std::shared_ptr<RGYCLFrame> frame;
+        RGYOpenCLEvent readyEvent;
+        uint64_t lastUsed;
+
+        KfmCleanSuperCacheEntry() : key(), frame(), readyEvent(), lastUsed(0) {};
+    };
+
+    struct KfmVfrRunStats {
+        int64_t inputCalls;
+        int64_t drainCalls;
+        int64_t inputZeroOut;
+        int64_t inputSingleOut;
+        int64_t inputMultiOut;
+        int64_t drainZeroOut;
+        int64_t drainSingleOut;
+        int64_t drainMultiOut;
+        int maxInputOut;
+        int maxDrainOut;
+        int maxPendingOutputs;
+        int maxOutputLag60;
+        int maxSourceFrames;
+        int maxSourceCacheSize;
+        int maxAnalyzerResults;
+        int maxTimingCount;
+        int64_t noTimingBreaks;
+        int64_t tailHoldBreaks;
+        int64_t moreData24RenderBreaks;
+        int64_t moreData24SuperBreaks;
+        int64_t moreData24NextSuperBreaks;
+        int64_t frontier24Breaks;
+        int64_t moreData24PatchDeintBreaks;
+        int64_t moreData60EnsureBreaks;
+        int64_t missingDeint60Breaks;
+        int64_t sourceMissing30Breaks;
+        int64_t moreData30PatchDeintBreaks;
+        int64_t missing30PatchDeintBreaks;
+        int64_t sourceMissingFallbackBreaks;
+        int64_t zeroOutNoPendingCalls;
+
+        KfmVfrRunStats() :
+            inputCalls(0), drainCalls(0),
+            inputZeroOut(0), inputSingleOut(0), inputMultiOut(0),
+            drainZeroOut(0), drainSingleOut(0), drainMultiOut(0),
+            maxInputOut(0), maxDrainOut(0), maxPendingOutputs(0), maxOutputLag60(0),
+            maxSourceFrames(0), maxSourceCacheSize(0), maxAnalyzerResults(0), maxTimingCount(0),
+            noTimingBreaks(0), tailHoldBreaks(0),
+            moreData24RenderBreaks(0), moreData24SuperBreaks(0), moreData24NextSuperBreaks(0), frontier24Breaks(0),
+            moreData24PatchDeintBreaks(0), moreData60EnsureBreaks(0), missingDeint60Breaks(0),
+            sourceMissing30Breaks(0), moreData30PatchDeintBreaks(0), missing30PatchDeintBreaks(0),
+            sourceMissingFallbackBreaks(0), zeroOutNoPendingCalls(0) {};
+    };
+    struct KfmProfileCounter {
+        int64_t calls;
+        int64_t totalNs;
+        int64_t maxNs;
+        int maxItems;
+
+        KfmProfileCounter() : calls(0), totalNs(0), maxNs(0), maxItems(0) {};
+        void add(int64_t elapsedNs, int items = 0) {
+            calls++;
+            totalNs += elapsedNs;
+            if (elapsedNs > maxNs) {
+                maxNs = elapsedNs;
+                maxItems = items;
+            }
+        }
+    };
+    struct KfmProfileStats {
+        bool enabled;
+        KfmProfileCounter submitFMCounts;
+        KfmProfileCounter readbackFMCounts;
+        KfmProfileCounter analyzeCpu;
+        KfmProfileCounter analyzerTrailing;
+        KfmProfileCounter appendAnalyzer;
+        KfmProfileCounter snapshotCopy;
+        KfmProfileCounter snapshotMark60p;
+        KfmProfileCounter appendWrite;
+        KfmProfileCounter writeFinal;
+        KfmProfileCounter deriveTimings;
+        KfmProfileCounter emitPending;
+        KfmProfileCounter vfrScheduler;
+        int64_t cleanSuperCacheHits;
+        int64_t cleanSuperCacheMisses;
+        int64_t cleanSuperCacheAvoidedFields;
+        int64_t fullCombeMaskGenerated;
+        int64_t fullCombeMaskAvoided;
+
+        KfmProfileStats() : enabled(false), cleanSuperCacheHits(0), cleanSuperCacheMisses(0), cleanSuperCacheAvoidedFields(0), fullCombeMaskGenerated(0), fullCombeMaskAvoided(0) {};
     };
 
     std::array<RGYOpenCLProgramAsync, 8> m_programs;
@@ -470,9 +597,13 @@ protected:
     RGYOpenCLQueue m_fmCountQueue;
     std::deque<KfmPendingFMCount> m_pendingFMCounts;
     std::deque<KfmPendingVfrOutput> m_pendingVfrOutputs;
+    KfmVfrRunStats m_vfrRunStats;
+    mutable KfmProfileStats m_kfmProfile;
     std::array<std::unique_ptr<RGYCLBuf>, 2> m_telecineSuperRaw;
     std::array<std::unique_ptr<RGYCLFrame>, 2> m_telecineSuperFrames;
     std::array<std::unique_ptr<RGYCLFrame>, 2> m_telecineSuperNeighborFrames;
+    std::deque<KfmCleanSuperCacheEntry> m_cleanSuperCache;
+    uint64_t m_cleanSuperCacheGeneration;
     std::array<std::unique_ptr<RGYCLFrame>, 4> m_switchFlagFrames;
     std::array<std::unique_ptr<RGYCLFrame>, 4> m_containsCombeFrames;
     std::array<std::unique_ptr<RGYCLFrame>, 4> m_combeMaskFrames;
@@ -496,6 +627,8 @@ protected:
     std::string m_stageDumpDir;
     RGYKFM::KFMResult m_lastAnalyzeResult;
     std::vector<RGYKFM::KFMResult> m_analyzerOutputResults;
+    size_t m_analyzerMark60pCommitted;
+    bool m_analyzerMark60pState;
     bool m_hasLastAnalyzeResult;
     bool m_analyzerFinalized;
     bool m_switchTimingDumped;
@@ -506,6 +639,13 @@ protected:
     int m_cachedSourceFrames;
     int m_nextSwitchN60;
     int64_t m_nextSwitchPts;
+    int64_t m_switchPtsOffset;
+    int m_rffPrevSourceIndex;
+    int64_t m_rffPrevInputPts;
+    RGY_FRAME_FLAGS m_rffPrevFlags;
+    int64_t m_rffAnchorOutputPts;
+    int64_t m_rffRunIndex;
+    int64_t m_rffLastOutputPts;
     bool m_hasLastSwitchTiming;
     int m_lastSwitchStart60;
     int m_lastSwitchDuration60;

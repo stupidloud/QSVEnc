@@ -39,11 +39,12 @@
 
 #include "rgy_frame_info.h"
 #include "rgy_filter_resize.h"
+#include "rgy_filter_rtgmc_common.h"
 #include "rgy_util.h"
 
 static constexpr int RTGMC_SEARCH_PREFILTER_BLOCK_X = 16;
 static constexpr int RTGMC_SEARCH_PREFILTER_BLOCK_Y = 16;
-static constexpr bool RTGMC_SEARCH_PREFILTER_USE_SEARCH_REFINE1_CHAIN = false;
+static constexpr bool RTGMC_SEARCH_PREFILTER_USE_SEARCH_REFINE1_CHAIN = true;
 
 class RGYFilterResizePlaneProxy : public RGYFilterResize {
 public:
@@ -106,6 +107,14 @@ const RGYFrameInfo *RGYFrameDataRtgmcSearchLuma::frame() const {
     return m_frame ? &m_frame->frame : nullptr;
 }
 
+static void eraseRtgmcSearchLumaFrameData(std::vector<std::shared_ptr<RGYFrameData>>& dataList) {
+    // 添付データはプールフレームを所有するため、出力メタデータの再利用前に古い参照を外す。
+    dataList.erase(std::remove_if(dataList.begin(), dataList.end(), [](const std::shared_ptr<RGYFrameData>& data) {
+        return (data && data->dataType() == RGY_FRAME_DATA_RTGMC_SEARCH_LUMA)
+            || std::dynamic_pointer_cast<RGYFrameDataRtgmcSourceTwin>(data) != nullptr;
+    }), dataList.end());
+}
+
 static RGY_CSP rtgmcSearchLumaCsp(const RGYFrameInfo &frameInfo) {
     return (RGY_CSP_BIT_DEPTH[frameInfo.csp] > 8) ? RGY_CSP_Y16 : RGY_CSP_Y8;
 }
@@ -135,7 +144,8 @@ RGYFilterRtgmcSearchPrefilter::RGYFilterRtgmcSearchPrefilter(shared_ptr<RGYOpenC
     m_searchLumaDumpEnabled(false),
     m_searchLumaDumpHeaderWritten(false),
     m_inputCount(0),
-    m_drainCount(0) {
+    m_drainCount(0),
+    m_outputFrameIdx(0) {
     m_name = _T("rtgmc-search-prefilter");
 }
 
@@ -317,13 +327,6 @@ RGY_ERR RGYFilterRtgmcSearchPrefilter::setupSearchRefine1Resources(const RGYFram
     for (auto &resources : m_searchRefine2PlaneResources) {
         resources.clear();
     }
-    for (auto &resize : m_searchRefine1ResizeDown) {
-        resize.reset();
-    }
-    for (auto &resize : m_searchRefine1ResizeUp) {
-        resize.reset();
-    }
-
     const auto setupPlane = [&](const int planeIndex, const RGYFrameInfo &planeBaseInfo) -> RGY_ERR {
         if (planeBaseInfo.width <= 0 || planeBaseInfo.height <= 0) {
             return RGY_ERR_INVALID_PARAM;
@@ -343,29 +346,6 @@ RGY_ERR RGYFilterRtgmcSearchPrefilter::setupSearchRefine1Resources(const RGYFram
         m_searchRefine1PlaneResources[planeIndex].motionGuide = std::move(motionGuide);
         m_searchRefine1PlaneResources[planeIndex].halfSearchBase = std::move(halfSearchBase);
         m_searchRefine1PlaneResources[planeIndex].halfSearchSmoothed = std::move(halfSearchSmoothed);
-
-        auto downParam = std::make_shared<RGYFilterParamResize>();
-        downParam->frameIn = fullInfo;
-        downParam->frameOut = halfInfo;
-        downParam->interp = RGY_VPP_RESIZE_BILINEAR;
-        auto downResize = std::make_unique<RGYFilterResizePlaneProxy>(m_cl);
-        auto sts = downResize->init(downParam, m_pLog);
-        if (sts != RGY_ERR_NONE) {
-            return sts;
-        }
-
-        auto upParam = std::make_shared<RGYFilterParamResize>();
-        upParam->frameIn = halfInfo;
-        upParam->frameOut = fullInfo;
-        upParam->interp = RGY_VPP_RESIZE_BILINEAR;
-        auto upResize = std::make_unique<RGYFilterResizePlaneProxy>(m_cl);
-        sts = upResize->init(upParam, m_pLog);
-        if (sts != RGY_ERR_NONE) {
-            return sts;
-        }
-
-        m_searchRefine1ResizeDown[planeIndex] = std::move(downResize);
-        m_searchRefine1ResizeUp[planeIndex] = std::move(upResize);
         return RGY_ERR_NONE;
     };
 
@@ -475,7 +455,7 @@ RGY_ERR RGYFilterRtgmcSearchPrefilter::init(shared_ptr<RGYFilterParam> pParam, s
         return sts;
     }
 
-    sts = AllocFrameBuf(prm->frameOut, 1);
+    sts = AllocFrameBuf(prm->frameOut, RTGMC_SEARCH_PREFILTER_CACHE_SIZE);
     if (sts != RGY_ERR_NONE) {
         AddMessage(RGY_LOG_ERROR, _T("failed to allocate output buffer: %s.\n"), get_err_mes(sts));
         return sts;
@@ -1002,7 +982,9 @@ RGY_ERR RGYFilterRtgmcSearchPrefilter::emitPrefilteredFrame(PendingSearchPrefilt
 
     std::shared_ptr<RGYCLFrame> searchLumaFrame;
     const bool useSeparateSearchLuma = prm->attachSearchLuma || m_searchLumaDumpEnabled;
-    auto pOut = &m_frameBuf[0]->frame;
+    auto outFrameBuf = m_frameBuf[m_outputFrameIdx].get();
+    auto pOut = &outFrameBuf->frame;
+    m_outputFrameIdx = (m_outputFrameIdx + 1) % m_frameBuf.size();
     RGYOpenCLEvent copyEvent;
     auto err = m_cl->copyFrame(pOut, cur, nullptr, queue, wait_events, &copyEvent, RGYFrameCopyMode::FRAME, "rtgmc_search_prefilter.output_copy");
     if (err != RGY_ERR_NONE) {
@@ -1017,6 +999,7 @@ RGY_ERR RGYFilterRtgmcSearchPrefilter::emitPrefilteredFrame(PendingSearchPrefilt
             return RGY_ERR_MEMORY_ALLOC;
         }
         copyFramePropWithoutRes(&searchLumaFrame->frame, cur);
+        searchLumaFrame->frame.dataList.clear();
     }
 
     const auto planePrev2 = getPlane(prev2, RGY_PLANE_Y);
@@ -1042,10 +1025,8 @@ RGY_ERR RGYFilterRtgmcSearchPrefilter::emitPrefilteredFrame(PendingSearchPrefilt
         const RGYFrameInfo &planePrev2Src, const RGYFrameInfo &planePrevSrc, const RGYFrameInfo &planeCurSrc,
         const RGYFrameInfo &planeNextSrc, const RGYFrameInfo &planeNext2Src, const RGYFrameInfo &planeDstSrc,
         const int fullRangeMode, const std::vector<RGYOpenCLEvent> &planeWaitEvents, RGYOpenCLEvent *planeEvent) -> RGY_ERR {
-        auto *resizeDown = m_searchRefine1ResizeDown[planeIndex].get();
-        auto *resizeUp = m_searchRefine1ResizeUp[planeIndex].get();
         auto &resources = m_searchRefine1PlaneResources[planeIndex];
-        if (!resizeDown || !resizeUp || !resources.motionGuide || !resources.halfSearchBase || !resources.halfSearchSmoothed) {
+        if (!resources.motionGuide || !resources.halfSearchBase || !resources.halfSearchSmoothed) {
             AddMessage(RGY_LOG_ERROR, _T("rtgmc-search-prefilter search_refine1 resources are not ready for plane %d.\n"), planeIndex);
             return RGY_ERR_NULL_PTR;
         }
@@ -1083,16 +1064,19 @@ RGY_ERR RGYFilterRtgmcSearchPrefilter::emitPrefilteredFrame(PendingSearchPrefilt
             return sts;
         }
 
-        RGYFrameInfo *halfSearchBaseFrame = &planeHalfSearchBase;
-        int halfSearchBaseFrames = 0;
         RGYOpenCLEvent halfSearchBaseEvent;
-        sts = resizeDown->filter(&planeMotionGuide, &halfSearchBaseFrame, &halfSearchBaseFrames, queue, { motionGuideEvent }, &halfSearchBaseEvent);
-        if (sts == RGY_ERR_NONE && (halfSearchBaseFrames != 1 || halfSearchBaseFrame == nullptr)) {
-            sts = RGY_ERR_INVALID_CALL;
-        }
+        sts = m_prefilter.get()->kernel("kernel_rtgmc_search_prefilter_half_search_base_from_guide").config(
+            queue,
+            RGYWorkSize(RTGMC_SEARCH_PREFILTER_BLOCK_X, RTGMC_SEARCH_PREFILTER_BLOCK_Y),
+            RGYWorkSize(planeHalfSearchBase.width, planeHalfSearchBase.height),
+            { motionGuideEvent },
+            &halfSearchBaseEvent).launch(
+                (cl_mem)planeMotionGuide.ptr[0], planeMotionGuide.pitch[0],
+                (cl_mem)planeHalfSearchBase.ptr[0], planeHalfSearchBase.pitch[0],
+                planeMotionGuide.width, planeMotionGuide.height);
         if (sts != RGY_ERR_NONE) {
-            AddMessage(RGY_LOG_ERROR, _T("failed to bilinear downsample rtgmc-search-prefilter search_refine1 plane %d: %s.\n"),
-                planeIndex, get_err_mes(sts));
+            AddMessage(RGY_LOG_ERROR, _T("error at %s plane %d: %s.\n"),
+                _T("kernel_rtgmc_search_prefilter_half_search_base_from_guide"), planeIndex, get_err_mes(sts));
             return sts;
         }
 
@@ -1117,45 +1101,19 @@ RGY_ERR RGYFilterRtgmcSearchPrefilter::emitPrefilteredFrame(PendingSearchPrefilt
             return sts;
         }
 
-        if (fullRangeMode != 0) {
-            RGYOpenCLEvent upsampleEvent;
-            RGYFrameInfo *dstFrame = &planeDstWork;
-            int dstFrames = 0;
-            sts = resizeUp->filter(&planeHalfSearchSmoothed, &dstFrame, &dstFrames, queue, { searchSmoothed3x3Event }, &upsampleEvent);
-            if (sts == RGY_ERR_NONE && (dstFrames != 1 || dstFrame == nullptr)) {
-                sts = RGY_ERR_INVALID_CALL;
-            }
-            if (sts != RGY_ERR_NONE) {
-                AddMessage(RGY_LOG_ERROR, _T("failed to bilinear upsample rtgmc-search-prefilter search_refine1 plane %d: %s.\n"),
-                    planeIndex, get_err_mes(sts));
-                return sts;
-            }
-            sts = m_prefilter.get()->kernel("kernel_rtgmc_search_prefilter_range_convert").config(
-                queue,
-                RGYWorkSize(RTGMC_SEARCH_PREFILTER_BLOCK_X, RTGMC_SEARCH_PREFILTER_BLOCK_Y),
-                RGYWorkSize(planeDstWork.width, planeDstWork.height),
-                { upsampleEvent },
-                planeEvent).launch(
-                    (cl_mem)planeDstWork.ptr[0], planeDstWork.pitch[0],
-                    planeDstWork.width, planeDstWork.height,
-                    fullRangeMode);
-            if (sts != RGY_ERR_NONE) {
-                AddMessage(RGY_LOG_ERROR, _T("error at %s plane %d: %s.\n"),
-                    _T("kernel_rtgmc_search_prefilter_range_convert"), planeIndex, get_err_mes(sts));
-                return sts;
-            }
-            return RGY_ERR_NONE;
-        }
-
-        RGYFrameInfo *dstFrame = &planeDstWork;
-        int dstFrames = 0;
-        sts = resizeUp->filter(&planeHalfSearchSmoothed, &dstFrame, &dstFrames, queue, { searchSmoothed3x3Event }, planeEvent);
-        if (sts == RGY_ERR_NONE && (dstFrames != 1 || dstFrame == nullptr)) {
-            sts = RGY_ERR_INVALID_CALL;
-        }
+        sts = m_prefilter.get()->kernel("kernel_rtgmc_search_prefilter_half_resolution_upsample").config(
+            queue,
+            RGYWorkSize(RTGMC_SEARCH_PREFILTER_BLOCK_X, RTGMC_SEARCH_PREFILTER_BLOCK_Y),
+            RGYWorkSize(planeDstWork.width, planeDstWork.height),
+            { searchSmoothed3x3Event },
+            planeEvent).launch(
+                (cl_mem)planeHalfSearchSmoothed.ptr[0], planeHalfSearchSmoothed.pitch[0],
+                (cl_mem)planeDstWork.ptr[0], planeDstWork.pitch[0],
+                planeDstWork.width, planeDstWork.height,
+                fullRangeMode);
         if (sts != RGY_ERR_NONE) {
-            AddMessage(RGY_LOG_ERROR, _T("failed to bilinear upsample rtgmc-search-prefilter search_refine1 plane %d: %s.\n"),
-                planeIndex, get_err_mes(sts));
+            AddMessage(RGY_LOG_ERROR, _T("error at %s plane %d: %s.\n"),
+                _T("kernel_rtgmc_search_prefilter_half_resolution_upsample"), planeIndex, get_err_mes(sts));
         }
         return sts;
     };
@@ -1407,7 +1365,7 @@ RGY_ERR RGYFilterRtgmcSearchPrefilter::emitPrefilteredFrame(PendingSearchPrefilt
         }
     }
 
-    RGYCLFrame *dumpFrame = searchLumaFrame ? searchLumaFrame.get() : m_frameBuf[0].get();
+    RGYCLFrame *dumpFrame = searchLumaFrame ? searchLumaFrame.get() : outFrameBuf;
     RGYOpenCLEvent dumpEvent = lumaEvent;
     std::unique_ptr<RGYCLFrame> debugDumpFrame;
     if (m_searchLumaDumpEnabled && (m_searchLumaDumpStage == "half_search_base" || m_searchLumaDumpStage == "half_search_smoothed")) {
@@ -1651,8 +1609,12 @@ RGY_ERR RGYFilterRtgmcSearchPrefilter::emitPrefilteredFrame(PendingSearchPrefilt
     }
 
     copyFramePropWithoutRes(pOut, cur);
+    eraseRtgmcSearchLumaFrameData(pOut->dataList);
     if (prm->attachSearchLuma) {
         pOut->dataList.push_back(std::make_shared<RGYFrameDataRtgmcSearchLuma>(searchLumaFrame, RGY_CSP_BIT_DEPTH[cur->csp]));
+        // attachSearchLuma有効時はprefilter kernelの出力先が別フレームとなり、pOutはcurの内容同一コピーのまま。
+        // pending.refs[2]の共有所有を添付し、後段Analyzeのキャッシュコピーを省略できるようにする。
+        pOut->dataList.push_back(std::make_shared<RGYFrameDataRtgmcSourceTwin>(pending.refs[2], pOut->ptr[0]));
     }
     ppOutputFrames[0] = pOut;
     *pOutputFrameNum = 1;
@@ -1833,6 +1795,7 @@ void RGYFilterRtgmcSearchPrefilter::resetTemporalState() {
     clearPendingSearchPrefilterFrames();
     m_inputCount = 0;
     m_drainCount = 0;
+    m_outputFrameIdx = 0;
 }
 
 void RGYFilterRtgmcSearchPrefilter::close() {
@@ -1857,12 +1820,6 @@ void RGYFilterRtgmcSearchPrefilter::close() {
     for (auto &resources : m_searchRefine2PlaneResources) {
         resources.clear();
     }
-    for (auto &resize : m_searchRefine1ResizeDown) {
-        resize.reset();
-    }
-    for (auto &resize : m_searchRefine1ResizeUp) {
-        resize.reset();
-    }
     for (auto &resize : m_searchRefine2ResizeEdgeSoftenedSearch) {
         resize.reset();
     }
@@ -1874,5 +1831,6 @@ void RGYFilterRtgmcSearchPrefilter::close() {
     }
     m_inputCount = 0;
     m_drainCount = 0;
+    m_outputFrameIdx = 0;
     m_frameBuf.clear();
 }
