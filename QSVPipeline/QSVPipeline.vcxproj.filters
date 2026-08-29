@@ -327,6 +327,15 @@
     <ClCompile Include="rgy_filter_hqdering.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
+    <ClCompile Include="rgy_filter_guidedfilter.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="rgy_filter_clahe.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="rgy_filter_dehaze.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
     <ClCompile Include="rgy_filter_msharpen.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
@@ -349,6 +358,9 @@
       <Filter>ソース ファイル</Filter>
     </ClCompile>
     <ClCompile Include="rgy_filter_nnedi.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="rgy_filter_nnedi_upscale.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
     <ClCompile Include="rgy_filter_nnedi_field.cpp">
@@ -439,6 +451,9 @@
       <Filter>ソース ファイル</Filter>
     </ClCompile>
     <ClCompile Include="rgy_filter_denoise_dct.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="rgy_filter_denoise_bm3d.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
     <ClCompile Include="rgy_filter_cl.cpp">
@@ -821,6 +836,9 @@
     <ClInclude Include="rgy_filter_nnedi.h">
       <Filter>ヘッダー ファイル</Filter>
     </ClInclude>
+    <ClInclude Include="rgy_filter_nnedi_upscale.h">
+      <Filter>ヘッダー ファイル</Filter>
+    </ClInclude>
     <ClInclude Include="rgy_filter_nnedi_field.h">
       <Filter>ヘッダー ファイル</Filter>
     </ClInclude>
@@ -896,6 +914,9 @@
     <ClInclude Include="rgy_filter_denoise_dct.h">
       <Filter>ヘッダー ファイル</Filter>
     </ClInclude>
+    <ClInclude Include="rgy_filter_denoise_bm3d.h">
+      <Filter>ヘッダー ファイル</Filter>
+    </ClInclude>
     <ClInclude Include="rgy_filter_cl.h">
       <Filter>ヘッダー ファイル</Filter>
     </ClInclude>
@@ -918,6 +939,15 @@
       <Filter>ヘッダー ファイル</Filter>
     </ClInclude>
     <ClInclude Include="rgy_filter_hqdering.h">
+      <Filter>ヘッダー ファイル</Filter>
+    </ClInclude>
+    <ClInclude Include="rgy_filter_guidedfilter.h">
+      <Filter>ヘッダー ファイル</Filter>
+    </ClInclude>
+    <ClInclude Include="rgy_filter_clahe.h">
+      <Filter>ヘッダー ファイル</Filter>
+    </ClInclude>
+    <ClInclude Include="rgy_filter_dehaze.h">
       <Filter>ヘッダー ファイル</Filter>
     </ClInclude>
     <ClInclude Include="rgy_filter_rtgmc_bob.h">
@@ -1192,6 +1222,9 @@
     <None Include="rgy_filter_nnedi.cl">
       <Filter>ソース ファイル</Filter>
     </None>
+    <None Include="rgy_filter_nnedi_upscale.cl">
+      <Filter>ソース ファイル</Filter>
+    </None>
     <None Include="rgy_filter_deband.cl">
       <Filter>ソース ファイル</Filter>
     </None>
@@ -1258,6 +1291,9 @@
     <None Include="rgy_filter_denoise_dct.cl">
       <Filter>ソース ファイル</Filter>
     </None>
+    <None Include="rgy_filter_denoise_bm3d.cl">
+      <Filter>ソース ファイル</Filter>
+    </None>
     <None Include="rgy_dummy_load.cl">
       <Filter>ソース ファイル</Filter>
     </None>
@@ -1277,6 +1313,15 @@
       <Filter>ソース ファイル</Filter>
     </None>
     <None Include="rgy_filter_hqdering.cl">
+      <Filter>ソース ファイル</Filter>
+    </None>
+    <None Include="rgy_filter_guidedfilter.cl">
+      <Filter>ソース ファイル</Filter>
+    </None>
+    <None Include="rgy_filter_clahe.cl">
+      <Filter>ソース ファイル</Filter>
+    </None>
+    <None Include="rgy_filter_dehaze.cl">
       <Filter>ソース ファイル</Filter>
     </None>
     <None Include="rgy_filter_rtgmc_bob.cl">

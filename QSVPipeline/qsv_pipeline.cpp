@@ -71,6 +71,7 @@ RGY_DISABLE_WARNING_POP
 #include "rgy_filter_rff.h"
 #include "rgy_filter_afs.h"
 #include "rgy_filter_nnedi.h"
+#include "rgy_filter_nnedi_upscale.h"
 #include "rgy_filter_bwdif.h"
 #include "rgy_filter_maa.h"
 #include "rgy_filter_rtgmc.h"
@@ -87,6 +88,7 @@ RGY_DISABLE_WARNING_POP
 #include "rgy_filter_delogo.h"
 #include "rgy_filter_convolution3d.h"
 #include "rgy_filter_denoise_dct.h"
+#include "rgy_filter_denoise_bm3d.h"
 #include "rgy_filter_smooth.h"
 #include "rgy_filter_denoise_fft3d.h"
 #include "rgy_filter_msmooth.h"
@@ -123,6 +125,9 @@ RGY_DISABLE_WARNING_POP
 #include "rgy_filter_dehalo.h"
 #include "rgy_filter_finedehalo.h"
 #include "rgy_filter_hqdering.h"
+#include "rgy_filter_guidedfilter.h"
+#include "rgy_filter_clahe.h"
+#include "rgy_filter_dehaze.h"
 #include "rgy_filter_anime4k.h"
 #include "rgy_filter_onnx.h"
 #include "rgy_filter_rife_ov.h"
@@ -708,12 +713,18 @@ RGY_ERR CQSVPipeline::InitMfxEncodeParams(sInputParams *pInParams, std::vector<s
         return err;
     }
 
-    for (auto& rc : pInParams->dynamicRC) {
-        auto [err2, availableFeaures2 ] = CheckMFXRCMode(rc, pInParams, codecMaxQP);
+    for (auto rc = pInParams->dynamicRC.begin(); rc != pInParams->dynamicRC.end();) {
+        auto [err2, availableFeaures2 ] = CheckMFXRCMode(*rc, pInParams, codecMaxQP);
         if (err2 != RGY_ERR_NONE) {
-            PrintMes(RGY_LOG_WARN, _T("Unsupported dynamic rc param for frame %d-%d, will be disabled.\n"), rc.start, rc.end);
-            PrintMes(RGY_LOG_WARN, _T("  paramter was %s.\n"), rc.print().c_str());
-            rc.start = rc.end = -1;
+            if (rc->startTime >= 0.0 || rc->endTime >= 0.0) {
+                PrintMes(RGY_LOG_WARN, _T("Unsupported dynamic rc param for time %.3f-%.3f, will be disabled.\n"), rc->startTime, rc->endTime);
+            } else {
+                PrintMes(RGY_LOG_WARN, _T("Unsupported dynamic rc param for frame %d-%d, will be disabled.\n"), rc->start, rc->end);
+            }
+            PrintMes(RGY_LOG_WARN, _T("  parameter was %s.\n"), rc->print().c_str());
+            rc = pInParams->dynamicRC.erase(rc);
+        } else {
+            ++rc;
         }
     }
     m_dynamicRC = pInParams->dynamicRC;
@@ -2136,6 +2147,13 @@ RGY_ERR CQSVPipeline::InitInput(sInputParams *inputParam, DeviceCodecCsp& HWDecC
     //入力モジュールが、エンコーダに返すべき色空間をセット
     inputParam->input.csp = getEncoderCsp(inputParam, &inputParam->input.bitdepth);
 
+    // 入力CSPでインタレ解除する場合、リーダー内で出力CSPへ先行変換せず、
+    // インタレ解除後にVPPフィルタ列内で変換する。
+    const bool useInputCspForDeint = inputParam->vpp.deintCsp == VppDeintCsp::Input && hasVppDeinterlacer(inputParam, true);
+    if (useInputCspForDeint) {
+        inputParam->input.csp = RGY_CSP_NA;
+    }
+
     // インタレ解除が指定され、かつインタレの指定がない場合は、自動的にインタレの情報取得を行う
     if (hasVppDeinterlacer(inputParam, false) && ((inputParam->input.picstruct & RGY_PICSTRUCT_INTERLACED) == 0)) {
         inputParam->input.picstruct = RGY_PICSTRUCT_AUTO;
@@ -2193,6 +2211,9 @@ RGY_ERR CQSVPipeline::InitInput(sInputParams *inputParam, DeviceCodecCsp& HWDecC
     }
     if (inputParam->common.tcfileIn.length() > 0) {
         PrintMes(RGY_LOG_DEBUG, _T("Switching to VFR mode as --tcfile-in is used.\n"));
+        m_nAVSyncMode |= RGY_AVSYNC_VFR;
+    }
+    if (inputParam->input.type == RGY_INPUT_FMT_Y4M) {
         m_nAVSyncMode |= RGY_AVSYNC_VFR;
     }
     if (m_nAVSyncMode & RGY_AVSYNC_VFR) {
@@ -2487,7 +2508,8 @@ std::vector<VppType> CQSVPipeline::InitFiltersCreateVppList(const sInputParams *
     if (inputParam->vpp.rff.enable)        filterPipeline.push_back(VppType::CL_RFF);
     if (inputParam->vpp.delogo.enable)     filterPipeline.push_back(VppType::CL_DELOGO);
     if (inputParam->vpp.afs.enable)        filterPipeline.push_back(VppType::CL_AFS);
-    if (inputParam->vpp.nnedi.enable)     filterPipeline.push_back(VppType::CL_NNEDI);
+    if (inputParam->vpp.nnedi.enable)      filterPipeline.push_back(VppType::CL_NNEDI);
+    if (inputParam->vpp.nnediUpscale.enable) filterPipeline.push_back(VppType::CL_NNEDI_UPSCALE);
     if (inputParam->vpp.rtgmc.enable)      filterPipeline.push_back(VppType::CL_RTGMC);
     if (inputParam->vpp.kfm.enable)        filterPipeline.push_back(VppType::CL_KFM);
     const bool degrainLegacy = inputParam->vpp.degrain.enable;
@@ -2524,6 +2546,7 @@ std::vector<VppType> CQSVPipeline::InitFiltersCreateVppList(const sInputParams *
     if (inputParam->vpp.nlmeans.enable)    filterPipeline.push_back(VppType::CL_DENOISE_NLMEANS);
     if (inputParam->vpp.pmd.enable)        filterPipeline.push_back(VppType::CL_DENOISE_PMD);
     if (inputParam->vpp.hqdn3d.enable)     filterPipeline.push_back(VppType::CL_DENOISE_HQDN3D);
+    if (inputParam->vpp.bm3d.enable)       filterPipeline.push_back(VppType::CL_DENOISE_BM3D);
     if (inputParam->vpp.descale.enable)    filterPipeline.push_back(VppType::CL_DESCALE);
     if (inputParam->vpp.anime4k.enable)    filterPipeline.push_back(VppType::CL_ANIME4K);
     if (inputParam->vpp.onnx.enable)      filterPipeline.push_back(VppType::CL_ONNX);
@@ -2557,6 +2580,9 @@ std::vector<VppType> CQSVPipeline::InitFiltersCreateVppList(const sInputParams *
     if (inputParam->vpp.dehalo.enable)     filterPipeline.push_back(VppType::CL_DEHALO);
     if (inputParam->vpp.finedehalo.enable) filterPipeline.push_back(VppType::CL_FINEDEHALO);
     if (inputParam->vpp.dering.enable)     filterPipeline.push_back(VppType::CL_HQDERING);
+    if (inputParam->vpp.dehaze.enable)       filterPipeline.push_back(VppType::CL_DEHAZE);
+    if (inputParam->vpp.clahe.enable)        filterPipeline.push_back(VppType::CL_CLAHE);
+    if (inputParam->vpp.guidedfilter.enable) filterPipeline.push_back(VppType::CL_GUIDEDFILTER);
     if (inputParam->vpp.edgelevel.enable)  filterPipeline.push_back(VppType::CL_EDGELEVEL);
     if (inputParam->vpp.msharpen.enable)   filterPipeline.push_back(VppType::CL_MSHARPEN);
     if (inputParam->vpp.cas.enable)        filterPipeline.push_back(VppType::CL_CAS);
@@ -2841,6 +2867,25 @@ RGY_ERR CQSVPipeline::AddFilterOpenCL(std::vector<std::unique_ptr<RGYFilter>>& c
         param->nnedi.clamp = params->vpp.nnedi.clamp;
         param->nnedi.doubleHeight = params->vpp.nnedi.doubleHeight;
         param->nnedi.weightfile = params->vpp.nnedi.weightfile;
+        param->frameIn = inputFrame;
+        param->frameOut = inputFrame;
+        param->baseFps = m_encFps;
+        param->timebase = m_outputTimebase;
+        param->bOutOverwrite = false;
+        auto sts = filter->init(param, m_pQSVLog);
+        if (sts != RGY_ERR_NONE) {
+            return sts;
+        }
+        inputFrame = param->frameOut;
+        m_encFps = param->baseFps;
+        clfilters.push_back(std::move(filter));
+        return RGY_ERR_NONE;
+    }
+    // NNEDIの縦2倍処理を2軸へ順に適用する。
+    if (vppType == VppType::CL_NNEDI_UPSCALE) {
+        unique_ptr<RGYFilter> filter(new RGYFilterNnediUpscale(m_cl));
+        shared_ptr<RGYFilterParamNnediUpscale> param(new RGYFilterParamNnediUpscale());
+        param->nnediUpscale = params->vpp.nnediUpscale;
         param->frameIn = inputFrame;
         param->frameOut = inputFrame;
         param->baseFps = m_encFps;
@@ -3376,6 +3421,24 @@ RGY_ERR CQSVPipeline::AddFilterOpenCL(std::vector<std::unique_ptr<RGYFilter>>& c
         clfilters.push_back(std::move(filter));
         return RGY_ERR_NONE;
     }
+    //bm3d
+    if (vppType == VppType::CL_DENOISE_BM3D) {
+        unique_ptr<RGYFilter> filter(new RGYFilterDenoiseBm3d(m_cl));
+        shared_ptr<RGYFilterParamDenoiseBm3d> param(new RGYFilterParamDenoiseBm3d());
+        param->bm3d = params->vpp.bm3d;
+        param->frameIn = inputFrame;
+        param->frameOut = inputFrame;
+        param->baseFps = m_encFps;
+        param->bOutOverwrite = false;
+        auto sts = filter->init(param, m_pQSVLog);
+        if (sts != RGY_ERR_NONE) {
+            return sts;
+        }
+        inputFrame = param->frameOut;
+        m_encFps = param->baseFps;
+        clfilters.push_back(std::move(filter));
+        return RGY_ERR_NONE;
+    }
     //hqdn3d
     if (vppType == VppType::CL_DENOISE_HQDN3D) {
         unique_ptr<RGYFilter> filter(new RGYFilterDenoiseHqdn3d(m_cl));
@@ -3471,6 +3534,7 @@ RGY_ERR CQSVPipeline::AddFilterOpenCL(std::vector<std::unique_ptr<RGYFilter>>& c
         param->modelDir = params->vpp.onnxModelDir;
         param->device = params->vpp.rife_ov.device;
         param->multi = params->vpp.rife_ov.multi;
+        param->fps = params->vpp.rife_ov.fps;
         param->colormatrix = params->vpp.rife_ov.colormatrix;
         param->colorrange = params->vpp.rife_ov.colorrange;
         param->frameIn = inputFrame;
@@ -3714,6 +3778,7 @@ RGY_ERR CQSVPipeline::AddFilterOpenCL(std::vector<std::unique_ptr<RGYFilter>>& c
             param->baseFps = m_encFps;
             param->bOutOverwrite = false;
             param->fsr1    = params->vpp.resize_fsr1;
+            param->dpid    = params->vpp.resize_dpid;
             param->nis     = params->vpp.resize_nis;
             param->bicubic = params->vpp.resize_bicubic;
             param->vui     = vuiInfo;
@@ -3933,6 +3998,61 @@ RGY_ERR CQSVPipeline::AddFilterOpenCL(std::vector<std::unique_ptr<RGYFilter>>& c
         inputFrame = param->frameOut;
         m_encFps = param->baseFps;
         //登録
+        clfilters.push_back(std::move(filter));
+        return RGY_ERR_NONE;
+    }
+    // guidedfilterを追加
+    if (vppType == VppType::CL_GUIDEDFILTER) {
+        unique_ptr<RGYFilter> filter(new RGYFilterGuidedfilter(m_cl));
+        shared_ptr<RGYFilterParamGuidedfilter> param(new RGYFilterParamGuidedfilter());
+        param->guidedfilter = params->vpp.guidedfilter;
+        param->frameIn = inputFrame;
+        param->frameOut = inputFrame;
+        param->baseFps = m_encFps;
+        param->bOutOverwrite = false;
+        auto sts = filter->init(param, m_pQSVLog);
+        if (sts != RGY_ERR_NONE) {
+            return sts;
+        }
+        inputFrame = param->frameOut;
+        m_encFps = param->baseFps;
+        clfilters.push_back(std::move(filter));
+        return RGY_ERR_NONE;
+    }
+    // CLAHEを追加
+    if (vppType == VppType::CL_CLAHE) {
+        unique_ptr<RGYFilter> filter(new RGYFilterClahe(m_cl));
+        shared_ptr<RGYFilterParamClahe> param(new RGYFilterParamClahe());
+        param->clahe = params->vpp.clahe;
+        param->histBitdepth = getEncoderBitdepth(params);
+        param->frameIn = inputFrame;
+        param->frameOut = inputFrame;
+        param->baseFps = m_encFps;
+        param->bOutOverwrite = false;
+        auto sts = filter->init(param, m_pQSVLog);
+        if (sts != RGY_ERR_NONE) {
+            return sts;
+        }
+        inputFrame = param->frameOut;
+        m_encFps = param->baseFps;
+        clfilters.push_back(std::move(filter));
+        return RGY_ERR_NONE;
+    }
+    // dehazeを追加
+    if (vppType == VppType::CL_DEHAZE) {
+        unique_ptr<RGYFilter> filter(new RGYFilterDehaze(m_cl));
+        shared_ptr<RGYFilterParamDehaze> param(new RGYFilterParamDehaze());
+        param->dehaze = params->vpp.dehaze;
+        param->frameIn = inputFrame;
+        param->frameOut = inputFrame;
+        param->baseFps = m_encFps;
+        param->bOutOverwrite = false;
+        auto sts = filter->init(param, m_pQSVLog);
+        if (sts != RGY_ERR_NONE) {
+            return sts;
+        }
+        inputFrame = param->frameOut;
+        m_encFps = param->baseFps;
         clfilters.push_back(std::move(filter));
         return RGY_ERR_NONE;
     }
@@ -5734,7 +5854,7 @@ RGY_ERR CQSVPipeline::CreatePipeline(const sInputParams* prm) {
     if (m_pmfxENC) {
         m_pipelineTasks.push_back(std::make_unique<PipelineTaskMFXEncode>(&m_device->mfxSession(), 1, m_pmfxENC.get(), m_mfxVer, m_encParams, m_timecode.get(), m_encTimestamp.get(), m_outputTimebase, m_dynamicRC, m_hdr10plus.get(), m_dovirpu.get(), m_pQSVLog));
     } else {
-        m_pipelineTasks.push_back(std::make_unique<PipelineTaskOutputRaw>(&m_device->mfxSession(), m_pFileWriter.get(), 1, m_mfxVer, m_pQSVLog));
+        m_pipelineTasks.push_back(std::make_unique<PipelineTaskOutputRaw>(&m_device->mfxSession(), m_pFileWriter.get(), m_timecode.get(), m_outputTimebase, 1, m_mfxVer, m_pQSVLog));
     }
 
     if (m_pipelineTasks.size() == 0) {

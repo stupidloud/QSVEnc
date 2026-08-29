@@ -18,6 +18,7 @@ RGY_FILTER_AFS_ANALYZE_CL    EXE_DATA DISCARDABLE "..\\QSVPipeline\\rgy_filter_a
 RGY_FILTER_AFS_SYNTHESIZE_CL EXE_DATA DISCARDABLE "..\\QSVPipeline\\rgy_filter_afs_synthesize.cl"
 
 RGY_FILTER_NNEDI_CL       EXE_DATA DISCARDABLE "..\\QSVPipeline\\rgy_filter_nnedi.cl"
+RGY_FILTER_NNEDI_UPSCALE_CL EXE_DATA DISCARDABLE "..\\QSVPipeline\\rgy_filter_nnedi_upscale.cl"
 
 RGY_FILTER_YADIF_CL           EXE_DATA DISCARDABLE "..\\QSVPipeline\\rgy_filter_yadif.cl"
 RGY_FILTER_MPDECIMATE_CL      EXE_DATA DISCARDABLE "..\\QSVPipeline\\rgy_filter_mpdecimate.cl"
@@ -29,6 +30,7 @@ RGY_FILTER_MAA_CL             EXE_DATA DISCARDABLE "..\\QSVPipeline\\rgy_filter_
 RGY_FILTER_DELOGO_CL          EXE_DATA DISCARDABLE "..\\QSVPipeline\\rgy_filter_delogo.cl"
 RGY_FILTER_CONVOLUTION3D_CL   EXE_DATA DISCARDABLE "..\\QSVPipeline\\rgy_filter_convolution3d.cl"
 RGY_FILTER_DENOISE_DCT_CL     EXE_DATA DISCARDABLE "..\\QSVPipeline\\rgy_filter_denoise_dct.cl"
+RGY_FILTER_DENOISE_BM3D_CL    EXE_DATA DISCARDABLE "..\\QSVPipeline\\rgy_filter_denoise_bm3d.cl"
 RGY_FILTER_DENOISE_FFT3D_CL   EXE_DATA DISCARDABLE "..\\QSVPipeline\\rgy_filter_denoise_fft3d.cl"
 RGY_FILTER_DENOISE_HQDN3D_CL  EXE_DATA DISCARDABLE "..\\QSVPipeline\\rgy_filter_denoise_hqdn3d.cl"
 RGY_FILTER_DESCALE_CL         EXE_DATA DISCARDABLE "..\\QSVPipeline\\rgy_filter_descale.cl"
@@ -81,6 +83,9 @@ RGY_FILTER_COLORFIX_CL        EXE_DATA DISCARDABLE "..\\QSVPipeline\\rgy_filter_
 RGY_FILTER_DEHALO_CL          EXE_DATA DISCARDABLE "..\\QSVPipeline\\rgy_filter_dehalo.cl"
 RGY_FILTER_FINEDEHALO_CL      EXE_DATA DISCARDABLE "..\\QSVPipeline\\rgy_filter_finedehalo.cl"
 RGY_FILTER_HQDERING_CL        EXE_DATA DISCARDABLE "..\\QSVPipeline\\rgy_filter_hqdering.cl"
+RGY_FILTER_GUIDEDFILTER_CL    EXE_DATA DISCARDABLE "..\\QSVPipeline\\rgy_filter_guidedfilter.cl"
+RGY_FILTER_CLAHE_CL           EXE_DATA DISCARDABLE "..\\QSVPipeline\\rgy_filter_clahe.cl"
+RGY_FILTER_DEHAZE_CL          EXE_DATA DISCARDABLE "..\\QSVPipeline\\rgy_filter_dehaze.cl"
 RGY_FILTER_CAS_CL             EXE_DATA DISCARDABLE "..\\QSVPipeline\\rgy_filter_cas.cl"
 RGY_FILTER_DETAILSHARPEN_CL   EXE_DATA DISCARDABLE "..\\QSVPipeline\\rgy_filter_detailsharpen.cl"
 RGY_FILTER_SOFTLIGHT_CL       EXE_DATA DISCARDABLE "..\\QSVPipeline\\rgy_filter_softlight.cl"

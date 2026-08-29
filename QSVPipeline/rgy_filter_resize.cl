@@ -108,6 +108,18 @@ float factor_spline(const float x_raw, SPLINE_FACTOR_MEM_TYPE const float4 *rest
     return w;
 }
 
+// 入力画素と出力画素のフットプリントが重なる長さを重みにする。
+// deltaは出力画素単位で、入力画素の幅はratioClamped、出力画素の幅は1となる。
+// 大きな縮小ではbox、ratioClampedが1となる拡大ではbilinearの三角形と一致する。
+// 重みの合計で正規化するため、1 / ratioClampedの係数は不要。
+// halfはOpenCL Cの予約型名なので、ローカル変数名には使用しない。
+float factor_area(const float delta, const float ratioClamped) {
+    const float srcHalf = ratioClamped * 0.5f;
+    const float lo = fmax(delta - srcHalf, -0.5f);
+    const float hi = fmin(delta + srcHalf,  0.5f);
+    return fmax(hi - lo, 0.0f);
+}
+
 float calc_weight(
     const int targetPos, const float srcPos,
     const float ratioClamped, SPLINE_FACTOR_MEM_TYPE const float4 *psCopyFactor) {
@@ -120,6 +132,7 @@ float calc_weight(
     case WEIGHT_SPLINE:   weight = factor_spline(delta, psCopyFactor); break;
     case WEIGHT_BICUBIC:  weight = factor_bicubic(delta, bicubic_b, bicubic_c); break;
     case WEIGHT_BILINEAR: weight = factor_bilinear(delta); break;
+    case WEIGHT_AREA:     weight = factor_area(delta, ratioClamped); break;
     case WEIGHT_GAUSS:    weight = factor_gauss(delta); break;
     default:
         break;
@@ -1220,3 +1233,70 @@ __kernel void kernel_nis_scaler_no_usm(
 }
 
 #endif // NIS_KERNEL_ENABLED
+
+#if DPID_KERNEL_ENABLED
+// Weberら(2016)のdetail preserving image downscaling。
+// 出力画素のfootprint平均から離れた入力画素ほど強く残すため、2回走査する。
+__kernel void kernel_resize_dpid(
+    __global uchar *restrict pDst, const int dstPitch, const int dstWidth, const int dstHeight,
+    __global const uchar *restrict pSrc, const int srcPitch, const int srcWidth, const int srcHeight,
+    const float ratioX, const float ratioY, const float lambda) {
+    const int ix = get_global_id(0);
+    const int iy = get_global_id(1);
+    if (ix >= dstWidth || iy >= dstHeight) {
+        return;
+    }
+
+    const float invX = 1.0f / ratioX;
+    const float invY = 1.0f / ratioY;
+    const float x0f = (float)ix * invX;
+    const float x1f = (float)(ix + 1) * invX;
+    const float y0f = (float)iy * invY;
+    const float y1f = (float)(iy + 1) * invY;
+    const int sx0 = max((int)floor(x0f), 0);
+    const int sx1 = min((int)ceil(x1f), srcWidth);
+    const int sy0 = max((int)floor(y0f), 0);
+    const int sy1 = min((int)ceil(y1f), srcHeight);
+
+    float sum = 0.0f;
+    float wsum = 0.0f;
+    for (int sy = sy0; sy < sy1; sy++) {
+        const float oy = min((float)(sy + 1), y1f) - max((float)sy, y0f);
+        if (oy <= 0.0f) continue;
+        __global const Type *row = (__global const Type *)(pSrc + (size_t)sy * srcPitch);
+        for (int sx = sx0; sx < sx1; sx++) {
+            const float ox = min((float)(sx + 1), x1f) - max((float)sx, x0f);
+            if (ox <= 0.0f) continue;
+            const float overlap = ox * oy;
+            sum += overlap * (float)row[sx];
+            wsum += overlap;
+        }
+    }
+    const float avg = (wsum > 0.0f) ? (sum / wsum) : 0.0f;
+    const float maxval = (float)((1 << bit_depth) - 1);
+    const float invMaxval = 1.0f / maxval;
+
+    float dsum = 0.0f;
+    float dwsum = 0.0f;
+    for (int sy = sy0; sy < sy1; sy++) {
+        const float oy = min((float)(sy + 1), y1f) - max((float)sy, y0f);
+        if (oy <= 0.0f) continue;
+        __global const Type *row = (__global const Type *)(pSrc + (size_t)sy * srcPitch);
+        for (int sx = sx0; sx < sx1; sx++) {
+            const float ox = min((float)(sx + 1), x1f) - max((float)sx, x0f);
+            if (ox <= 0.0f) continue;
+            const float v = (float)row[sx];
+            // 差を画素範囲で正規化すると重み比を保ったまま、powrの発散を防げる。
+            const float d = fabs(v - avg) * invMaxval;
+            const float detail = (lambda == 0.0f) ? 1.0f : powr(d, lambda);
+            const float weight = ox * oy * detail;
+            dsum += weight * v;
+            dwsum += weight;
+        }
+    }
+    // 一様領域では差分重みが全て0になるため、footprint平均へ戻す。
+    const float outv = (dwsum > 0.0f) ? (dsum / dwsum) : avg;
+    *(__global Type *)(pDst + (size_t)iy * dstPitch + (size_t)ix * sizeof(Type))
+        = (Type)clamp(outv + 0.5f, 0.0f, maxval);
+}
+#endif // DPID_KERNEL_ENABLED
